@@ -1,3 +1,9 @@
+This is an attempt to fix problems that exist with voobly, Age Of Mythology and wine. 
+The 0.0.0.0 I.P. Address problem is "fixed" in a, probably, bad way causing the game
+to crash after  a couple of minutes.. 
+
+
+--------------------------------------------------------------------------------------
 1. INTRODUCTION
 
 Wine is a program which allows running Microsoft Windows programs
