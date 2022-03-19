@@ -25,14 +25,13 @@
 
 #include "ole2.h"
 #include "rpcproxy.h"
+#include "d3d9.h"
 
 #include "evr_private.h"
 
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(evr);
-
-static HINSTANCE instance_evr;
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 {
@@ -181,21 +180,6 @@ HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void **ppv)
     return S_OK;
 }
 
-HRESULT WINAPI DllCanUnloadNow(void)
-{
-    return S_FALSE;
-}
-
-HRESULT WINAPI DllRegisterServer(void)
-{
-    return __wine_register_resources(instance_evr);
-}
-
-HRESULT WINAPI DllUnregisterServer(void)
-{
-    return __wine_unregister_resources(instance_evr);
-}
-
 HRESULT WINAPI MFCreateVideoMixerAndPresenter(IUnknown *mixer_outer, IUnknown *presenter_outer,
         REFIID riid_mixer, void **mixer, REFIID riid_presenter, void **presenter)
 {
@@ -222,4 +206,29 @@ HRESULT WINAPI MFCreateVideoMixerAndPresenter(IUnknown *mixer_outer, IUnknown *p
     }
 
     return hr;
+}
+
+/***********************************************************************
+ *      MFIsFormatYUV (evr.@)
+ */
+BOOL WINAPI MFIsFormatYUV(DWORD format)
+{
+    TRACE("%s.\n", debugstr_an((char *)&format, 4));
+
+    switch (format)
+    {
+        case D3DFMT_UYVY:
+        case D3DFMT_YUY2:
+        case MAKEFOURCC('A','Y','U','V'):
+        case MAKEFOURCC('I','M','C','1'):
+        case MAKEFOURCC('I','M','C','2'):
+        case MAKEFOURCC('Y','V','1','2'):
+        case MAKEFOURCC('N','V','1','1'):
+        case MAKEFOURCC('N','V','1','2'):
+        case MAKEFOURCC('Y','2','1','0'):
+        case MAKEFOURCC('Y','2','1','6'):
+            return TRUE;
+        default:
+            return FALSE;
+    }
 }

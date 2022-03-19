@@ -162,6 +162,7 @@ extern int right_option_is_alt DECLSPEC_HIDDEN;
 extern int left_command_is_ctrl DECLSPEC_HIDDEN;
 extern int right_command_is_ctrl DECLSPEC_HIDDEN;
 extern int allow_immovable_windows DECLSPEC_HIDDEN;
+extern int use_confinement_cursor_clipping DECLSPEC_HIDDEN;
 extern int cursor_clipping_locks_windows DECLSPEC_HIDDEN;
 extern int use_precise_scrolling DECLSPEC_HIDDEN;
 extern int gl_surface_mode DECLSPEC_HIDDEN;
@@ -339,6 +340,7 @@ enum {
     STATUS_ITEM_MOUSE_MOVE,
     WINDOW_BROUGHT_FORWARD,
     WINDOW_CLOSE_REQUESTED,
+    WINDOW_DID_MINIMIZE,
     WINDOW_DID_UNMINIMIZE,
     WINDOW_DRAG_BEGIN,
     WINDOW_DRAG_END,
@@ -443,6 +445,7 @@ typedef struct macdrv_event {
             CGRect  frame;
             int     fullscreen;
             int     in_resize;
+            int     skip_size_move_loop;
         }                                           window_frame_changed;
         struct {
             unsigned long   serial;
@@ -536,11 +539,12 @@ struct macdrv_window_features {
     unsigned int    maximize_button:1;
     unsigned int    utility:1;
     unsigned int    shadow:1;
+    unsigned int    prevents_app_activation:1;
 };
 
 struct macdrv_window_state {
     unsigned int    disabled:1;
-    unsigned int    no_activate:1;
+    unsigned int    no_foreground:1;
     unsigned int    floating:1;
     unsigned int    excluded_by_expose:1;
     unsigned int    excluded_by_cycle:1;
@@ -566,7 +570,8 @@ extern void macdrv_set_cocoa_window_frame(macdrv_window w, const CGRect* new_fra
 extern void macdrv_get_cocoa_window_frame(macdrv_window w, CGRect* out_frame) DECLSPEC_HIDDEN;
 extern void macdrv_set_cocoa_parent_window(macdrv_window w, macdrv_window parent) DECLSPEC_HIDDEN;
 extern void macdrv_set_window_surface(macdrv_window w, void *surface, pthread_mutex_t *mutex) DECLSPEC_HIDDEN;
-extern CGImageRef create_surface_image(void *window_surface, CGRect *rect, int copy_data) DECLSPEC_HIDDEN;
+extern CGImageRef create_surface_image(void *window_surface, CGRect *rect, int copy_data, int color_keyed,
+        CGFloat key_red, CGFloat key_green, CGFloat key_blue) DECLSPEC_HIDDEN;
 extern int get_surface_blit_rects(void *window_surface, const CGRect **rects, int *count) DECLSPEC_HIDDEN;
 extern void macdrv_window_needs_display(macdrv_window w, CGRect rect) DECLSPEC_HIDDEN;
 extern void macdrv_set_window_shape(macdrv_window w, const CGRect *rects, int count) DECLSPEC_HIDDEN;
@@ -596,6 +601,7 @@ extern void macdrv_set_view_backing_size(macdrv_view v, const int backing_size[2
 extern uint32_t macdrv_window_background_color(void) DECLSPEC_HIDDEN;
 extern void macdrv_send_text_input_event(int pressed, unsigned int flags, int repeat, int keyc,
                                          void* data, int* done) DECLSPEC_HIDDEN;
+extern int macdrv_is_any_wine_window_visible(void) DECLSPEC_HIDDEN;
 
 
 /* keyboard */

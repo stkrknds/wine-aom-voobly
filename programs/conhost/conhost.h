@@ -69,6 +69,7 @@ struct edit_line
     unsigned int           end_offset;          /* offset of the last written char */
     unsigned int           home_x;              /* home position */
     unsigned int           home_y;
+    unsigned int           ctrl_mask;           /* mask for ctrl characters for completion */
 };
 
 struct console
@@ -87,6 +88,7 @@ struct console
     unsigned int           read_ioctl;          /* current read ioctl */
     size_t                 pending_read;        /* size of pending read buffer */
     struct edit_line       edit_line;           /* edit line context */
+    unsigned int           key_state;
     struct console_window *window;
     WCHAR                 *title;               /* console title */
     struct history_line  **history;             /* lines history */
@@ -130,19 +132,29 @@ struct screen_buffer
     struct wine_rb_entry   entry;               /* map entry */
 };
 
-BOOL init_window( struct console *console );
-void update_window_region( struct console *console, const RECT *update );
-void update_window_config( struct console *console );
-
+/* conhost.c */
 NTSTATUS write_console_input( struct console *console, const INPUT_RECORD *records,
                               unsigned int count, BOOL flush );
 
 void notify_screen_buffer_size( struct screen_buffer *screen_buffer );
 NTSTATUS change_screen_buffer_size( struct screen_buffer *screen_buffer, int new_width, int new_height );
 
+/* window.c */
+void update_console_font( struct console *console, const WCHAR *face_name, size_t face_name_size,
+                          unsigned int height, unsigned int weight );
+BOOL init_window( struct console *console );
+void init_message_window( struct console *console );
+void update_window_region( struct console *console, const RECT *update );
+void update_window_config( struct console *console, BOOL delay );
+
 static inline void empty_update_rect( struct screen_buffer *screen_buffer, RECT *rect )
 {
     SetRect( rect, screen_buffer->width, screen_buffer->height, 0, 0 );
+}
+
+static inline unsigned int get_bounded_cursor_x( struct screen_buffer *screen_buffer )
+{
+    return min( screen_buffer->cursor_x, screen_buffer->width - 1 );
 }
 
 #endif /* RC_INVOKED */

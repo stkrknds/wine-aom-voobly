@@ -1,10 +1,8 @@
 EXTRADEFS = -D_ADVAPI32_
 MODULE    = advapi32.dll
 IMPORTLIB = advapi32
-IMPORTS   = kernelbase sechost
+IMPORTS   = kernelbase sechost msvcrt
 DELAYIMPORTS = rpcrt4
-
-EXTRADLLFLAGS = -mno-cygwin
 
 C_SRCS = \
 	advapi.c \

@@ -19,24 +19,11 @@
  */
 
 #include "config.h"
-#include "wine/port.h"
 
 #include <stdlib.h>
 #include <stdarg.h>
 #include <stdio.h>
-#ifdef HAVE_UNISTD_H
-# include <unistd.h>
-#endif
 #include <time.h>
-#ifdef HAVE_SYS_TYPES_H
-# include <sys/types.h>
-#endif
-#ifdef HAVE_SYS_STAT_H
-# include <sys/stat.h>
-#endif
-#ifdef HAVE_SYS_MMAN_H
-#include <sys/mman.h>
-#endif
 #include <fcntl.h>
 
 #define NONAMELESSUNION
@@ -182,7 +169,7 @@ static inline void print_dword(const char *title, DWORD value)
 static inline void print_longlong(const char *title, ULONGLONG value)
 {
     printf("  %-34s 0x", title);
-    if(value >> 32)
+    if (sizeof(value) > sizeof(unsigned long) && value >> 32)
         printf("%lx%08lx\n", (unsigned long)(value >> 32), (unsigned long)value);
     else
         printf("%lx\n", (unsigned long)value);
@@ -504,6 +491,111 @@ static void dump_sections(const void *base, const void* addr, unsigned num_sect)
     }
 }
 
+static char *get_str( char *buffer, unsigned int rva, unsigned int len )
+{
+    const WCHAR *wstr = PRD( rva, len );
+    char *ret = buffer;
+
+    len /= sizeof(WCHAR);
+    while (len--) *buffer++ = *wstr++;
+    *buffer = 0;
+    return ret;
+}
+
+static void dump_section_apiset(void)
+{
+    const IMAGE_SECTION_HEADER *sect = IMAGE_FIRST_SECTION(PE_nt_headers);
+    const UINT *ptr, *entry, *value, *hash;
+    unsigned int i, j, count, val_count, rva;
+    char buffer[128];
+
+    for (i = 0; i < PE_nt_headers->FileHeader.NumberOfSections; i++, sect++)
+    {
+        if (strncmp( (const char *)sect->Name, ".apiset", 8 )) continue;
+        rva = sect->PointerToRawData;
+        ptr = PRD( rva, sizeof(*ptr) );
+        printf( "ApiSet section:\n" );
+        switch (ptr[0]) /* version */
+        {
+        case 2:
+            printf( "  Version:     %u\n",   ptr[0] );
+            printf( "  Count:       %08x\n", ptr[1] );
+            count = ptr[1];
+            if (!(entry = PRD( rva + 2 * sizeof(*ptr), count * 3 * sizeof(*entry) ))) break;
+            for (i = 0; i < count; i++, entry += 3)
+            {
+                printf( "    %s ->", get_str( buffer, rva + entry[0], entry[1] ));
+                if (!(value = PRD( rva + entry[2], sizeof(*value) ))) break;
+                val_count = *value++;
+                for (j = 0; j < val_count; j++, value += 4)
+                {
+                    putchar( ' ' );
+                    if (value[1]) printf( "%s:", get_str( buffer, rva + value[0], value[1] ));
+                    printf( "%s", get_str( buffer, rva + value[2], value[3] ));
+                }
+                printf( "\n");
+            }
+            break;
+        case 4:
+            printf( "  Version:     %u\n",   ptr[0] );
+            printf( "  Size:        %08x\n", ptr[1] );
+            printf( "  Flags:       %08x\n", ptr[2] );
+            printf( "  Count:       %08x\n", ptr[3] );
+            count = ptr[3];
+            if (!(entry = PRD( rva + 4 * sizeof(*ptr), count * 6 * sizeof(*entry) ))) break;
+            for (i = 0; i < count; i++, entry += 6)
+            {
+                printf( "    %08x %s ->", entry[0], get_str( buffer, rva + entry[1], entry[2] ));
+                if (!(value = PRD( rva + entry[5], sizeof(*value) ))) break;
+                value++; /* flags */
+                val_count = *value++;
+                for (j = 0; j < val_count; j++, value += 5)
+                {
+                    putchar( ' ' );
+                    if (value[1]) printf( "%s:", get_str( buffer, rva + value[1], value[2] ));
+                    printf( "%s", get_str( buffer, rva + value[3], value[4] ));
+                }
+                printf( "\n");
+            }
+            break;
+        case 6:
+            printf( "  Version:     %u\n",   ptr[0] );
+            printf( "  Size:        %08x\n", ptr[1] );
+            printf( "  Flags:       %08x\n", ptr[2] );
+            printf( "  Count:       %08x\n", ptr[3] );
+            printf( "  EntryOffset: %08x\n", ptr[4] );
+            printf( "  HashOffset:  %08x\n", ptr[5] );
+            printf( "  HashFactor:  %08x\n", ptr[6] );
+            count = ptr[3];
+            if (!(entry = PRD( rva + ptr[4], count * 6 * sizeof(*entry) ))) break;
+            for (i = 0; i < count; i++, entry += 6)
+            {
+                printf( "    %08x %s ->", entry[0], get_str( buffer, rva + entry[1], entry[2] ));
+                if (!(value = PRD( rva + entry[4], entry[5] * 5 * sizeof(*value) ))) break;
+                for (j = 0; j < entry[5]; j++, value += 5)
+                {
+                    putchar( ' ' );
+                    if (value[1]) printf( "%s:", get_str( buffer, rva + value[1], value[2] ));
+                    printf( "%s", get_str( buffer, rva + value[3], value[4] ));
+                }
+                printf( "\n" );
+            }
+            printf( "  Hash table:\n" );
+            if (!(hash = PRD( rva + ptr[5], count * 2 * sizeof(*hash) ))) break;
+            for (i = 0; i < count; i++, hash += 2)
+            {
+                entry = PRD( rva + ptr[4] + hash[1] * 6 * sizeof(*entry), 6 * sizeof(*entry) );
+                printf( "    %08x -> %s\n", hash[0], get_str( buffer, rva + entry[1], entry[3] ));
+            }
+            break;
+        default:
+            printf( "*** Unknown version %u\n", ptr[0] );
+            break;
+        }
+        break;
+    }
+}
+
 static	void	dump_dir_exported_functions(void)
 {
     unsigned int size = 0;
@@ -777,6 +869,18 @@ static void dump_x86_64_unwind_info( const struct runtime_function_x86_64 *funct
                 (ULONG)(function->UnwindData + (const char *)(&handler_data->handler + 1) - (const char *)info ));
 }
 
+static const BYTE armnt_code_lengths[256] =
+{
+/* 00 */ 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+/* 20 */ 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+/* 40 */ 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+/* 60 */ 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+/* 80 */ 2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
+/* a0 */ 2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
+/* c0 */ 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+/* e0 */ 1,1,1,1,1,1,1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,3,4,3,4,1,1,1,1,1
+};
+
 static void dump_armnt_unwind_info( const struct runtime_function_armnt *fnc )
 {
     const struct unwind_info_armnt *info;
@@ -788,7 +892,7 @@ static void dump_armnt_unwind_info( const struct runtime_function_armnt *fnc )
     if (fnc->u.s.Flag)
     {
         char intregs[32] = {0}, intregspop[32] = {0}, vfpregs[32] = {0};
-        WORD pf = 0, ef = 0, sc = 0;
+        WORD pf = 0, ef = 0, fpoffset = 0, stack = fnc->u.s.StackAdjust;
 
         printf( "\nFunction %08x-%08x:\n", fnc->BeginAddress & ~1,
                 (fnc->BeginAddress & ~1) + fnc->u.s.FunctionLength * 2 );
@@ -806,86 +910,60 @@ static void dump_armnt_unwind_info( const struct runtime_function_armnt *fnc )
         {
             pf = fnc->u.s.StackAdjust & 0x04;
             ef = fnc->u.s.StackAdjust & 0x08;
+            stack = (fnc->u.s.StackAdjust & 3) + 1;
         }
 
-        if (!fnc->u.s.R && !pf)
+        if (!fnc->u.s.R || pf)
         {
-            if (fnc->u.s.Reg)
+            int first = 4, last = fnc->u.s.Reg + 4;
+            if (pf)
             {
-                sprintf(intregs, "r4-r%u", fnc->u.s.Reg + 4);
-                sprintf(intregspop, "r4-r%u", fnc->u.s.Reg + 4);
+                first = (~fnc->u.s.StackAdjust) & 3;
+                if (fnc->u.s.R)
+                    last = 3;
             }
+            if (first == last)
+                sprintf(intregs, "r%u", first);
             else
-            {
-                strcpy(intregs, "r4");
-                strcpy(intregspop, "r4");
-            }
-            sc = fnc->u.s.Reg + 1;
-            if (fnc->u.s.C || fnc->u.s.L)
-            {
-                strcat(intregs, ", ");
-                if (fnc->u.s.C || (fnc->u.s.L && !fnc->u.s.H))
-                    strcat(intregspop, ", ");
-            }
-        }
-        else if (fnc->u.s.R && pf)
-        {
-            if (((~fnc->u.s.StackAdjust) & 3) != 3)
-            {
-                sprintf(intregs, "r%u-r3", (~fnc->u.s.StackAdjust) & 3);
-                sprintf(intregspop, "r%u-r3", (~fnc->u.s.StackAdjust) & 3);
-            }
-            else
-            {
-                sprintf(intregs, "r3");
-                sprintf(intregspop, "r3");
-            }
-            sc = 4 - ((~fnc->u.s.StackAdjust) & 3);
-            if (fnc->u.s.C || fnc->u.s.L)
-            {
-                strcat(intregs, ", ");
-                if (fnc->u.s.C || (fnc->u.s.L && !fnc->u.s.H))
-                    strcat(intregspop, ", ");
-            }
-        }
-        else if (!fnc->u.s.R && pf)
-        {
-            sprintf(intregs, "r%u-r%u", (~fnc->u.s.StackAdjust) & 3, fnc->u.s.Reg + 4);
-            sprintf(intregspop, "r%u-r%u", (~fnc->u.s.StackAdjust) & 3, fnc->u.s.Reg + 4);
-            sc = fnc->u.s.Reg + 5 - ((~fnc->u.s.StackAdjust) & 3);
-            if (fnc->u.s.C || fnc->u.s.L)
-            {
-                strcat(intregs, ", ");
-                if (fnc->u.s.C || (fnc->u.s.L && !fnc->u.s.H))
-                    strcat(intregspop, ", ");
-            }
-        }
-        else if (fnc->u.s.R && !pf)
-        {
-            if (!fnc->u.s.C && !fnc->u.s.L)
-            {
-                strcpy(intregs, "none");
-                strcpy(intregspop, "none");
-            }
+                sprintf(intregs, "r%u-r%u", first, last);
+            fpoffset = last + 1 - first;
         }
 
-        if (fnc->u.s.C && !fnc->u.s.L)
+        if (!fnc->u.s.R || ef)
         {
+            int first = 4, last = fnc->u.s.Reg + 4;
+            if (ef)
+            {
+                first = (~fnc->u.s.StackAdjust) & 3;
+                if (fnc->u.s.R)
+                    last = 3;
+            }
+            if (first == last)
+                sprintf(intregspop, "r%u", first);
+            else
+                sprintf(intregspop, "r%u-r%u", first, last);
+        }
+
+        if (fnc->u.s.C)
+        {
+            if (intregs[0])
+                strcat(intregs, ", ");
+            if (intregspop[0])
+                strcat(intregspop, ", ");
             strcat(intregs, "r11");
             strcat(intregspop, "r11");
         }
-        else if (fnc->u.s.C && fnc->u.s.L)
+        if (fnc->u.s.L)
         {
-            strcat(intregs, "r11, lr");
-            if (fnc->u.s.H)
-                strcat(intregspop, "r11");
-            else
-                strcat(intregspop, "r11, pc");
-        }
-        else if (!fnc->u.s.C && fnc->u.s.L)
-        {
+            if (intregs[0])
+                strcat(intregs, ", ");
             strcat(intregs, "lr");
-            if (!fnc->u.s.H)
+
+            if (intregspop[0] && (fnc->u.s.Ret != 0 || !fnc->u.s.H))
+                strcat(intregspop, ", ");
+            if (fnc->u.s.Ret != 0)
+                strcat(intregspop, "lr");
+            else if (!fnc->u.s.H)
                 strcat(intregspop, "pc");
         }
 
@@ -896,46 +974,42 @@ static void dump_armnt_unwind_info( const struct runtime_function_armnt *fnc )
             else
                 strcpy(vfpregs, "d8");
         }
-        else
-            strcpy(vfpregs, "none");
 
-        if (fnc->u.s.H)
-            printf( "    Unwind Code\tpush {r0-r3}\n" );
+        if (fnc->u.s.Flag == 1) {
+            if (fnc->u.s.H)
+                printf( "    Unwind Code\tpush {r0-r3}\n" );
 
-        if (fnc->u.s.R || fnc->u.s.L || fnc->u.s.C || pf)
-            printf( "    Unwind Code\tpush {%s}\n", intregs );
+            if (intregs[0])
+                printf( "    Unwind Code\tpush {%s}\n", intregs );
 
-        if (fnc->u.s.C && fnc->u.s.R && !fnc->u.s.L && !pf)
-            printf( "    Unwind Code\tmov r11, sp\n" );
-        else if (fnc->u.s.C && (!fnc->u.s.R || fnc->u.s.L || pf))
-        {
-            if (fnc->u.s.StackAdjust >= 0x03f4 && !sc)
-                printf( "    Unwind Code\tadd r11, sp, #<unknown>\n");
-            else if (fnc->u.s.StackAdjust >= 0x03f4)
-                printf( "    Unwind Code\tadd r11, sp, #%d\n", sc * 4 );
-            else
-                printf( "    Unwind Code\tadd r11, sp, #%d\n", fnc->u.s.StackAdjust * 4 );
+            if (fnc->u.s.C && fpoffset == 0)
+                printf( "    Unwind Code\tmov r11, sp\n" );
+            else if (fnc->u.s.C)
+                printf( "    Unwind Code\tadd r11, sp, #%d\n", fpoffset * 4 );
+
+            if (fnc->u.s.R && fnc->u.s.Reg != 0x07)
+                printf( "    Unwind Code\tvpush {%s}\n", vfpregs );
+
+            if (stack && !pf)
+                printf( "    Unwind Code\tsub sp, sp, #%d\n", stack * 4 );
         }
 
-        if (fnc->u.s.R && fnc->u.s.Reg != 0x07)
-            printf( "    Unwind Code\tvpush {%s}\n", vfpregs );
+        if (fnc->u.s.Ret == 3)
+            return;
+        printf( "Epilogue:\n" );
 
-        if (fnc->u.s.StackAdjust < 0x03f4 && !pf)
-            printf( "    Unwind Code\tsub sp, sp, #%d\n", fnc->u.s.StackAdjust * 4 );
-
-
-        if (fnc->u.s.StackAdjust < 0x03f4 && !ef)
-            printf( "    Unwind Code\tadd sp, sp, #%d\n", fnc->u.s.StackAdjust * 4 );
+        if (stack && !ef)
+            printf( "    Unwind Code\tadd sp, sp, #%d\n", stack * 4 );
 
         if (fnc->u.s.R && fnc->u.s.Reg != 0x07)
             printf( "    Unwind Code\tvpop {%s}\n", vfpregs );
 
-        if (fnc->u.s.C || !fnc->u.s.R || ef || (fnc->u.s.L && !fnc->u.s.H))
+        if (intregspop[0])
             printf( "    Unwind Code\tpop {%s}\n", intregspop );
 
-        if (fnc->u.s.H && !fnc->u.s.L)
+        if (fnc->u.s.H && !(fnc->u.s.L && fnc->u.s.Ret == 0))
             printf( "    Unwind Code\tadd sp, sp, #16\n" );
-        else if (fnc->u.s.H && fnc->u.s.L)
+        else if (fnc->u.s.H && (fnc->u.s.L && fnc->u.s.Ret == 0))
             printf( "    Unwind Code\tldr pc, [sp], #20\n" );
 
         if (fnc->u.s.Ret == 1)
@@ -1003,6 +1077,7 @@ static void dump_armnt_unwind_info( const struct runtime_function_armnt *fnc )
         for (b = 0; b < words * sizeof(*codes); b++)
         {
             BYTE code = bytes[b];
+            BYTE len = armnt_code_lengths[code];
 
             if (info->e && b == count)
             {
@@ -1020,7 +1095,10 @@ static void dump_armnt_unwind_info( const struct runtime_function_armnt *fnc )
                     }
             }
 
-            printf( "    Unwind Code %x\t", code );
+            printf( "    Unwind Code");
+            for (i = 0; i < len; i++)
+                printf( " %02x", bytes[b+i] );
+            printf( "\t" );
 
             if (code == 0x00)
                 printf( "\n" );
@@ -1110,7 +1188,7 @@ static void dump_armnt_unwind_info( const struct runtime_function_armnt *fnc )
                     if (inepilogue)
                         printf( "ldr lr, [sp], #%u\n", (excode & 0x0f) * 4 );
                     else
-                        printf( "unknown 32\n" );
+                        printf( "str lr, [sp, #-%u]!\n", (excode & 0x0f) * 4 );
                 }
                 else
                     printf( "unknown 32\n" );
@@ -1168,11 +1246,18 @@ static void dump_armnt_unwind_info( const struct runtime_function_armnt *fnc )
                 excode = (code << 24) | (excodes[0] << 16) | (excodes[1] << 8) | excodes[2];
                 printf( "%s sp, sp, #%u\n", inepilogue ? "add" : "sub", (excode & 0xffffff) * 4 );
             }
-            else if (code <= 0xfc)
+            else if (code <= 0xfb)
                 printf( "nop\n" );
-            else if (code <= 0xfe)
+            else if (code <= 0xfc)
+                printf( "nop.w\n" );
+            else if (code <= 0xfd)
             {
                 printf( "(end) nop\n" );
+                inepilogue = TRUE;
+            }
+            else if (code <= 0xfe)
+            {
+                printf( "(end) nop.w\n" );
                 inepilogue = TRUE;
             }
             else
@@ -2356,6 +2441,8 @@ void pe_dump(void)
 	    dump_dir_reloc();
 	if (all || !strcmp(globals.dumpsect, "except"))
 	    dump_dir_exceptions();
+	if (all || !strcmp(globals.dumpsect, "apiset"))
+	    dump_section_apiset();
     }
     if (globals.do_symbol_table)
         dump_symbol_table();
@@ -2419,8 +2506,7 @@ static	void	do_grab_sym( void )
 
     /* dll_close(); */
 
-    if (!(dll_symbols = malloc((exportDir->NumberOfFunctions + 1) * sizeof(dll_symbol))))
-	fatal ("Out of memory");
+    dll_symbols = xmalloc((exportDir->NumberOfFunctions + 1) * sizeof(dll_symbol));
 
     /* bit map of used funcs */
     map = calloc(((exportDir->NumberOfFunctions + 31) & ~31) / 32, sizeof(DWORD));
@@ -2431,7 +2517,7 @@ static	void	do_grab_sym( void )
 	map[*pOrdl / 32] |= 1 << (*pOrdl % 32);
 	ptr = RVA(*pName++, sizeof(DWORD));
 	if (!ptr) ptr = "cant_get_function";
-	dll_symbols[j].symbol = strdup(ptr);
+	dll_symbols[j].symbol = xstrdup(ptr);
 	dll_symbols[j].ordinal = exportDir->Base + *pOrdl;
 	assert(dll_symbols[j].symbol);
     }
@@ -2442,11 +2528,11 @@ static	void	do_grab_sym( void )
 	{
 	    char ordinal_text[256];
 	    /* Ordinal only entry */
-            snprintf (ordinal_text, sizeof(ordinal_text), "%s_%u",
+            sprintf (ordinal_text, "%s_%u",
 		      globals.forward_dll ? globals.forward_dll : OUTPUT_UC_DLL_NAME,
 		      exportDir->Base + i);
 	    str_toupper(ordinal_text);
-	    dll_symbols[j].symbol = strdup(ordinal_text);
+	    dll_symbols[j].symbol = xstrdup(ordinal_text);
 	    assert(dll_symbols[j].symbol);
 	    dll_symbols[j].ordinal = exportDir->Base + i;
 	    j++;
@@ -2486,7 +2572,7 @@ BOOL dll_next_symbol (parsed_symbol * sym)
     if (!dll_current_symbol || !dll_current_symbol->symbol)
        return FALSE;
      assert (dll_symbols);
-    sym->symbol = strdup (dll_current_symbol->symbol);
+    sym->symbol = xstrdup (dll_current_symbol->symbol);
     sym->ordinal = dll_current_symbol->ordinal;
     dll_current_symbol++;
     return TRUE;

@@ -17,20 +17,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#if 0
-#pragma makedep unix
-#endif
-
-#include "config.h"
-#include "wine/port.h"
-
 #include <stdarg.h>
-#ifdef HAVE_UNISTD_H
-#include <unistd.h>
-#endif
-#ifdef HAVE_TIFFIO_H
+#include <math.h>
+#include <sys/types.h>
 #include <tiffio.h>
-#endif
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -44,91 +34,6 @@
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(wincodecs);
-
-#ifdef SONAME_LIBTIFF
-
-/* Workaround for broken libtiff 4.x headers on some 64-bit hosts which
- * define TIFF_UINT64_T/toff_t as 32-bit for 32-bit builds, while they
- * are supposed to be always 64-bit.
- * TIFF_UINT64_T doesn't exist in libtiff 3.x, it was introduced in 4.x.
- */
-#ifdef TIFF_UINT64_T
-# undef toff_t
-# define toff_t UINT64
-#endif
-
-static CRITICAL_SECTION init_tiff_cs;
-static CRITICAL_SECTION_DEBUG init_tiff_cs_debug =
-{
-    0, 0, &init_tiff_cs,
-    { &init_tiff_cs_debug.ProcessLocksList,
-      &init_tiff_cs_debug.ProcessLocksList },
-    0, 0, { (DWORD_PTR)(__FILE__ ": init_tiff_cs") }
-};
-static CRITICAL_SECTION init_tiff_cs = { &init_tiff_cs_debug, -1, 0, 0, 0, 0 };
-
-static void *libtiff_handle;
-#define MAKE_FUNCPTR(f) static typeof(f) * p##f
-MAKE_FUNCPTR(TIFFClientOpen);
-MAKE_FUNCPTR(TIFFClose);
-MAKE_FUNCPTR(TIFFCurrentDirOffset);
-MAKE_FUNCPTR(TIFFGetField);
-MAKE_FUNCPTR(TIFFIsByteSwapped);
-MAKE_FUNCPTR(TIFFNumberOfDirectories);
-MAKE_FUNCPTR(TIFFReadDirectory);
-MAKE_FUNCPTR(TIFFReadEncodedStrip);
-MAKE_FUNCPTR(TIFFReadEncodedTile);
-MAKE_FUNCPTR(TIFFSetDirectory);
-MAKE_FUNCPTR(TIFFSetField);
-MAKE_FUNCPTR(TIFFWriteDirectory);
-MAKE_FUNCPTR(TIFFWriteScanline);
-#undef MAKE_FUNCPTR
-
-static void *load_libtiff(void)
-{
-    void *result;
-
-    RtlEnterCriticalSection(&init_tiff_cs);
-
-    if (!libtiff_handle &&
-        (libtiff_handle = dlopen(SONAME_LIBTIFF, RTLD_NOW)) != NULL)
-    {
-        void * (*pTIFFSetWarningHandler)(void *);
-        void * (*pTIFFSetWarningHandlerExt)(void *);
-
-#define LOAD_FUNCPTR(f) \
-    if((p##f = dlsym(libtiff_handle, #f)) == NULL) { \
-        ERR("failed to load symbol %s\n", #f); \
-        libtiff_handle = NULL; \
-        RtlLeaveCriticalSection(&init_tiff_cs); \
-        return NULL; \
-    }
-        LOAD_FUNCPTR(TIFFClientOpen);
-        LOAD_FUNCPTR(TIFFClose);
-        LOAD_FUNCPTR(TIFFCurrentDirOffset);
-        LOAD_FUNCPTR(TIFFGetField);
-        LOAD_FUNCPTR(TIFFIsByteSwapped);
-        LOAD_FUNCPTR(TIFFNumberOfDirectories);
-        LOAD_FUNCPTR(TIFFReadDirectory);
-        LOAD_FUNCPTR(TIFFReadEncodedStrip);
-        LOAD_FUNCPTR(TIFFReadEncodedTile);
-        LOAD_FUNCPTR(TIFFSetDirectory);
-        LOAD_FUNCPTR(TIFFSetField);
-        LOAD_FUNCPTR(TIFFWriteDirectory);
-        LOAD_FUNCPTR(TIFFWriteScanline);
-#undef LOAD_FUNCPTR
-
-        if ((pTIFFSetWarningHandler = dlsym(libtiff_handle, "TIFFSetWarningHandler")))
-            pTIFFSetWarningHandler(NULL);
-        if ((pTIFFSetWarningHandlerExt = dlsym(libtiff_handle, "TIFFSetWarningHandlerExt")))
-            pTIFFSetWarningHandlerExt(NULL);
-    }
-
-    result = libtiff_handle;
-
-    RtlLeaveCriticalSection(&init_tiff_cs);
-    return result;
-}
 
 static tsize_t tiff_stream_read(thandle_t client_data, tdata_t data, tsize_t size)
 {
@@ -213,7 +118,7 @@ static TIFF* tiff_open_stream(IStream *stream, const char *mode)
 {
     stream_seek(stream, 0, STREAM_SEEK_SET, NULL);
 
-    return pTIFFClientOpen("<IStream object>", mode, stream, tiff_stream_read,
+    return TIFFClientOpen("<IStream object>", mode, stream, tiff_stream_read,
         tiff_stream_write, (void *)tiff_stream_seek, tiff_stream_close,
         (void *)tiff_stream_size, (void *)tiff_stream_map, (void *)tiff_stream_unmap);
 }
@@ -253,9 +158,9 @@ static inline struct tiff_decoder *impl_from_decoder(struct decoder* iface)
 
 static HRESULT tiff_get_decode_info(TIFF *tiff, tiff_decode_info *decode_info)
 {
-    uint16 photometric, bps, samples, planar;
-    uint16 extra_sample_count, extra_sample, *extra_samples;
-    uint16 *red, *green, *blue;
+    uint16_t photometric, bps, samples, planar;
+    uint16_t extra_sample_count, extra_sample, *extra_samples;
+    uint16_t *red, *green, *blue;
     UINT resolution_unit;
     float xres=0.0, yres=0.0;
     int ret, i;
@@ -268,18 +173,18 @@ static HRESULT tiff_get_decode_info(TIFF *tiff, tiff_decode_info *decode_info)
     decode_info->tiled = 0;
     decode_info->source_bpp = 0;
 
-    ret = pTIFFGetField(tiff, TIFFTAG_PHOTOMETRIC, &photometric);
+    ret = TIFFGetField(tiff, TIFFTAG_PHOTOMETRIC, &photometric);
     if (!ret)
     {
         WARN("missing PhotometricInterpretation tag\n");
         return E_FAIL;
     }
 
-    ret = pTIFFGetField(tiff, TIFFTAG_BITSPERSAMPLE, &bps);
+    ret = TIFFGetField(tiff, TIFFTAG_BITSPERSAMPLE, &bps);
     if (!ret) bps = 1;
     decode_info->bps = bps;
 
-    ret = pTIFFGetField(tiff, TIFFTAG_SAMPLESPERPIXEL, &samples);
+    ret = TIFFGetField(tiff, TIFFTAG_SAMPLESPERPIXEL, &samples);
     if (!ret) samples = 1;
     decode_info->samples = samples;
 
@@ -287,7 +192,7 @@ static HRESULT tiff_get_decode_info(TIFF *tiff, tiff_decode_info *decode_info)
         planar = 1;
     else
     {
-        ret = pTIFFGetField(tiff, TIFFTAG_PLANARCONFIG, &planar);
+        ret = TIFFGetField(tiff, TIFFTAG_PLANARCONFIG, &planar);
         if (!ret) planar = 1;
         if (planar != 1)
         {
@@ -307,7 +212,7 @@ static HRESULT tiff_get_decode_info(TIFF *tiff, tiff_decode_info *decode_info)
     case 1: /* BlackIsZero */
         if (samples == 2)
         {
-            ret = pTIFFGetField(tiff, TIFFTAG_EXTRASAMPLES, &extra_sample_count, &extra_samples);
+            ret = TIFFGetField(tiff, TIFFTAG_EXTRASAMPLES, &extra_sample_count, &extra_samples);
             if (!ret)
             {
                 extra_sample_count = 1;
@@ -387,7 +292,7 @@ static HRESULT tiff_get_decode_info(TIFF *tiff, tiff_decode_info *decode_info)
     case 2: /* RGB */
         if (samples == 4)
         {
-            ret = pTIFFGetField(tiff, TIFFTAG_EXTRASAMPLES, &extra_sample_count, &extra_samples);
+            ret = TIFFGetField(tiff, TIFFTAG_EXTRASAMPLES, &extra_sample_count, &extra_samples);
             if (!ret)
             {
                 extra_sample_count = 1;
@@ -527,25 +432,25 @@ static HRESULT tiff_get_decode_info(TIFF *tiff, tiff_decode_info *decode_info)
         return E_FAIL;
     }
 
-    ret = pTIFFGetField(tiff, TIFFTAG_IMAGEWIDTH, &decode_info->frame.width);
+    ret = TIFFGetField(tiff, TIFFTAG_IMAGEWIDTH, &decode_info->frame.width);
     if (!ret)
     {
         WARN("missing image width\n");
         return E_FAIL;
     }
 
-    ret = pTIFFGetField(tiff, TIFFTAG_IMAGELENGTH, &decode_info->frame.height);
+    ret = TIFFGetField(tiff, TIFFTAG_IMAGELENGTH, &decode_info->frame.height);
     if (!ret)
     {
         WARN("missing image length\n");
         return E_FAIL;
     }
 
-    if ((ret = pTIFFGetField(tiff, TIFFTAG_TILEWIDTH, &decode_info->tile_width)))
+    if ((ret = TIFFGetField(tiff, TIFFTAG_TILEWIDTH, &decode_info->tile_width)))
     {
         decode_info->tiled = 1;
 
-        ret = pTIFFGetField(tiff, TIFFTAG_TILELENGTH, &decode_info->tile_height);
+        ret = TIFFGetField(tiff, TIFFTAG_TILELENGTH, &decode_info->tile_height);
         if (!ret)
         {
             WARN("missing tile height\n");
@@ -556,7 +461,7 @@ static HRESULT tiff_get_decode_info(TIFF *tiff, tiff_decode_info *decode_info)
         decode_info->tile_size = decode_info->tile_height * decode_info->tile_stride;
         decode_info->tiles_across = (decode_info->frame.width + decode_info->tile_width - 1) / decode_info->tile_width;
     }
-    else if ((ret = pTIFFGetField(tiff, TIFFTAG_ROWSPERSTRIP, &decode_info->tile_height)))
+    else if ((ret = TIFFGetField(tiff, TIFFTAG_ROWSPERSTRIP, &decode_info->tile_height)))
     {
         if (decode_info->tile_height > decode_info->frame.height)
             decode_info->tile_height = decode_info->frame.height;
@@ -574,9 +479,9 @@ static HRESULT tiff_get_decode_info(TIFF *tiff, tiff_decode_info *decode_info)
     }
 
     resolution_unit = 0;
-    pTIFFGetField(tiff, TIFFTAG_RESOLUTIONUNIT, &resolution_unit);
+    TIFFGetField(tiff, TIFFTAG_RESOLUTIONUNIT, &resolution_unit);
 
-    ret = pTIFFGetField(tiff, TIFFTAG_XRESOLUTION, &xres);
+    ret = TIFFGetField(tiff, TIFFTAG_XRESOLUTION, &xres);
     if (!ret)
     {
         WARN("missing X resolution\n");
@@ -588,7 +493,7 @@ static HRESULT tiff_get_decode_info(TIFF *tiff, tiff_decode_info *decode_info)
         xres = 0.0;
     }
 
-    ret = pTIFFGetField(tiff, TIFFTAG_YRESOLUTION, &yres);
+    ret = TIFFGetField(tiff, TIFFTAG_YRESOLUTION, &yres);
     if (!ret)
     {
         WARN("missing Y resolution\n");
@@ -623,7 +528,7 @@ static HRESULT tiff_get_decode_info(TIFF *tiff, tiff_decode_info *decode_info)
     }
 
     if (decode_info->indexed &&
-        pTIFFGetField(tiff, TIFFTAG_COLORMAP, &red, &green, &blue))
+        TIFFGetField(tiff, TIFFTAG_COLORMAP, &red, &green, &blue))
     {
         decode_info->frame.num_colors = 1 << decode_info->bps;
         for (i=0; i<decode_info->frame.num_colors; i++)
@@ -639,7 +544,7 @@ static HRESULT tiff_get_decode_info(TIFF *tiff, tiff_decode_info *decode_info)
         decode_info->frame.num_colors = 0;
     }
 
-    if (pTIFFGetField(tiff, TIFFTAG_ICCPROFILE, &len, &profile))
+    if (TIFFGetField(tiff, TIFFTAG_ICCPROFILE, &len, &profile))
         decode_info->frame.num_color_contexts = 1;
     else
         decode_info->frame.num_color_contexts = 0;
@@ -656,7 +561,7 @@ static HRESULT CDECL tiff_decoder_initialize(struct decoder* iface, IStream *str
     if (!This->tiff)
         return E_FAIL;
 
-    This->frame_count = pTIFFNumberOfDirectories(This->tiff);
+    This->frame_count = TIFFNumberOfDirectories(This->tiff);
     This->cached_frame = 0;
     hr = tiff_get_decode_info(This->tiff, &This->cached_decode_info);
     if (FAILED(hr))
@@ -669,7 +574,7 @@ static HRESULT CDECL tiff_decoder_initialize(struct decoder* iface, IStream *str
     return S_OK;
 
 fail:
-    pTIFFClose(This->tiff);
+    TIFFClose(This->tiff);
     This->tiff = NULL;
     return hr;
 }
@@ -688,7 +593,7 @@ static HRESULT tiff_decoder_select_frame(struct tiff_decoder* This, DWORD frame)
 
     prev_tile_size = This->cached_tile ? This->cached_decode_info.tile_size : 0;
 
-    res = pTIFFSetDirectory(This->tiff, frame);
+    res = TIFFSetDirectory(This->tiff, frame);
     if (!res)
         return E_INVALIDARG;
 
@@ -736,12 +641,12 @@ static HRESULT tiff_decoder_read_tile(struct tiff_decoder *This, UINT tile_x, UI
     int swap_bytes;
     tiff_decode_info *info = &This->cached_decode_info;
 
-    swap_bytes = pTIFFIsByteSwapped(This->tiff);
+    swap_bytes = TIFFIsByteSwapped(This->tiff);
 
     if (info->tiled)
-        ret = pTIFFReadEncodedTile(This->tiff, tile_x + tile_y * info->tiles_across, This->cached_tile, info->tile_size);
+        ret = TIFFReadEncodedTile(This->tiff, tile_x + tile_y * info->tiles_across, This->cached_tile, info->tile_size);
     else
-        ret = pTIFFReadEncodedStrip(This->tiff, tile_y, This->cached_tile, info->tile_size);
+        ret = TIFFReadEncodedStrip(This->tiff, tile_y, This->cached_tile, info->tile_size);
 
     if (ret == -1)
         return E_FAIL;
@@ -1070,7 +975,7 @@ static HRESULT CDECL tiff_decoder_copy_pixels(struct decoder* iface, UINT frame,
 
             if (FAILED(hr))
             {
-                TRACE("<-- 0x%x\n", hr);
+                TRACE("<-- 0x%lx\n", hr);
                 return hr;
             }
         }
@@ -1091,7 +996,7 @@ static HRESULT CDECL tiff_decoder_get_color_context(struct decoder *iface,
     if (FAILED(hr))
         return hr;
 
-    if (!pTIFFGetField(This->tiff, TIFFTAG_ICCPROFILE, &len, &profile))
+    if (!TIFFGetField(This->tiff, TIFFTAG_ICCPROFILE, &len, &profile))
     {
         return E_UNEXPECTED;
     }
@@ -1120,10 +1025,10 @@ static HRESULT CDECL tiff_decoder_get_metadata_blocks(struct decoder *iface,
 
     *count = 1;
 
-    result.offset = pTIFFCurrentDirOffset(This->tiff);
+    result.offset = TIFFCurrentDirOffset(This->tiff);
     result.length = 0;
 
-    byte_swapped = pTIFFIsByteSwapped(This->tiff);
+    byte_swapped = TIFFIsByteSwapped(This->tiff);
 #ifdef WORDS_BIGENDIAN
     result.options = byte_swapped ? WICPersistOptionLittleEndian : WICPersistOptionBigEndian;
 #else
@@ -1141,7 +1046,7 @@ static HRESULT CDECL tiff_decoder_get_metadata_blocks(struct decoder *iface,
 static void CDECL tiff_decoder_destroy(struct decoder* iface)
 {
     struct tiff_decoder *This = impl_from_decoder(iface);
-    if (This->tiff) pTIFFClose(This->tiff);
+    if (This->tiff) TIFFClose(This->tiff);
     free(This->cached_tile);
     RtlFreeHeap(GetProcessHeap(), 0, This);
 }
@@ -1158,12 +1063,6 @@ static const struct decoder_funcs tiff_decoder_vtable = {
 HRESULT CDECL tiff_decoder_create(struct decoder_info *info, struct decoder **result)
 {
     struct tiff_decoder *This;
-
-    if (!load_libtiff())
-    {
-        ERR("Failed reading TIFF because unable to load %s\n",SONAME_LIBTIFF);
-        return E_FAIL;
-     }
 
     This = RtlAllocateHeap(GetProcessHeap(), 0, sizeof(*This));
     if (!This) return E_OUTOFMEMORY;
@@ -1268,7 +1167,7 @@ static HRESULT CDECL tiff_encoder_create_frame(struct encoder* iface, const stru
     int i;
 
     if (This->num_frames != 0)
-        pTIFFWriteDirectory(This->tiff);
+        TIFFWriteDirectory(This->tiff);
 
     This->num_frames++;
     This->lines_written = 0;
@@ -1282,32 +1181,32 @@ static HRESULT CDECL tiff_encoder_create_frame(struct encoder* iface, const stru
 
     This->format = &formats[i];
 
-    pTIFFSetField(This->tiff, TIFFTAG_PHOTOMETRIC, (uint16)This->format->photometric);
-    pTIFFSetField(This->tiff, TIFFTAG_PLANARCONFIG, (uint16)1);
-    pTIFFSetField(This->tiff, TIFFTAG_BITSPERSAMPLE, (uint16)This->format->bps);
-    pTIFFSetField(This->tiff, TIFFTAG_SAMPLESPERPIXEL, (uint16)This->format->samples);
+    TIFFSetField(This->tiff, TIFFTAG_PHOTOMETRIC, (uint16_t)This->format->photometric);
+    TIFFSetField(This->tiff, TIFFTAG_PLANARCONFIG, (uint16_t)1);
+    TIFFSetField(This->tiff, TIFFTAG_BITSPERSAMPLE, (uint16_t)This->format->bps);
+    TIFFSetField(This->tiff, TIFFTAG_SAMPLESPERPIXEL, (uint16_t)This->format->samples);
 
     if (This->format->extra_sample)
     {
-        uint16 extra_samples;
+        uint16_t extra_samples;
         extra_samples = This->format->extra_sample_type;
 
-        pTIFFSetField(This->tiff, TIFFTAG_EXTRASAMPLES, (uint16)1, &extra_samples);
+        TIFFSetField(This->tiff, TIFFTAG_EXTRASAMPLES, (uint16_t)1, &extra_samples);
     }
 
-    pTIFFSetField(This->tiff, TIFFTAG_IMAGEWIDTH, (uint32)frame->width);
-    pTIFFSetField(This->tiff, TIFFTAG_IMAGELENGTH, (uint32)frame->height);
+    TIFFSetField(This->tiff, TIFFTAG_IMAGEWIDTH, (uint32_t)frame->width);
+    TIFFSetField(This->tiff, TIFFTAG_IMAGELENGTH, (uint32_t)frame->height);
 
     if (frame->dpix != 0.0 && frame->dpiy != 0.0)
     {
-        pTIFFSetField(This->tiff, TIFFTAG_RESOLUTIONUNIT, (uint16)2); /* Inch */
-        pTIFFSetField(This->tiff, TIFFTAG_XRESOLUTION, (float)frame->dpix);
-        pTIFFSetField(This->tiff, TIFFTAG_YRESOLUTION, (float)frame->dpiy);
+        TIFFSetField(This->tiff, TIFFTAG_RESOLUTIONUNIT, (uint16_t)2); /* Inch */
+        TIFFSetField(This->tiff, TIFFTAG_XRESOLUTION, (float)frame->dpix);
+        TIFFSetField(This->tiff, TIFFTAG_YRESOLUTION, (float)frame->dpiy);
     }
 
     if (This->format->bpp <= 8 && frame->num_colors && This->format->indexed)
     {
-        uint16 red[256], green[256], blue[256];
+        uint16_t red[256], green[256], blue[256];
         UINT i;
 
         for (i = 0; i < frame->num_colors; i++)
@@ -1317,7 +1216,7 @@ static HRESULT CDECL tiff_encoder_create_frame(struct encoder* iface, const stru
             blue[i] = (frame->palette[i] << 8) & 0xff00;
         }
 
-        pTIFFSetField(This->tiff, TIFFTAG_COLORMAP, red, green, blue);
+        TIFFSetField(This->tiff, TIFFTAG_COLORMAP, red, green, blue);
     }
 
     return S_OK;
@@ -1356,7 +1255,7 @@ static HRESULT CDECL tiff_encoder_write_lines(struct encoder* iface,
             row_data = swapped_data;
         }
 
-        pTIFFWriteScanline(This->tiff, (tdata_t)row_data, i+This->lines_written, 0);
+        TIFFWriteScanline(This->tiff, (tdata_t)row_data, i+This->lines_written, 0);
     }
 
     This->lines_written += line_count;
@@ -1373,7 +1272,7 @@ static HRESULT CDECL tiff_encoder_commit_file(struct encoder* iface)
 {
     struct tiff_encoder* This = impl_from_encoder(iface);
 
-    pTIFFClose(This->tiff);
+    TIFFClose(This->tiff);
     This->tiff = NULL;
 
     return S_OK;
@@ -1383,7 +1282,7 @@ static void CDECL tiff_encoder_destroy(struct encoder* iface)
 {
     struct tiff_encoder *This = impl_from_encoder(iface);
 
-    if (This->tiff) pTIFFClose(This->tiff);
+    if (This->tiff) TIFFClose(This->tiff);
     RtlFreeHeap(GetProcessHeap(), 0, This);
 }
 
@@ -1400,12 +1299,6 @@ static const struct encoder_funcs tiff_encoder_vtable = {
 HRESULT CDECL tiff_encoder_create(struct encoder_info *info, struct encoder **result)
 {
     struct tiff_encoder *This;
-
-    if (!load_libtiff())
-    {
-        ERR("Failed writing TIFF because unable to load %s\n",SONAME_LIBTIFF);
-        return E_FAIL;
-    }
 
     This = RtlAllocateHeap(GetProcessHeap(), 0, sizeof(*This));
     if (!This) return E_OUTOFMEMORY;
@@ -1425,19 +1318,3 @@ HRESULT CDECL tiff_encoder_create(struct encoder_info *info, struct encoder **re
 
     return S_OK;
 }
-
-#else /* !SONAME_LIBTIFF */
-
-HRESULT CDECL tiff_decoder_create(struct decoder_info *info, struct decoder **result)
-{
-    ERR("Trying to load TIFF picture, but Wine was compiled without TIFF support.\n");
-    return E_FAIL;
-}
-
-HRESULT CDECL tiff_encoder_create(struct encoder_info *info, struct encoder **result)
-{
-    ERR("Trying to save TIFF picture, but Wine was compiled without TIFF support.\n");
-    return E_FAIL;
-}
-
-#endif

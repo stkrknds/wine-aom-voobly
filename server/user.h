@@ -154,7 +154,7 @@ extern struct process *get_top_window_owner( struct desktop *desktop );
 extern void get_top_window_rectangle( struct desktop *desktop, rectangle_t *rect );
 extern void post_desktop_message( struct desktop *desktop, unsigned int message,
                                   lparam_t wparam, lparam_t lparam );
-extern void destroy_window( struct window *win );
+extern void free_window_handle( struct window *win );
 extern void destroy_thread_windows( struct thread *thread );
 extern int is_child_window( user_handle_t parent, user_handle_t child );
 extern int is_valid_foreground_window( user_handle_t window );
@@ -188,7 +188,8 @@ extern void connect_process_winstation( struct process *process, struct thread *
 extern void set_process_default_desktop( struct process *process, struct desktop *desktop,
                                          obj_handle_t handle );
 extern void close_process_desktop( struct process *process );
-extern void close_thread_desktop( struct thread *thread );
+extern void set_thread_default_desktop( struct thread *thread, struct desktop *desktop, obj_handle_t handle );
+extern void release_thread_desktop( struct thread *thread, int close );
 
 static inline int is_rect_empty( const rectangle_t *rect )
 {

@@ -25,6 +25,9 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(explorerframe);
 
+#define WM_WINE_DELETE_TAB      (WM_USER + 1)
+#define WM_WINE_ADD_TAB         (WM_USER + 2)
+
 struct taskbar_list
 {
     ITaskbarList4 ITaskbarList4_iface;
@@ -64,7 +67,7 @@ static ULONG STDMETHODCALLTYPE taskbar_list_AddRef(ITaskbarList4 *iface)
     struct taskbar_list *This = impl_from_ITaskbarList4(iface);
     ULONG refcount = InterlockedIncrement(&This->refcount);
 
-    TRACE("%p increasing refcount to %u\n", This, refcount);
+    TRACE("%p increasing refcount to %lu\n", This, refcount);
 
     return refcount;
 }
@@ -74,7 +77,7 @@ static ULONG STDMETHODCALLTYPE taskbar_list_Release(ITaskbarList4 *iface)
     struct taskbar_list *This = impl_from_ITaskbarList4(iface);
     ULONG refcount = InterlockedDecrement(&This->refcount);
 
-    TRACE("%p decreasing refcount to %u\n", This, refcount);
+    TRACE("%p decreasing refcount to %lu\n", This, refcount);
 
     if (!refcount)
     {
@@ -96,16 +99,18 @@ static HRESULT STDMETHODCALLTYPE taskbar_list_HrInit(ITaskbarList4 *iface)
 
 static HRESULT STDMETHODCALLTYPE taskbar_list_AddTab(ITaskbarList4 *iface, HWND hwnd)
 {
-    FIXME("iface %p, hwnd %p stub!\n", iface, hwnd);
+    TRACE("iface %p, hwnd %p\n", iface, hwnd);
 
-    return E_NOTIMPL;
+    SendMessageW(GetDesktopWindow(), WM_WINE_ADD_TAB, (WPARAM)hwnd, 0);
+    return S_OK;
 }
 
 static HRESULT STDMETHODCALLTYPE taskbar_list_DeleteTab(ITaskbarList4 *iface, HWND hwnd)
 {
-    FIXME("iface %p, hwnd %p stub!\n", iface, hwnd);
+    TRACE("iface %p, hwnd %p\n", iface, hwnd);
 
-    return E_NOTIMPL;
+    SendMessageW(GetDesktopWindow(), WM_WINE_DELETE_TAB, (WPARAM)hwnd, 0);
+    return S_OK;
 }
 
 static HRESULT STDMETHODCALLTYPE taskbar_list_ActivateTab(ITaskbarList4 *iface, HWND hwnd)
@@ -185,7 +190,7 @@ static HRESULT STDMETHODCALLTYPE taskbar_list_SetTabActive(ITaskbarList4 *iface,
                                                           HWND hwndMDI,
                                                           DWORD dwReserved)
 {
-    FIXME("iface %p, hwndTab %p, hwndMDI %p, dwReserved %x stub!\n", iface, hwndTab, hwndMDI, dwReserved);
+    FIXME("iface %p, hwndTab %p, hwndMDI %p, dwReserved %lx stub!\n", iface, hwndTab, hwndMDI, dwReserved);
 
     return E_NOTIMPL;
 }

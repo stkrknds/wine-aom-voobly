@@ -49,6 +49,237 @@ PEB * WINAPI RtlGetCurrentPeb(void)
 }
 
 
+/******************************************************************
+ *		RtlWow64EnableFsRedirection   (NTDLL.@)
+ */
+NTSTATUS WINAPI RtlWow64EnableFsRedirection( BOOLEAN enable )
+{
+    if (!NtCurrentTeb64()) return STATUS_NOT_IMPLEMENTED;
+    NtCurrentTeb64()->TlsSlots[WOW64_TLS_FILESYSREDIR] = !enable;
+    return STATUS_SUCCESS;
+}
+
+
+/******************************************************************
+ *		RtlWow64EnableFsRedirectionEx   (NTDLL.@)
+ */
+NTSTATUS WINAPI RtlWow64EnableFsRedirectionEx( ULONG disable, ULONG *old_value )
+{
+    if (!NtCurrentTeb64()) return STATUS_NOT_IMPLEMENTED;
+
+    __TRY
+    {
+        *old_value = NtCurrentTeb64()->TlsSlots[WOW64_TLS_FILESYSREDIR];
+    }
+    __EXCEPT_PAGE_FAULT
+    {
+        return STATUS_ACCESS_VIOLATION;
+    }
+    __ENDTRY
+
+    NtCurrentTeb64()->TlsSlots[WOW64_TLS_FILESYSREDIR] = disable;
+    return STATUS_SUCCESS;
+}
+
+
+/**********************************************************************
+ *           RtlWow64GetCurrentMachine  (NTDLL.@)
+ */
+USHORT WINAPI RtlWow64GetCurrentMachine(void)
+{
+    USHORT current, native;
+
+    RtlWow64GetProcessMachines( GetCurrentProcess(), &current, &native );
+    return current ? current : native;
+}
+
+
+/**********************************************************************
+ *           RtlWow64GetProcessMachines  (NTDLL.@)
+ */
+NTSTATUS WINAPI RtlWow64GetProcessMachines( HANDLE process, USHORT *current_ret, USHORT *native_ret )
+{
+    ULONG i, machines[8];
+    USHORT current = 0, native = 0;
+    NTSTATUS status;
+
+    status = NtQuerySystemInformationEx( SystemSupportedProcessorArchitectures, &process, sizeof(process),
+                                         machines, sizeof(machines), NULL );
+    if (status) return status;
+    for (i = 0; machines[i]; i++)
+    {
+        USHORT flags = HIWORD(machines[i]);
+        USHORT machine = LOWORD(machines[i]);
+        if (flags & 4 /* native machine */) native = machine;
+        else if (flags & 8 /* current machine */) current = machine;
+    }
+    if (current_ret) *current_ret = current;
+    if (native_ret) *native_ret = native;
+    return status;
+}
+
+
+/**********************************************************************
+ *           RtlWow64IsWowGuestMachineSupported  (NTDLL.@)
+ */
+NTSTATUS WINAPI RtlWow64IsWowGuestMachineSupported( USHORT machine, BOOLEAN *supported )
+{
+    ULONG i, machines[8];
+    HANDLE process = 0;
+    NTSTATUS status;
+
+    status = NtQuerySystemInformationEx( SystemSupportedProcessorArchitectures, &process, sizeof(process),
+                                         machines, sizeof(machines), NULL );
+    if (status) return status;
+    *supported = FALSE;
+    for (i = 0; machines[i]; i++)
+    {
+        if (HIWORD(machines[i]) & 4 /* native machine */) continue;
+        if (machine == LOWORD(machines[i])) *supported = TRUE;
+    }
+    return status;
+}
+
+
+#ifdef _WIN64
+
+/**********************************************************************
+ *           RtlWow64GetCpuAreaInfo  (NTDLL.@)
+ */
+NTSTATUS WINAPI RtlWow64GetCpuAreaInfo( WOW64_CPURESERVED *cpu, ULONG reserved, WOW64_CPU_AREA_INFO *info )
+{
+    static const struct { ULONG machine, align, size, offset, flag; } data[] =
+    {
+#define ENTRY(machine,type,flag) { machine, TYPE_ALIGNMENT(type), sizeof(type), offsetof(type,ContextFlags), flag },
+        ENTRY( IMAGE_FILE_MACHINE_I386, I386_CONTEXT, CONTEXT_i386 )
+        ENTRY( IMAGE_FILE_MACHINE_AMD64, AMD64_CONTEXT, CONTEXT_AMD64 )
+        ENTRY( IMAGE_FILE_MACHINE_ARMNT, ARM_CONTEXT, CONTEXT_ARM )
+        ENTRY( IMAGE_FILE_MACHINE_ARM64, ARM64_NT_CONTEXT, CONTEXT_ARM64 )
+#undef ENTRY
+    };
+    unsigned int i;
+
+    for (i = 0; i < ARRAY_SIZE(data); i++)
+    {
+#define ALIGN(ptr,align) ((void *)(((ULONG_PTR)(ptr) + (align) - 1) & ~((align) - 1)))
+        if (data[i].machine != cpu->Machine) continue;
+        info->Context = ALIGN( cpu + 1, data[i].align );
+        info->ContextEx = ALIGN( (char *)info->Context + data[i].size, sizeof(void *) );
+        info->ContextFlagsLocation = (char *)info->Context + data[i].offset;
+        info->ContextFlag = data[i].flag;
+        info->CpuReserved = cpu;
+        info->Machine = data[i].machine;
+        return STATUS_SUCCESS;
+#undef ALIGN
+    }
+    return STATUS_INVALID_PARAMETER;
+}
+
+
+/**********************************************************************
+ *           RtlWow64GetCurrentCpuArea  (NTDLL.@)
+ */
+NTSTATUS WINAPI RtlWow64GetCurrentCpuArea( USHORT *machine, void **context, void **context_ex )
+{
+    WOW64_CPU_AREA_INFO info;
+    NTSTATUS status;
+
+    if (!(status = RtlWow64GetCpuAreaInfo( NtCurrentTeb()->TlsSlots[WOW64_TLS_CPURESERVED], 0, &info )))
+    {
+        if (machine) *machine = info.Machine;
+        if (context) *context = info.Context;
+        if (context_ex) *context_ex = *(void **)info.ContextEx;
+    }
+    return status;
+}
+
+
+/******************************************************************************
+ *              RtlWow64GetThreadContext  (NTDLL.@)
+ */
+NTSTATUS WINAPI RtlWow64GetThreadContext( HANDLE handle, WOW64_CONTEXT *context )
+{
+    return NtQueryInformationThread( handle, ThreadWow64Context, context, sizeof(*context), NULL );
+}
+
+
+/******************************************************************************
+ *              RtlWow64SetThreadContext  (NTDLL.@)
+ */
+NTSTATUS WINAPI RtlWow64SetThreadContext( HANDLE handle, const WOW64_CONTEXT *context )
+{
+    return NtSetInformationThread( handle, ThreadWow64Context, context, sizeof(*context) );
+}
+
+/******************************************************************************
+ *              RtlWow64GetThreadSelectorEntry  (NTDLL.@)
+ */
+NTSTATUS WINAPI RtlWow64GetThreadSelectorEntry( HANDLE handle, THREAD_DESCRIPTOR_INFORMATION *info,
+                                                ULONG size, ULONG *retlen )
+{
+    DWORD sel;
+    WOW64_CONTEXT context = { WOW64_CONTEXT_CONTROL | WOW64_CONTEXT_SEGMENTS };
+    LDT_ENTRY entry = { 0 };
+
+    if (size != sizeof(*info)) return STATUS_INFO_LENGTH_MISMATCH;
+    if (RtlWow64GetThreadContext( handle, &context ))
+    {
+        /* hardcoded values */
+        context.SegCs = 0x23;
+#ifdef __x86_64__
+        __asm__( "movw %%fs,%0" : "=m" (context.SegFs) );
+        __asm__( "movw %%ss,%0" : "=m" (context.SegSs) );
+#else
+        context.SegSs = 0x2b;
+        context.SegFs = 0x53;
+#endif
+    }
+
+    sel = info->Selector | 3;
+    if (sel == 0x03) goto done; /* null selector */
+
+    /* set common data */
+    entry.HighWord.Bits.Dpl = 3;
+    entry.HighWord.Bits.Pres = 1;
+    entry.HighWord.Bits.Default_Big = 1;
+    if (sel == context.SegCs)  /* code selector */
+    {
+        entry.LimitLow = 0xffff;
+        entry.HighWord.Bits.LimitHi = 0xf;
+        entry.HighWord.Bits.Type = 0x1b;  /* code */
+        entry.HighWord.Bits.Granularity = 1;
+    }
+    else if (sel == context.SegSs)  /* data selector */
+    {
+        entry.LimitLow = 0xffff;
+        entry.HighWord.Bits.LimitHi = 0xf;
+        entry.HighWord.Bits.Type = 0x13;  /* data */
+        entry.HighWord.Bits.Granularity = 1;
+    }
+    else if (sel == context.SegFs)  /* TEB selector */
+    {
+        THREAD_BASIC_INFORMATION tbi;
+
+        entry.LimitLow = 0xfff;
+        entry.HighWord.Bits.Type = 0x13;  /* data */
+        if (!NtQueryInformationThread( handle, ThreadBasicInformation, &tbi, sizeof(tbi), NULL ))
+        {
+            ULONG addr = (ULONG_PTR)tbi.TebBaseAddress + 0x2000;  /* 32-bit teb offset */
+            entry.BaseLow = addr;
+            entry.HighWord.Bytes.BaseMid = addr >> 16;
+            entry.HighWord.Bytes.BaseHi  = addr >> 24;
+        }
+    }
+    else return STATUS_UNSUCCESSFUL;
+
+done:
+    info->Entry = entry;
+    if (retlen) *retlen = sizeof(entry);
+    return STATUS_SUCCESS;
+}
+
+#endif
+
 /**********************************************************************
  *           RtlCreateUserProcess  (NTDLL.@)
  */
@@ -321,5 +552,22 @@ void WINAPI DbgUiRemoteBreakin( void *arg )
  */
 NTSTATUS WINAPI DbgUiIssueRemoteBreakin( HANDLE process )
 {
-    return unix_funcs->DbgUiIssueRemoteBreakin( process );
+    HANDLE handle;
+    NTSTATUS status;
+    OBJECT_ATTRIBUTES attr = { sizeof(attr) };
+
+    status = NtCreateThreadEx( &handle, THREAD_ALL_ACCESS, &attr, process,
+                               DbgUiRemoteBreakin, NULL, 0, 0, 0, 0, NULL );
+#ifdef _WIN64
+    /* FIXME: hack for debugging 32-bit wow64 process without a 64-bit ntdll */
+    if (status == STATUS_INVALID_PARAMETER)
+    {
+        ULONG_PTR wow;
+        if (!NtQueryInformationProcess( process, ProcessWow64Information, &wow, sizeof(wow), NULL ) && wow)
+            status = NtCreateThreadEx( &handle, THREAD_ALL_ACCESS, &attr, process,
+                                       (void *)0x7ffe1000, NULL, 0, 0, 0, 0, NULL );
+    }
+#endif
+    if (!status) NtClose( handle );
+    return status;
 }

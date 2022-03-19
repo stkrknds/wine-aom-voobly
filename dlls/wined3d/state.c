@@ -25,13 +25,7 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-#include "wine/port.h"
-
 #include <stdio.h>
-#ifdef HAVE_FLOAT_H
-# include <float.h>
-#endif
 
 #include "wined3d_private.h"
 
@@ -55,7 +49,7 @@ static void wined3d_blend_state_destroy_object(void *object)
 
 ULONG CDECL wined3d_blend_state_decref(struct wined3d_blend_state *state)
 {
-    ULONG refcount = InterlockedDecrement(&state->refcount);
+    ULONG refcount = wined3d_atomic_decrement_mutex_lock(&state->refcount);
     struct wined3d_device *device = state->device;
 
     TRACE("%p decreasing refcount to %u.\n", state, refcount);
@@ -64,6 +58,7 @@ ULONG CDECL wined3d_blend_state_decref(struct wined3d_blend_state *state)
     {
         state->parent_ops->wined3d_object_destroyed(state->parent);
         wined3d_cs_destroy_object(device->cs, wined3d_blend_state_destroy_object, state);
+        wined3d_mutex_unlock();
     }
 
     return refcount;
@@ -129,7 +124,7 @@ static void wined3d_depth_stencil_state_destroy_object(void *object)
 
 ULONG CDECL wined3d_depth_stencil_state_decref(struct wined3d_depth_stencil_state *state)
 {
-    ULONG refcount = InterlockedDecrement(&state->refcount);
+    ULONG refcount = wined3d_atomic_decrement_mutex_lock(&state->refcount);
     struct wined3d_device *device = state->device;
 
     TRACE("%p decreasing refcount to %u.\n", state, refcount);
@@ -138,6 +133,7 @@ ULONG CDECL wined3d_depth_stencil_state_decref(struct wined3d_depth_stencil_stat
     {
         state->parent_ops->wined3d_object_destroyed(state->parent);
         wined3d_cs_destroy_object(device->cs, wined3d_depth_stencil_state_destroy_object, state);
+        wined3d_mutex_unlock();
     }
 
     return refcount;
@@ -192,7 +188,7 @@ static void wined3d_rasterizer_state_destroy_object(void *object)
 
 ULONG CDECL wined3d_rasterizer_state_decref(struct wined3d_rasterizer_state *state)
 {
-    ULONG refcount = InterlockedDecrement(&state->refcount);
+    ULONG refcount = wined3d_atomic_decrement_mutex_lock(&state->refcount);
     struct wined3d_device *device = state->device;
 
     TRACE("%p decreasing refcount to %u.\n", state, refcount);
@@ -201,6 +197,7 @@ ULONG CDECL wined3d_rasterizer_state_decref(struct wined3d_rasterizer_state *sta
     {
         state->parent_ops->wined3d_object_destroyed(state->parent);
         wined3d_cs_destroy_object(device->cs, wined3d_rasterizer_state_destroy_object, state);
+        wined3d_mutex_unlock();
     }
 
     return refcount;
@@ -278,11 +275,7 @@ static void state_lighting(struct wined3d_context *context, const struct wined3d
 
     /* Lighting is not enabled if transformed vertices are drawn, but lighting
      * does not affect the stream sources, so it is not grouped for
-     * performance reasons. This state reads the decoded vertex declaration,
-     * so if it is dirty don't do anything. The vertex declaration applying
-     * function calls this function for updating. */
-    if (isStateDirty(context, STATE_VDECL))
-        return;
+     * performance reasons. */
 
     if (state->render_states[WINED3D_RS_LIGHTING]
             && !context->stream_info.position_transformed)
@@ -1076,7 +1069,7 @@ static void state_stencil(struct wined3d_context *context, const struct wined3d_
     if (!(func_back = wined3d_gl_compare_func(d->desc.back.func)))
         func_back = GL_ALWAYS;
     mask = d->desc.stencil_read_mask;
-    ref = state->stencil_ref & ((1 << state->fb.depth_stencil->format->stencil_size) - 1);
+    ref = state->stencil_ref & wined3d_mask_from_size(state->fb.depth_stencil->format->stencil_size);
     stencilFail = gl_stencil_op(d->desc.front.fail_op);
     depthFail = gl_stencil_op(d->desc.front.depth_fail_op);
     stencilPass = gl_stencil_op(d->desc.front.pass_op);
@@ -1510,12 +1503,6 @@ static void state_colormat(struct wined3d_context *context, const struct wined3d
     const struct wined3d_gl_info *gl_info = context_gl->gl_info;
     GLenum Parm = 0;
 
-    /* Depends on the decoded vertex declaration to read the existence of
-     * diffuse data. The vertex declaration will call this function if the
-     * fixed function pipeline is used. */
-    if (isStateDirty(&context_gl->c, STATE_VDECL))
-        return;
-
     context_gl->untracked_material_count = 0;
     if ((context_gl->c.stream_info.use_map & (1u << WINED3D_FFP_DIFFUSE))
             && state->render_states[WINED3D_RS_COLORVERTEX])
@@ -1655,9 +1642,6 @@ static void state_linepattern_w(struct wined3d_context *context, const struct wi
 static void state_normalize(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
 {
     const struct wined3d_gl_info *gl_info = wined3d_context_gl(context)->gl_info;
-
-    if (isStateDirty(context, STATE_VDECL))
-        return;
 
     /* Without vertex normals, we set the current normal to 0/0/0 to remove the diffuse factor
      * from the opengl lighting equation, as d3d does. Normalization of 0/0/0 can lead to a division
@@ -3444,10 +3428,9 @@ static void transform_texture(struct wined3d_context *context, const struct wine
     unsigned int mapped_stage = context_gl->tex_unit_map[tex];
     struct wined3d_matrix mat;
 
-    /* Ignore this when a vertex shader is used, or if the streams aren't sorted out yet */
-    if (use_vs(state) || isStateDirty(context, STATE_VDECL))
+    if (use_vs(state))
     {
-        TRACE("Using a vertex shader, or stream sources not sorted out yet, skipping\n");
+        TRACE("Using a vertex shader, skipping.\n");
         return;
     }
 
@@ -4013,8 +3996,6 @@ static void transform_projection(struct wined3d_context *context, const struct w
 
 static void streamsrc(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
 {
-    if (isStateDirty(context, STATE_VDECL))
-        return;
     wined3d_context_gl_update_stream_sources(wined3d_context_gl(context), state);
 }
 
@@ -4218,6 +4199,22 @@ static void viewport_miscpart(struct wined3d_context *context, const struct wine
             viewports[i * 4 + 1] = vp[i].y;
             viewports[i * 4 + 2] = vp[i].width;
             viewports[i * 4 + 3] = vp[i].height;
+
+            /* Don't pass fractionals to GL if we earlier decided not to use
+             * this functionality for two reasons: First, GL might offer us
+             * fewer than 8 bits, and still make use of the fractional, in
+             * addition to the emulation we apply in shader_get_position_fixup.
+             * Second, even if GL tells us it has no subpixel precision (Mac OS!)
+             * it might still do something with the fractional amount, e.g.
+             * round it upwards. I can't find any info on rounding in
+             * GL_ARB_viewport_array. */
+            if (!context->d3d_info->subpixel_viewport)
+            {
+                viewports[i * 4]     = floor(viewports[i * 4]);
+                viewports[i * 4 + 1] = floor(viewports[i * 4 + 1]);
+                viewports[i * 4 + 2] = floor(viewports[i * 4 + 2]);
+                viewports[i * 4 + 3] = floor(viewports[i * 4 + 3]);
+            }
         }
 
         if (context->viewport_count > state->viewport_count)
@@ -4249,13 +4246,14 @@ static void viewport_miscpart_cc(struct wined3d_context *context,
     const struct wined3d_gl_info *gl_info = wined3d_context_gl(context)->gl_info;
     /* See get_projection_matrix() in utils.c for a discussion about those values. */
     float pixel_center_offset = context->d3d_info->wined3d_creation_flags
-            & WINED3D_PIXEL_CENTER_INTEGER ? 63.0f / 128.0f : -1.0f / 128.0f;
+            & WINED3D_PIXEL_CENTER_INTEGER ? 0.5f : 0.0f;
     struct wined3d_viewport vp[WINED3D_MAX_VIEWPORTS];
     GLdouble depth_ranges[2 * WINED3D_MAX_VIEWPORTS];
     GLfloat viewports[4 * WINED3D_MAX_VIEWPORTS];
     unsigned int i, reset_count = 0;
     float min_z, max_z;
 
+    pixel_center_offset += context->d3d_info->filling_convention_offset / 2.0f;
     get_viewports(context, state, state->viewport_count, vp);
 
     GL_EXTCALL(glClipControl(context->render_offscreen ? GL_UPPER_LEFT : GL_LOWER_LEFT, GL_ZERO_TO_ONE));
@@ -4458,7 +4456,7 @@ static void indexbuffer(struct wined3d_context *context, const struct wined3d_st
 {
     const struct wined3d_gl_info *gl_info = wined3d_context_gl(context)->gl_info;
     const struct wined3d_stream_info *stream_info = &context->stream_info;
-    struct wined3d_buffer_gl *buffer_gl;
+    struct wined3d_buffer *buffer;
 
     if (!state->index_buffer || !stream_info->all_vbo)
     {
@@ -4466,9 +4464,16 @@ static void indexbuffer(struct wined3d_context *context, const struct wined3d_st
         return;
     }
 
-    buffer_gl = wined3d_buffer_gl(state->index_buffer);
-    GL_EXTCALL(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buffer_gl->bo.id));
-    buffer_gl->bo_user.valid = true;
+    buffer = state->index_buffer;
+    if (buffer->buffer_object)
+    {
+        GL_EXTCALL(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, wined3d_bo_gl(buffer->buffer_object)->id));
+        buffer->bo_user.valid = true;
+    }
+    else
+    {
+        GL_EXTCALL(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0));
+    }
 }
 
 static void depth_clip(const struct wined3d_rasterizer_state *r, const struct wined3d_gl_info *gl_info)
@@ -4561,8 +4566,9 @@ static void state_cb(struct wined3d_context *context, const struct wined3d_state
 {
     const struct wined3d_gl_info *gl_info = wined3d_context_gl(context)->gl_info;
     enum wined3d_shader_type shader_type;
-    struct wined3d_buffer_gl *buffer_gl;
+    struct wined3d_buffer *buffer;
     unsigned int i, base, count;
+    struct wined3d_bo_gl *bo_gl;
 
     TRACE("context %p, state %p, state_id %#x.\n", context, state, state_id);
 
@@ -4571,18 +4577,26 @@ static void state_cb(struct wined3d_context *context, const struct wined3d_state
     else
         shader_type = WINED3D_SHADER_TYPE_COMPUTE;
 
+    /* If a shader has not been set, buffer objects are not yet initialised. */
+    if (!state->shader[shader_type])
+        return;
+
     wined3d_gl_limits_get_uniform_block_range(&gl_info->limits, shader_type, &base, &count);
     for (i = 0; i < count; ++i)
     {
-        if (!state->cb[shader_type][i])
+        const struct wined3d_constant_buffer_state *buffer_state = &state->cb[shader_type][i];
+
+        if (!buffer_state->buffer)
         {
             GL_EXTCALL(glBindBufferBase(GL_UNIFORM_BUFFER, base + i, 0));
             continue;
         }
 
-        buffer_gl = wined3d_buffer_gl(state->cb[shader_type][i]);
-        GL_EXTCALL(glBindBufferBase(GL_UNIFORM_BUFFER, base + i, buffer_gl->bo.id));
-        buffer_gl->bo_user.valid = true;
+        buffer = buffer_state->buffer;
+        bo_gl = wined3d_bo_gl(buffer->buffer_object);
+        GL_EXTCALL(glBindBufferRange(GL_UNIFORM_BUFFER, base + i,
+                bo_gl->id, bo_gl->b.buffer_offset + buffer_state->offset, buffer_state->size));
+        buffer->bo_user.valid = true;
     }
     checkGLcall("bind constant buffers");
 }
@@ -4625,15 +4639,16 @@ static void state_cs_uav_binding(struct wined3d_context *context,
 
 static void state_uav_warn(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
 {
-    WARN("ARB_image_load_store is not supported by OpenGL implementation.\n");
+    WARN("ARB_shader_image_load_store is not supported by this OpenGL implementation.\n");
 }
 
 static void state_so(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
 {
     struct wined3d_context_gl *context_gl = wined3d_context_gl(context);
     const struct wined3d_gl_info *gl_info = context_gl->gl_info;
-    struct wined3d_buffer_gl *buffer_gl;
+    struct wined3d_buffer *buffer;
     unsigned int offset, size, i;
+    struct wined3d_bo_gl *bo_gl;
 
     TRACE("context %p, state %p, state_id %#x.\n", context, state, state_id);
 
@@ -4647,16 +4662,18 @@ static void state_so(struct wined3d_context *context, const struct wined3d_state
             continue;
         }
 
-        buffer_gl = wined3d_buffer_gl(state->stream_output[i].buffer);
+        buffer = state->stream_output[i].buffer;
         offset = state->stream_output[i].offset;
+        bo_gl = wined3d_bo_gl(buffer->buffer_object);
         if (offset == ~0u)
         {
             FIXME("Appending to stream output buffers not implemented.\n");
             offset = 0;
         }
-        size = buffer_gl->b.resource.size - offset;
-        GL_EXTCALL(glBindBufferRange(GL_TRANSFORM_FEEDBACK_BUFFER, i, buffer_gl->bo.id, offset, size));
-        buffer_gl->bo_user.valid = true;
+        size = buffer->resource.size - offset;
+        GL_EXTCALL(glBindBufferRange(GL_TRANSFORM_FEEDBACK_BUFFER, i,
+                bo_gl->id, bo_gl->b.buffer_offset + offset, size));
+        buffer->bo_user.valid = true;
     }
     checkGLcall("bind transform feedback buffers");
 }

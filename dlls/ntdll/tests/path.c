@@ -31,6 +31,7 @@ static BOOLEAN (WINAPI *pRtlIsNameLegalDOS8Dot3)(const UNICODE_STRING*,POEM_STRI
 static DWORD (WINAPI *pRtlGetFullPathName_U)(const WCHAR*,ULONG,WCHAR*,WCHAR**);
 static BOOLEAN (WINAPI *pRtlDosPathNameToNtPathName_U)(const WCHAR*, UNICODE_STRING*, WCHAR**, CURDIR*);
 static NTSTATUS (WINAPI *pRtlDosPathNameToNtPathName_U_WithStatus)(const WCHAR*, UNICODE_STRING*, WCHAR**, CURDIR*);
+static NTSTATUS (WINAPI *pNtOpenFile)( HANDLE*, ACCESS_MASK, OBJECT_ATTRIBUTES*, IO_STATUS_BLOCK*, ULONG, ULONG );
 
 static void test_RtlDetermineDosPathNameType_U(void)
 {
@@ -119,42 +120,44 @@ static void test_RtlIsDosDeviceName_U(void)
         { "\\\\.\\CON",    8, 6, TRUE },  /* fails on win8 */
         { "\\\\.\\con",    8, 6, TRUE },  /* fails on win8 */
         { "\\\\.\\CON2",   0, 0 },
+        { "\\\\.\\CONIN$", 0, 0 },
+        { "\\\\.\\CONOUT$",0, 0 },
         { "",              0, 0 },
         { "\\\\foo\\nul",  0, 0 },
         { "c:\\nul:",      6, 6 },
         { "c:\\nul\\",     0, 0 },
         { "c:\\nul\\foo",  0, 0 },
-        { "c:\\nul::",     6, 6, TRUE },  /* fails on nt4 */
-        { "c:\\nul::::::", 6, 6, TRUE },  /* fails on nt4 */
+        { "c:\\nul::",     6, 6 },
+        { "c:\\nul::::::", 6, 6 },
         { "c:prn     ",    4, 6 },
         { "c:prn.......",  4, 6 },
         { "c:prn... ...",  4, 6 },
-        { "c:NUL  ....  ", 4, 6, TRUE },  /* fails on nt4 */
+        { "c:NUL  ....  ", 4, 6 },
         { "c: . . .",      0, 0 },
         { "c:",            0, 0 },
         { " . . . :",      0, 0 },
         { ":",             0, 0 },
         { "c:nul. . . :",  4, 6 },
-        { "c:nul . . :",   4, 6, TRUE },  /* fails on nt4 */
+        { "c:nul . . :",   4, 6 },
         { "c:nul0",        0, 0 },
-        { "c:prn:aaa",     4, 6, TRUE },  /* fails on win9x */
+        { "c:prn:aaa",     4, 6 },
         { "c:PRN:.txt",    4, 6 },
         { "c:aux:.txt...", 4, 6 },
         { "c:prn:.txt:",   4, 6 },
-        { "c:nul:aaa",     4, 6, TRUE },  /* fails on win9x */
+        { "c:nul:aaa",     4, 6 },
         { "con:",          0, 6 },
         { "lpt1:",         0, 8 },
         { "c:com5:",       4, 8 },
         { "CoM4:",         0, 8 },
         { "lpt9:",         0, 8 },
         { "c:\\lpt0.txt",  0, 0 },
-        { "CONIN$",        0, 12, TRUE }, /* fails on winxp */
-        { "CONOUT$",       0, 14, TRUE }, /* fails on winxp */
+        { "CONIN$",        0, 12, TRUE }, /* fails on win7 */
+        { "CONOUT$",       0, 14, TRUE }, /* fails on win7 */
         { "CONERR$",       0, 0 },
         { "CON",           0, 6 },
         { "PIPE",          0, 0 },
-        { "\\??\\CONIN$",  8, 12, TRUE }, /* fails on winxp */
-        { "\\??\\CONOUT$", 8, 14, TRUE }, /* fails on winxp */
+        { "\\??\\CONIN$",  8, 12, TRUE }, /* fails on win7 */
+        { "\\??\\CONOUT$", 8, 14, TRUE }, /* fails on win7 */
         { "\\??\\CONERR$", 0, 0 },
         { "\\??\\CON",     8, 6 },
         { "c:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -316,6 +319,11 @@ static void test_RtlGetFullPathName_U(void)
             { "...",                         "C:\\windows\\",    NULL},
             { "./foo",                       "C:\\windows\\foo", "foo"},
             { "foo/..",                      "C:\\windows",      "windows"},
+            { "\\windows\\nul",              "\\\\.\\nul",       NULL},
+            { "C:\\nonexistent\\nul",        "\\\\.\\nul",       NULL},
+            { "C:\\con\\con",                "\\\\.\\con",       NULL},
+            { "C:NUL.",                      "\\\\.\\NUL",       NULL},
+            { "C:NUL",                       "\\\\.\\NUL",       NULL},
             { "AUX",                         "\\\\.\\AUX",       NULL},
             { "COM1",                        "\\\\.\\COM1",      NULL},
             { "?<>*\"|:",                    "C:\\windows\\?<>*\"|:", "?<>*\"|:"},
@@ -414,8 +422,6 @@ static void test_RtlGetFullPathName_U(void)
 
 static void test_RtlDosPathNameToNtPathName_U(void)
 {
-    static const WCHAR broken_global_prefix[] = L"\\??\\C:\\??";
-
     char curdir[MAX_PATH];
     UNICODE_STRING nameW;
     WCHAR *file_part;
@@ -429,6 +435,7 @@ static void test_RtlDosPathNameToNtPathName_U(void)
         const WCHAR *nt;
         int file_offset;    /* offset to file part */
         const WCHAR *alt_nt;
+        BOOL may_fail;
     }
     tests[] =
     {
@@ -470,6 +477,9 @@ static void test_RtlDosPathNameToNtPathName_U(void)
         {L"...",            L"\\??\\C:\\windows\\",         -1},
         {L"./foo",          L"\\??\\C:\\windows\\foo",      15},
         {L"foo/..",         L"\\??\\C:\\windows",            7},
+        {L"\\windows\\nul", L"\\??\\nul",                   -1},
+        {L"C:NUL.",         L"\\??\\NUL",                   -1},
+        {L"C:NUL",          L"\\??\\NUL",                   -1},
         {L"AUX" ,           L"\\??\\AUX",                   -1},
         {L"COM1" ,          L"\\??\\COM1",                  -1},
         {L"?<>*\"|:",       L"\\??\\C:\\windows\\?<>*\"|:", 15},
@@ -510,6 +520,9 @@ static void test_RtlDosPathNameToNtPathName_U(void)
         {L"\\\\.\\foo/.",   L"\\??\\foo",                    4},
         {L"\\\\.\\foo/..",  L"\\??\\",                      -1},
         {L"\\\\.\\foo. . ", L"\\??\\foo",                    4},
+        {L"\\\\.\\CON",     L"\\??\\CON",                    4, NULL, TRUE}, /* broken on win7 */
+        {L"\\\\.\\CONIN$",  L"\\??\\CONIN$",                 4},
+        {L"\\\\.\\CONOUT$", L"\\??\\CONOUT$",                4},
 
         {L"\\\\?",          L"\\??\\",                      -1},
         {L"\\\\?\\",        L"\\??\\",                      -1},
@@ -545,42 +558,42 @@ static void test_RtlDosPathNameToNtPathName_U(void)
         {L"\\??\\foo\\..",  L"\\??\\foo\\..",                8},
         {L"\\??\\foo. . ",  L"\\??\\foo. . ",                4},
 
-        {L"CONIN$",         L"\\??\\CONIN$",                -1, L"\\??\\C:\\windows\\CONIN$"  /* winxp */ },
-        {L"CONOUT$",        L"\\??\\CONOUT$",               -1, L"\\??\\C:\\windows\\CONOUT$" /* winxp */ },
-        {L"cOnOuT$",        L"\\??\\cOnOuT$",               -1, L"\\??\\C:\\windows\\cOnOuT$" /* winxp */ },
+        {L"CONIN$",         L"\\??\\CONIN$",                -1, L"\\??\\C:\\windows\\CONIN$"   /* win7 */ },
+        {L"CONOUT$",        L"\\??\\CONOUT$",               -1, L"\\??\\C:\\windows\\CONOUT$"  /* win7 */ },
+        {L"cOnOuT$",        L"\\??\\cOnOuT$",               -1, L"\\??\\C:\\windows\\cOnOuT$"  /* win7 */ },
         {L"CONERR$",        L"\\??\\C:\\windows\\CONERR$",  15},
+    };
+    static const WCHAR *error_paths[] = {
+        NULL, L"", L" ", L"C:\\nonexistent\\nul", L"C:\\con\\con"
     };
 
     GetCurrentDirectoryA(sizeof(curdir), curdir);
     SetCurrentDirectoryA("C:\\windows\\");
 
-    ret = pRtlDosPathNameToNtPathName_U(NULL, &nameW, &file_part, NULL);
-    ok(!ret, "Got %d.\n", ret);
-
-    ret = pRtlDosPathNameToNtPathName_U(L"", &nameW, &file_part, NULL);
-    ok(!ret, "Got %d.\n", ret);
-
-    ret = pRtlDosPathNameToNtPathName_U(L" ", &nameW, &file_part, NULL);
-    ok(!ret, "Got %d.\n", ret);
-
-    if (pRtlDosPathNameToNtPathName_U_WithStatus)
+    for (i = 0; i < ARRAY_SIZE(error_paths); ++i)
     {
-        status = pRtlDosPathNameToNtPathName_U_WithStatus(NULL, &nameW, &file_part, NULL);
-        ok(status == STATUS_OBJECT_NAME_INVALID || status == STATUS_OBJECT_PATH_NOT_FOUND /* 2003 */,
-                "Got status %#x.\n", status);
+        winetest_push_context("%s", debugstr_w(error_paths[i]));
 
-        status = pRtlDosPathNameToNtPathName_U_WithStatus(L"", &nameW, &file_part, NULL);
-        ok(status == STATUS_OBJECT_NAME_INVALID || status == STATUS_OBJECT_PATH_NOT_FOUND /* 2003 */,
-                "Got status %#x.\n", status);
+        ret = pRtlDosPathNameToNtPathName_U(error_paths[i], &nameW, &file_part, NULL);
+        ok(!ret, "Got %d.\n", ret);
 
-        status = pRtlDosPathNameToNtPathName_U_WithStatus(L" ", &nameW, &file_part, NULL);
-        ok(status == STATUS_OBJECT_NAME_INVALID || status == STATUS_OBJECT_PATH_NOT_FOUND /* 2003 */,
-                "Got status %#x.\n", status);
+        if (pRtlDosPathNameToNtPathName_U_WithStatus)
+        {
+            status = pRtlDosPathNameToNtPathName_U_WithStatus(error_paths[i], &nameW, &file_part, NULL);
+            ok(status == STATUS_OBJECT_NAME_INVALID, "Got status %#x.\n", status);
+        }
+
+        winetest_pop_context();
     }
 
     for (i = 0; i < ARRAY_SIZE(tests); ++i)
     {
         ret = pRtlDosPathNameToNtPathName_U(tests[i].dos, &nameW, &file_part, NULL);
+        if (!ret && tests[i].may_fail)
+        {
+            win_skip("skipping broken %s\n", debugstr_w(tests[i].dos));
+            continue;
+        }
         ok(ret == TRUE, "%s: Got %d.\n", debugstr_w(tests[i].dos), ret);
 
         if (pRtlDosPathNameToNtPathName_U_WithStatus)
@@ -588,13 +601,6 @@ static void test_RtlDosPathNameToNtPathName_U(void)
             RtlFreeUnicodeString(&nameW);
             status = pRtlDosPathNameToNtPathName_U_WithStatus(tests[i].dos, &nameW, &file_part, NULL);
             ok(status == STATUS_SUCCESS, "%s: Got status %#x.\n", debugstr_w(tests[i].dos), status);
-        }
-
-        if (!wcsncmp(tests[i].dos, L"\\??\\", 4) && tests[i].dos[4] &&
-            broken(!wcsncmp(nameW.Buffer, broken_global_prefix, wcslen(broken_global_prefix))))
-        {
-            /* Windows version prior to 2003 don't interpret the \??\ prefix */
-            continue;
         }
 
         ok(!wcscmp(nameW.Buffer, tests[i].nt)
@@ -619,6 +625,98 @@ static void test_RtlDosPathNameToNtPathName_U(void)
     SetCurrentDirectoryA(curdir);
 }
 
+static void test_nt_names(void)
+{
+    static const struct { const WCHAR *root, *name; NTSTATUS expect, broken; BOOL todo; } tests[] =
+    {
+        { NULL, L"\\??\\C:\\windows\\system32\\kernel32.dll", STATUS_SUCCESS },
+        { NULL, L"\\??\\C:\\\\windows\\system32\\kernel32.dll", STATUS_SUCCESS, STATUS_OBJECT_NAME_INVALID },
+        { NULL, L"\\??\\C:\\windows\\system32\\", STATUS_FILE_IS_A_DIRECTORY },
+        { NULL, L"\\??\\C:\\\\\\windows\\system32\\kernel32.dll", STATUS_OBJECT_NAME_INVALID },
+        { NULL, L"\\??\\C:\\windows\\\\system32\\kernel32.dll", STATUS_OBJECT_NAME_INVALID },
+        { NULL, L"\\??\\C:\\windows\\system32\\.\\kernel32.dll", STATUS_OBJECT_NAME_INVALID, STATUS_OBJECT_PATH_NOT_FOUND },
+        { NULL, L"\\??\\C:\\windows\\system32\\..\\system32\\kernel32.dll", STATUS_OBJECT_NAME_INVALID },
+        { NULL, L"\\??\\C:\\.\\windows\\system32\\kernel32.dll", STATUS_OBJECT_NAME_INVALID, STATUS_OBJECT_PATH_NOT_FOUND },
+        { NULL, L"\\??\\C:\\windows\\system32\\kernel32.dll   ", STATUS_OBJECT_NAME_NOT_FOUND },
+        { NULL, L"\\??\\C:\\windows\\system32\\kernel32.dll..", STATUS_OBJECT_NAME_NOT_FOUND },
+        { NULL, L"\\??\\C:\\windows   \\system32   \\kernel32.dll", STATUS_OBJECT_PATH_NOT_FOUND },
+        { NULL, L"\\??\\C:\\windows.\\system32.\\kernel32.dll", STATUS_OBJECT_PATH_NOT_FOUND },
+        { NULL, L"\\??\\C:\\windows/system32/kernel32.dll", STATUS_OBJECT_NAME_INVALID },
+        { NULL, L"\\??\\C:\\windows\\system32\\kernel32.dll*", STATUS_OBJECT_NAME_INVALID },
+        { NULL, L"\\??\\C:\\windows\\system32?\\kernel32.dll", STATUS_OBJECT_NAME_INVALID },
+        { NULL, L"C:\\windows\\system32?\\kernel32.dll", STATUS_OBJECT_PATH_SYNTAX_BAD },
+        { NULL, L"/??\\C:\\windows\\system32\\kernel32.dll", STATUS_OBJECT_PATH_SYNTAX_BAD },
+        { NULL, L"\\??" L"/C:\\windows\\system32\\kernel32.dll", STATUS_OBJECT_PATH_NOT_FOUND },
+        { NULL, L"\\??\\C:/windows\\system32\\kernel32.dll", STATUS_OBJECT_PATH_NOT_FOUND },
+        { NULL, L"\\??\\C:\\windows\\system32\\kernel32.dll\\", STATUS_OBJECT_NAME_INVALID, 0, TRUE },
+        { NULL, L"\\??\\C:\\windows\\system32\\kernel32.dll\\foo", STATUS_OBJECT_PATH_NOT_FOUND, 0, TRUE },
+        { NULL, L"\\??\\C:\\windows\\sys\001", STATUS_OBJECT_NAME_INVALID },
+        { L"\\??\\", NULL, STATUS_OBJECT_NAME_INVALID },
+        { L"\\??\\C:\\", NULL, STATUS_SUCCESS },
+        { L"\\??\\C:\\\\", NULL, STATUS_SUCCESS, STATUS_OBJECT_NAME_INVALID },
+        { L"/??\\C:\\", NULL, STATUS_OBJECT_PATH_SYNTAX_BAD },
+        { L"\\??\\C:/", NULL, STATUS_OBJECT_NAME_NOT_FOUND },
+        { L"\\??" L"/C:", NULL, STATUS_OBJECT_NAME_NOT_FOUND },
+        { L"\\??" L"/C:\\", NULL, STATUS_OBJECT_PATH_NOT_FOUND },
+        { L"\\??\\C:\\windows", NULL, STATUS_SUCCESS },
+        { L"\\??\\C:\\windows\\", NULL, STATUS_SUCCESS },
+        { L"\\??\\C:\\windows\\.", NULL, STATUS_OBJECT_NAME_INVALID },
+        { L"\\??\\C:\\windows\\.\\", NULL, STATUS_OBJECT_NAME_INVALID },
+        { L"\\??\\C:\\windows\\..", NULL, STATUS_OBJECT_NAME_INVALID },
+        { L"\\??\\C:\\windows\\..\\", NULL, STATUS_OBJECT_NAME_INVALID },
+        { L"\\??\\C:\\", L"windows\\system32\\kernel32.dll", STATUS_SUCCESS },
+        { L"\\??\\C:\\\\", L"windows\\system32\\kernel32.dll", STATUS_SUCCESS, STATUS_OBJECT_NAME_INVALID },
+        { L"\\??\\C:\\windows", L"system32\\kernel32.dll", STATUS_SUCCESS },
+        { L"\\??\\C:\\windows\\", L"system32\\kernel32.dll", STATUS_SUCCESS },
+        { L"\\??\\C:\\windows\\", L"system32\\", STATUS_FILE_IS_A_DIRECTORY },
+        { L"\\??\\C:\\windows\\", L"system32\\kernel32.dll\\", STATUS_OBJECT_NAME_INVALID, 0, TRUE },
+        { L"\\??\\C:\\windows\\", L"system32\\kernel32.dll\\foo", STATUS_OBJECT_PATH_NOT_FOUND, 0, TRUE },
+        { L"\\??\\C:\\windows\\", L"\\system32\\kernel32.dll", STATUS_INVALID_PARAMETER },
+        { L"\\??\\C:\\windows\\", L"/system32\\kernel32.dll", STATUS_OBJECT_NAME_INVALID },
+        { L"\\??\\C:\\windows\\", L".\\system32\\kernel32.dll", STATUS_OBJECT_NAME_INVALID, STATUS_OBJECT_PATH_NOT_FOUND },
+        { L"\\??\\C:\\windows\\", L"..\\windows\\system32\\kernel32.dll", STATUS_OBJECT_NAME_INVALID },
+        { L"\\??\\C:\\windows\\", L".", STATUS_OBJECT_NAME_INVALID },
+        { L"\\??\\C:\\windows\\", L"..", STATUS_OBJECT_NAME_INVALID },
+        { L"\\??\\C:\\windows\\", L"sys\001", STATUS_OBJECT_NAME_INVALID },
+        { L"C:\\", L"windows\\system32\\kernel32.dll", STATUS_OBJECT_PATH_SYNTAX_BAD },
+    };
+    unsigned int i;
+    OBJECT_ATTRIBUTES attr;
+    UNICODE_STRING nameW;
+    IO_STATUS_BLOCK io;
+    NTSTATUS status;
+    HANDLE handle;
+
+    InitializeObjectAttributes( &attr, &nameW, OBJ_CASE_INSENSITIVE, 0, NULL );
+
+    for (i = 0; i < ARRAY_SIZE(tests); i++)
+    {
+        attr.RootDirectory = 0;
+        handle = 0;
+        status = STATUS_SUCCESS;
+        if (tests[i].root)
+        {
+            RtlInitUnicodeString( &nameW, tests[i].root );
+            status = pNtOpenFile( &attr.RootDirectory, SYNCHRONIZE | FILE_LIST_DIRECTORY, &attr, &io,
+                                  FILE_SHARE_READ, FILE_SYNCHRONOUS_IO_NONALERT |
+                                  FILE_OPEN_FOR_BACKUP_INTENT | FILE_DIRECTORY_FILE );
+        }
+        if (!status && tests[i].name)
+        {
+            RtlInitUnicodeString( &nameW, tests[i].name );
+            status = pNtOpenFile( &handle, FILE_GENERIC_READ, &attr, &io, FILE_SHARE_READ,
+                                  FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE );
+        }
+        if (attr.RootDirectory) NtClose( attr.RootDirectory );
+        if (handle) NtClose( handle );
+        todo_wine_if( tests[i].todo )
+        ok( status == tests[i].expect || broken( tests[i].broken && status == tests[i].broken ),
+            "%u: got %x / %x for %s + %s\n", i, status, tests[i].expect,
+            debugstr_w( tests[i].root ), debugstr_w( tests[i].name ));
+    }
+}
+
+
 START_TEST(path)
 {
     HMODULE mod = GetModuleHandleA("ntdll.dll");
@@ -632,10 +730,12 @@ START_TEST(path)
     pRtlGetFullPathName_U = (void *)GetProcAddress(mod,"RtlGetFullPathName_U");
     pRtlDosPathNameToNtPathName_U = (void *)GetProcAddress(mod, "RtlDosPathNameToNtPathName_U");
     pRtlDosPathNameToNtPathName_U_WithStatus = (void *)GetProcAddress(mod, "RtlDosPathNameToNtPathName_U_WithStatus");
+    pNtOpenFile             = (void *)GetProcAddress(mod, "NtOpenFile");
 
     test_RtlDetermineDosPathNameType_U();
     test_RtlIsDosDeviceName_U();
     test_RtlIsNameLegalDOS8Dot3();
     test_RtlGetFullPathName_U();
     test_RtlDosPathNameToNtPathName_U();
+    test_nt_names();
 }

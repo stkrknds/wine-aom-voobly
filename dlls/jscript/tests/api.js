@@ -16,6 +16,15 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+var JS_E_NUMBER_EXPECTED = 0x800a1389;
+var JS_E_FUNCTION_EXPECTED = 0x800a138a;
+var JS_E_DATE_EXPECTED = 0x800a138e;
+var JS_E_OBJECT_EXPECTED = 0x800a138f;
+var JS_E_BOOLEAN_EXPECTED = 0x800a1392;
+var JS_E_VBARRAY_EXPECTED = 0x800a1395;
+var JS_E_ENUMERATOR_EXPECTED = 0x800a1397;
+var JS_E_REGEXP_EXPECTED = 0x800a1398;
+
 var tmp, i;
 
 var bigInt = Math.pow(2,40);
@@ -753,10 +762,14 @@ tmp = "test".toLowerCase(3);
 ok(tmp === "test", "''.toLowerCase(3) = " + tmp);
 tmp = "tEsT".toLowerCase();
 ok(tmp === "test", "''.toLowerCase() = " + tmp);
+tmp = "tEsT".toLocaleLowerCase();
+ok(tmp === "test", "''.toLocaleLowerCase() = " + tmp);
 tmp = "tEsT".toLowerCase(3);
 ok(tmp === "test", "''.toLowerCase(3) = " + tmp);
 tmp = ("tE" + String.fromCharCode(0) + "sT").toLowerCase();
 ok(tmp === "te" + String.fromCharCode(0) + "st", "''.toLowerCase() = " + tmp);
+ok(String.prototype.toLocaleLowerCase != String.prototype.toLowerCase,
+   "String.prototype.toLocaleLowerCase == String.prototype.toLowerCase");
 
 tmp = "".toUpperCase();
 ok(tmp === "", "''.toUpperCase() = " + tmp);
@@ -768,8 +781,12 @@ tmp = "tEsT".toUpperCase();
 ok(tmp === "TEST", "''.toUpperCase() = " + tmp);
 tmp = "tEsT".toUpperCase(3);
 ok(tmp === "TEST", "''.toUpperCase(3) = " + tmp);
+tmp = "tEsT".toLocaleUpperCase(3);
+ok(tmp === "TEST", "''.toLocaleUpperCase(3) = " + tmp);
 tmp = ("tE" + String.fromCharCode(0) + "sT").toUpperCase();
 ok(tmp === "TE" + String.fromCharCode(0) + "ST", "''.toUpperCase() = " + tmp);
+ok(String.prototype.toLocaleUpperCase != String.prototype.toUpperCase,
+   "String.prototype.toLocaleUpperCase == String.prototype.toUpperCase");
 
 tmp = "".anchor();
 ok(tmp === "<A NAME=\"undefined\"></A>", "''.anchor() = " + tmp);
@@ -1915,7 +1932,7 @@ ok(isNaN(tmp), "Math.tan(-Infinity) is not NaN");
         [[NaN], "null"],
         [[Infinity], "null"],
         [[-Infinity], "null"],
-        [[{prop1: true, prop2: "string"}], "{\"prop1\":true,\"prop2\":\"string\"}"],
+        [[{prop1: true, prop2: "string", func1: function() {}}], "{\"prop1\":true,\"prop2\":\"string\"}"],
         [[{prop1: true, prop2: testObj, prop3: undefined}], "{\"prop1\":true}"],
         [[{prop1: true, prop2: {prop: "string"}},undefined,"  "],
                 "{\n  \"prop1\": true,\n  \"prop2\": {\n    \"prop\": \"string\"\n  }\n}"],
@@ -1942,6 +1959,25 @@ ok(isNaN(tmp), "Math.tan(-Infinity) is not NaN");
     s = JSON.stringify(undefined);
     ok(s === undefined || s === "undefined" /* broken on some old versions */,
        "stringify(undefined) returned " + s + " expected undefined");
+
+    s = JSON.stringify(1, function(name, value) {
+        ok(name === "", "name = " + name);
+        ok(value === 1, "value = " + value);
+        ok(this[name] === value, "this[" + name + "] = " + this[name] + " expected " + value);
+        return 2;
+    });
+    ok(s == "2", "s = " + s);
+
+    var o = { prop: 1 };
+        s = JSON.stringify(1, function(name, value) {
+        ok(name === "" || name === "prop", "name = " + name);
+        ok(value === 1 || value === true, "value = " + value);
+        ok(this[name] === value, "this[" + name + "] = " + this[name] + " expected " + value);
+        if(name === "") return o;
+        ok(this === o, "this != o");
+        return value;
+    });
+    ok(s == "{\"prop\":1}", "s = " + s);
 
     var parse_tests = [
         ["true", true],
@@ -3033,6 +3069,50 @@ ok(unescape.length == 1, "unescape.length = " + unescape.length);
 
 String.length = 3;
 ok(String.length == 1, "String.length = " + String.length);
+
+(function() {
+    var tests = [
+        [ "Array.sort",             JS_E_OBJECT_EXPECTED,        function(ctx) { Array.prototype.sort.call(ctx); } ],
+        [ "Boolean.valueOf",        JS_E_BOOLEAN_EXPECTED,       function(ctx) { Boolean.prototype.valueOf.call(ctx); } ],
+        [ "Date.getYear",           JS_E_DATE_EXPECTED,          function(ctx) { Date.prototype.getYear.call(ctx); } ],
+        [ "Enumerator.atEnd",       JS_E_ENUMERATOR_EXPECTED,    function(ctx) { Enumerator.prototype.atEnd.call(ctx); } ],
+        [ "Function.apply",         JS_E_FUNCTION_EXPECTED,      function(ctx) { Function.prototype.apply.call(ctx, [ function() {} ]); } ],
+        [ "Number.toExponential",   JS_E_NUMBER_EXPECTED,        function(ctx) { Number.prototype.toExponential.call(ctx); } ],
+        [ "Object.hasOwnProperty",  JS_E_OBJECT_EXPECTED,        function(ctx) { Object.prototype.hasOwnProperty.call(ctx, "toString"); } ],
+        [ "RegExp.test",            JS_E_REGEXP_EXPECTED,        function(ctx) { RegExp.prototype.test.call(ctx, "foobar"); } ],
+        [ "VBArray.lbound",         JS_E_VBARRAY_EXPECTED,       function(ctx) { VBArray.prototype.lbound.call(ctx); } ]
+    ];
+
+    for(var i = 0; i < tests.length; i++) {
+        try {
+            tests[i][2](null);
+            ok(false, "expected exception calling " + tests[i][0] + " with null context");
+        }catch(ex) {
+            var n = ex.number >>> 0; /* make it unsigned like HRESULT */
+            ok(n === tests[i][1], tests[i][0] + " with null context exception code = " + n);
+        }
+        try {
+            tests[i][2](undefined);
+            ok(false, "expected exception calling " + tests[i][0] + " with undefined context");
+        }catch(ex) {
+            var n = ex.number >>> 0;
+            ok(n === tests[i][1], tests[i][0] + " with undefined context exception code = " + n);
+        }
+    }
+
+    var r = Error.prototype.toString.call(undefined);
+    ok(r === "[object Error]", "Error.toString with undefined context returned " + r);
+    r = String.prototype.slice.call(null, 1, 3);
+    ok(r === "ul", "String.slice with null context returned " + r);
+    r = String.prototype.slice.call(undefined, 2, 5);
+    ok(r === "def", "String.slice with undefined context returned " + r);
+    r = (function() { return this; }).call(null);
+    ok(r === test, "wrong 'this' of function with null context");
+    r = (function() { return this; }).call(undefined);
+    ok(r === test, "wrong 'this' of function with undefined context");
+    r = (function() { return this; }).call(42);
+    ok(r.valueOf() === 42, "'this' of function with 42 context = " + r);
+})();
 
 var tmp = createArray();
 ok(getVT(tmp) == "VT_ARRAY|VT_VARIANT", "getVT(createArray()) = " + getVT(tmp));

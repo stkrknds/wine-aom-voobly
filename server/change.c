@@ -20,7 +20,6 @@
  */
 
 #include "config.h"
-#include "wine/port.h"
 
 #include <assert.h>
 #include <fcntl.h>
@@ -32,9 +31,8 @@
 #include <limits.h>
 #include <dirent.h>
 #include <errno.h>
-#ifdef HAVE_POLL_H
-# include <poll.h>
-#endif
+#include <unistd.h>
+#include <poll.h>
 #ifdef HAVE_SYS_INOTIFY_H
 #include <sys/inotify.h>
 #endif
@@ -144,6 +142,7 @@ static const struct fd_ops dir_fd_ops =
     default_fd_get_file_info,    /* get_file_info */
     no_fd_get_volume_info,       /* get_volume_info */
     default_fd_ioctl,            /* ioctl */
+    default_fd_cancel_async,     /* cancel_async */
     default_fd_queue_async,      /* queue_async */
     default_fd_reselect_async    /* reselect_async */
 };
@@ -365,7 +364,7 @@ static int dir_set_sd( struct object *obj, const struct security_descriptor *sd,
                        unsigned int set_info )
 {
     struct dir *dir = (struct dir *)obj;
-    const SID *owner;
+    const struct sid *owner;
     struct stat st;
     mode_t mode;
     int unix_fd;
@@ -384,7 +383,7 @@ static int dir_set_sd( struct object *obj, const struct security_descriptor *sd,
             set_error( STATUS_INVALID_SECURITY_DESCR );
             return 0;
         }
-        if (!obj->sd || !security_equal_sid( owner, sd_get_owner( obj->sd ) ))
+        if (!obj->sd || !equal_sid( owner, sd_get_owner( obj->sd ) ))
         {
             /* FIXME: get Unix uid and call fchown */
         }
@@ -421,7 +420,6 @@ static int dir_close_handle( struct object *obj, struct process *process, obj_ha
 {
     struct dir *dir = (struct dir *)obj;
 
-    if (!fd_close_handle( obj, process, handle )) return 0;
     if (obj->handle_count == 1) release_dir_cache_entry( dir ); /* closing last handle, release cache */
     return 1;  /* ok to close */
 }

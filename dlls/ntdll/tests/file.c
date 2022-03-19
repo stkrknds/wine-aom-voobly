@@ -1113,7 +1113,7 @@ static void test_file_io_completion(void)
     U(iosb).Status = 0xdeadbeef;
     res = pNtSetInformationFile( server, &iosb, &fci, sizeof(fci), FileCompletionInformation );
     ok( res == STATUS_INVALID_PARAMETER, "NtSetInformationFile failed: %#x\n", res );
-todo_wine
+    todo_wine
     ok( U(iosb).Status == 0xdeadbeef, "wrong status %#x\n", U(iosb).Status );
     CloseHandle( client );
     CloseHandle( server );
@@ -2176,6 +2176,7 @@ static void test_file_link_information(void)
     WCHAR tmp_path[MAX_PATH], oldpath[MAX_PATH + 16], newpath[MAX_PATH + 16], *filename, *p;
     FILE_LINK_INFORMATION *fli;
     FILE_NAME_INFORMATION *fni;
+    WIN32_FIND_DATAW find_data;
     BOOL success, fileDeleted;
     UNICODE_STRING name_str;
     HANDLE handle, handle2;
@@ -2279,6 +2280,46 @@ static void test_file_link_information(void)
     ok( !fileDeleted, "file should exist\n" );
 
     CloseHandle( handle );
+    HeapFree( GetProcessHeap(), 0, fli );
+    delete_object( oldpath );
+    delete_object( newpath );
+
+    /* oldpath is a file, newpath is a file, ReplaceIfExists = TRUE, different casing on link */
+    res = GetTempFileNameW( tmp_path, fooW, 0, oldpath );
+    ok( res != 0, "failed to create temp file\n" );
+    handle = CreateFileW( oldpath, GENERIC_WRITE | DELETE, 0, NULL, CREATE_ALWAYS, 0, 0 );
+    ok( handle != INVALID_HANDLE_VALUE, "CreateFileW failed\n" );
+
+    res = GetTempFileNameW( tmp_path, fooW, 0, newpath );
+    ok( res != 0, "failed to create temp file\n" );
+    wcsrchr( newpath, '\\' )[1] = 'F';
+    pRtlDosPathNameToNtPathName_U( newpath, &name_str, NULL, NULL );
+    fli = HeapAlloc( GetProcessHeap(), 0, sizeof(FILE_LINK_INFORMATION) + name_str.Length );
+    fli->ReplaceIfExists = TRUE;
+    fli->RootDirectory = NULL;
+    fli->FileNameLength = name_str.Length;
+    memcpy( fli->FileName, name_str.Buffer, name_str.Length );
+    pRtlFreeUnicodeString( &name_str );
+
+    U(io).Status = 0xdeadbeef;
+    res = pNtSetInformationFile( handle, &io, fli, sizeof(FILE_LINK_INFORMATION) + fli->FileNameLength, FileLinkInformation );
+    ok( U(io).Status == STATUS_SUCCESS, "io.Status expected STATUS_SUCCESS, got %x\n", U(io).Status );
+    ok( res == STATUS_SUCCESS, "res expected STATUS_SUCCESS, got %x\n", res );
+    fileDeleted = GetFileAttributesW( oldpath ) == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_FILE_NOT_FOUND;
+    ok( !fileDeleted, "file should exist\n" );
+    fileDeleted = GetFileAttributesW( newpath ) == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_FILE_NOT_FOUND;
+    ok( !fileDeleted, "file should exist\n" );
+
+    CloseHandle( handle );
+    handle = FindFirstFileW( newpath, &find_data );
+    ok(handle != INVALID_HANDLE_VALUE, "FindFirstFileW: failed, error %d\n", GetLastError());
+    if (handle != INVALID_HANDLE_VALUE)
+    {
+        todo_wine ok(!lstrcmpW(wcsrchr(newpath, '\\') + 1, find_data.cFileName),
+           "Link did not change casing on existing target file: got %s\n", wine_dbgstr_w(find_data.cFileName));
+    }
+
+    FindClose( handle );
     HeapFree( GetProcessHeap(), 0, fli );
     delete_object( oldpath );
     delete_object( newpath );
@@ -2826,6 +2867,46 @@ static void test_file_link_information(void)
     CloseHandle( handle );
     HeapFree( GetProcessHeap(), 0, fli );
     delete_object( oldpath );
+
+    /* oldpath == newpath, different casing on link */
+    res = GetTempFileNameW( tmp_path, fooW, 0, oldpath );
+    ok( res != 0, "failed to create temp file\n" );
+    handle = CreateFileW( oldpath, GENERIC_WRITE | DELETE, 0, NULL, CREATE_ALWAYS, 0, 0 );
+    ok( handle != INVALID_HANDLE_VALUE, "CreateFileW failed\n" );
+
+    wcsrchr( oldpath, '\\' )[1] = 'F';
+    pRtlDosPathNameToNtPathName_U( oldpath, &name_str, NULL, NULL );
+    fli = HeapAlloc( GetProcessHeap(), 0, sizeof(FILE_RENAME_INFORMATION) + name_str.Length );
+    fli->ReplaceIfExists = FALSE;
+    fli->RootDirectory = NULL;
+    fli->FileNameLength = name_str.Length;
+    memcpy( fli->FileName, name_str.Buffer, name_str.Length );
+    pRtlFreeUnicodeString( &name_str );
+
+    U(io).Status = 0xdeadbeef;
+    res = pNtSetInformationFile( handle, &io, fli, sizeof(FILE_LINK_INFORMATION) + fli->FileNameLength, FileLinkInformation );
+    todo_wine ok( U(io).Status == 0xdeadbeef, "got io status %#x\n", U(io).Status );
+    ok( res == STATUS_OBJECT_NAME_COLLISION, "got status %x\n", res );
+
+    fli->ReplaceIfExists = TRUE;
+    U(io).Status = 0xdeadbeef;
+    res = pNtSetInformationFile( handle, &io, fli, sizeof(FILE_LINK_INFORMATION) + fli->FileNameLength, FileLinkInformation );
+    ok( U(io).Status == STATUS_SUCCESS, "got io status %#x\n", U(io).Status );
+    ok( res == STATUS_SUCCESS, "got status %x\n", res );
+    ok( GetFileAttributesW( oldpath ) != INVALID_FILE_ATTRIBUTES, "file should exist\n" );
+
+    CloseHandle( handle );
+    handle = FindFirstFileW( oldpath, &find_data );
+    ok(handle != INVALID_HANDLE_VALUE, "FindFirstFileW: failed, error %d\n", GetLastError());
+    if (handle != INVALID_HANDLE_VALUE)
+    {
+        todo_wine ok(!lstrcmpW(wcsrchr(oldpath, '\\') + 1, find_data.cFileName),
+           "Link did not change casing on same file: got %s\n", wine_dbgstr_w(find_data.cFileName));
+    }
+
+    FindClose( handle );
+    HeapFree( GetProcessHeap(), 0, fli );
+    delete_object( oldpath );
 }
 
 static void test_file_both_information(void)
@@ -2879,12 +2960,13 @@ static void test_file_disposition_information(void)
 {
     char tmp_path[MAX_PATH], buffer[MAX_PATH + 16];
     DWORD dirpos;
-    HANDLE handle, handle2, handle3;
+    HANDLE handle, handle2, handle3, mapping;
     NTSTATUS res;
     IO_STATUS_BLOCK io;
     FILE_DISPOSITION_INFORMATION fdi;
     BOOL fileDeleted;
-    DWORD fdi2;
+    DWORD fdi2, size;
+    void *view;
 
     GetTempPathA( MAX_PATH, tmp_path );
 
@@ -2938,20 +3020,20 @@ static void test_file_disposition_information(void)
     res = pNtSetInformationFile( handle, &io, &fdi, sizeof fdi, FileDispositionInformation );
     ok( res == STATUS_SUCCESS, "unexpected FileDispositionInformation result (expected STATUS_SUCCESS, got %x)\n", res );
     res = nt_get_file_attrs( buffer, &fdi2 );
-todo_wine
+    todo_wine
     ok( res == STATUS_DELETE_PENDING, "got %#x\n", res );
     /* can't open the deleted file */
     handle3 = CreateFileA(buffer, DELETE, FILE_SHARE_DELETE | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, 0);
-todo_wine
+    todo_wine
     ok( handle3 == INVALID_HANDLE_VALUE, "CreateFile should fail\n" );
-if (handle3 != INVALID_HANDLE_VALUE)
-    CloseHandle( handle3 );
-todo_wine
+    if (handle3 != INVALID_HANDLE_VALUE)
+        CloseHandle( handle3 );
+    todo_wine
     ok(GetLastError() == ERROR_ACCESS_DENIED, "got %u\n", GetLastError());
     /* can't open the deleted file (wrong sharing mode) */
     handle3 = CreateFileA(buffer, DELETE, 0, NULL, OPEN_EXISTING, 0, 0);
     ok( handle3 == INVALID_HANDLE_VALUE, "CreateFile should fail\n" );
-todo_wine
+    todo_wine
     ok(GetLastError() == ERROR_ACCESS_DENIED, "got %u\n", GetLastError());
     CloseHandle( handle );
     fileDeleted = GetFileAttributesA( buffer ) == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_FILE_NOT_FOUND;
@@ -3071,12 +3153,12 @@ todo_wine
     fileDeleted = GetFileAttributesA( buffer ) == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_FILE_NOT_FOUND;
     ok( !fileDeleted, "File shouldn't have been deleted\n" );
     res = nt_get_file_attrs( buffer, &fdi2 );
-todo_wine
+    todo_wine
     ok( res == STATUS_DELETE_PENDING, "got %#x\n", res );
     /* can't open the deleted file */
     handle2 = CreateFileA(buffer, DELETE, FILE_SHARE_DELETE, NULL, OPEN_EXISTING, 0, 0);
     ok( handle2 == INVALID_HANDLE_VALUE, "CreateFile should fail\n" );
-todo_wine
+    todo_wine
     ok(GetLastError() == ERROR_ACCESS_DENIED, "got %u\n", GetLastError());
     CloseHandle( handle );
     fileDeleted = GetFileAttributesA( buffer ) == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_FILE_NOT_FOUND;
@@ -3120,13 +3202,13 @@ todo_wine
     fileDeleted = GetFileAttributesA( buffer ) == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_FILE_NOT_FOUND;
     ok( !fileDeleted, "Directory shouldn't have been deleted\n" );
     res = nt_get_file_attrs( buffer, &fdi2 );
-todo_wine
+    todo_wine
     ok( res == STATUS_DELETE_PENDING, "got %#x\n", res );
     /* can't open the deleted directory */
     handle2 = CreateFileA(buffer, DELETE, FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, 0);
-todo_wine
+    todo_wine
     ok( handle2 == INVALID_HANDLE_VALUE, "CreateFile should fail\n" );
-todo_wine
+    todo_wine
     ok(GetLastError() == ERROR_ACCESS_DENIED, "got %u\n", GetLastError());
     if (handle2 != INVALID_HANDLE_VALUE) CloseHandle( handle2 );
     CloseHandle( handle );
@@ -3145,20 +3227,20 @@ todo_wine
     res = pNtSetInformationFile( handle2, &io, &fdi, sizeof fdi, FileDispositionInformation );
     ok( res == STATUS_SUCCESS, "unexpected FileDispositionInformation result (expected STATUS_SUCCESS, got %x)\n", res );
     res = nt_get_file_attrs( buffer, &fdi2 );
-todo_wine
+    todo_wine
     ok( res == STATUS_DELETE_PENDING, "got %#x\n", res );
     /* can't open the deleted directory */
     handle3 = CreateFileA(buffer, DELETE, FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, 0);
-todo_wine
+    todo_wine
     ok( handle3 == INVALID_HANDLE_VALUE, "CreateFile should fail\n" );
-if (handle3 != INVALID_HANDLE_VALUE)
-    CloseHandle( handle3 );
-todo_wine
+    if (handle3 != INVALID_HANDLE_VALUE)
+        CloseHandle( handle3 );
+    todo_wine
     ok(GetLastError() == ERROR_ACCESS_DENIED, "got %u\n", GetLastError());
     /* can't open the deleted directory (wrong sharing mode) */
     handle3 = CreateFileA(buffer, DELETE, 0, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, 0);
     ok( handle3 == INVALID_HANDLE_VALUE, "CreateFile should fail\n" );
-todo_wine
+    todo_wine
     ok(GetLastError() == ERROR_ACCESS_DENIED, "got %u\n", GetLastError());
     CloseHandle( handle2 );
     fileDeleted = GetFileAttributesA( buffer ) == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_FILE_NOT_FOUND;
@@ -3231,6 +3313,94 @@ todo_wine
     ok( !fileDeleted, "Directory shouldn't have been deleted\n" );
     fileDeleted = RemoveDirectoryA( buffer );
     ok( fileDeleted, "Directory should have been deleted\n" );
+
+    /* a file with an open mapping handle cannot be deleted */
+
+    GetTempFileNameA( tmp_path, "dis", 0, buffer );
+    handle = CreateFileA( buffer, GENERIC_READ | GENERIC_WRITE | DELETE, 0, NULL, CREATE_ALWAYS, 0, 0 );
+    ok( handle != INVALID_HANDLE_VALUE, "failed to create file, error %u\n", GetLastError() );
+    WriteFile(handle, "data", 4, &size, NULL);
+    mapping = CreateFileMappingA( handle, NULL, PAGE_READONLY, 0, 4, NULL );
+    ok( !!mapping, "failed to create mapping, error %u\n", GetLastError() );
+
+    fdi.DoDeleteFile = FALSE;
+    res = pNtSetInformationFile( handle, &io, &fdi, sizeof(fdi), FileDispositionInformation );
+    ok( !res, "got %#x\n", res );
+
+    fdi.DoDeleteFile = TRUE;
+    res = pNtSetInformationFile( handle, &io, &fdi, sizeof(fdi), FileDispositionInformation );
+    ok( res == STATUS_CANNOT_DELETE, "got %#x\n", res );
+    res = GetFileAttributesA( buffer );
+    ok( res != INVALID_FILE_ATTRIBUTES, "expected file to exist\n" );
+
+    CloseHandle( mapping );
+    CloseHandle( handle );
+    res = DeleteFileA( buffer );
+    ok( res, "got error %u\n", GetLastError() );
+
+    GetTempFileNameA( tmp_path, "dis", 0, buffer );
+    handle = CreateFileA( buffer, GENERIC_READ | GENERIC_WRITE | DELETE, 0, NULL, CREATE_ALWAYS, 0, 0 );
+    ok( handle != INVALID_HANDLE_VALUE, "failed to create file, error %u\n", GetLastError() );
+    WriteFile(handle, "data", 4, &size, NULL);
+    mapping = CreateFileMappingA( handle, NULL, PAGE_READONLY, 0, 4, NULL );
+    ok( !!mapping, "failed to create mapping, error %u\n", GetLastError() );
+    CloseHandle( mapping );
+
+    fdi.DoDeleteFile = TRUE;
+    res = pNtSetInformationFile( handle, &io, &fdi, sizeof(fdi), FileDispositionInformation );
+    ok( !res, "got %#x\n", res );
+
+    CloseHandle( handle );
+    res = DeleteFileA( buffer );
+    ok( !res, "expected failure\n" );
+    ok( GetLastError() == ERROR_FILE_NOT_FOUND, "got error %u\n", GetLastError() );
+
+    /* a file with an open view cannot be deleted */
+
+    GetTempFileNameA( tmp_path, "dis", 0, buffer );
+    handle = CreateFileA( buffer, GENERIC_READ | GENERIC_WRITE | DELETE, 0, NULL, CREATE_ALWAYS, 0, 0 );
+    ok( handle != INVALID_HANDLE_VALUE, "failed to create file, error %u\n", GetLastError() );
+    WriteFile(handle, "data", 4, &size, NULL);
+    mapping = CreateFileMappingA( handle, NULL, PAGE_READONLY, 0, 4, NULL );
+    ok( !!mapping, "failed to create mapping, error %u\n", GetLastError() );
+    view = MapViewOfFile( mapping, FILE_MAP_READ, 0, 0, 4 );
+    ok( !!view, "failed to map view, error %u\n", GetLastError() );
+    CloseHandle( mapping );
+
+    fdi.DoDeleteFile = FALSE;
+    res = pNtSetInformationFile( handle, &io, &fdi, sizeof(fdi), FileDispositionInformation );
+    ok( !res, "got %#x\n", res );
+
+    fdi.DoDeleteFile = TRUE;
+    res = pNtSetInformationFile( handle, &io, &fdi, sizeof(fdi), FileDispositionInformation );
+    ok( res == STATUS_CANNOT_DELETE, "got %#x\n", res );
+    res = GetFileAttributesA( buffer );
+    ok( res != INVALID_FILE_ATTRIBUTES, "expected file to exist\n" );
+
+    UnmapViewOfFile( view );
+    CloseHandle( handle );
+    res = DeleteFileA( buffer );
+    ok( res, "got error %u\n", GetLastError() );
+
+    GetTempFileNameA( tmp_path, "dis", 0, buffer );
+    handle = CreateFileA( buffer, GENERIC_READ | GENERIC_WRITE | DELETE, 0, NULL, CREATE_ALWAYS, 0, 0 );
+    ok( handle != INVALID_HANDLE_VALUE, "failed to create file, error %u\n", GetLastError() );
+    WriteFile(handle, "data", 4, &size, NULL);
+    mapping = CreateFileMappingA( handle, NULL, PAGE_READONLY, 0, 4, NULL );
+    ok( !!mapping, "failed to create mapping, error %u\n", GetLastError() );
+    view = MapViewOfFile( mapping, FILE_MAP_READ, 0, 0, 4 );
+    ok( !!view, "failed to map view, error %u\n", GetLastError() );
+    CloseHandle( mapping );
+    UnmapViewOfFile( view );
+
+    fdi.DoDeleteFile = TRUE;
+    res = pNtSetInformationFile( handle, &io, &fdi, sizeof(fdi), FileDispositionInformation );
+    ok( !res, "got %#x\n", res );
+
+    CloseHandle( handle );
+    res = DeleteFileA( buffer );
+    ok( !res, "expected failure\n" );
+    ok( GetLastError() == ERROR_FILE_NOT_FOUND, "got error %u\n", GetLastError() );
 }
 
 static void test_file_name_information(void)
@@ -4061,7 +4231,7 @@ static void test_NtCreateFile(void)
             /* FIXME: leave only 'else' case below once Wine is fixed */
             if (ret != td[i].attrib_out)
             {
-            todo_wine
+                todo_wine
                 ok(ret == td[i].attrib_out, "%d: expected %#x got %#x\n", i, td[i].attrib_out, ret);
                 SetFileAttributesW(path, td[i].attrib_out);
             }

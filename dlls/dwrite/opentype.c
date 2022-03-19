@@ -21,9 +21,7 @@
 #define COBJMACROS
 #define NONAMELESSUNION
 
-#include "config.h"
 #include "dwrite_private.h"
-#include "winternl.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dwrite);
 
@@ -46,6 +44,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(dwrite);
 #define MS_CBLC_TAG DWRITE_MAKE_OPENTYPE_TAG('C','B','L','C')
 #define MS_CMAP_TAG DWRITE_MAKE_OPENTYPE_TAG('c','m','a','p')
 #define MS_META_TAG DWRITE_MAKE_OPENTYPE_TAG('m','e','t','a')
+#define MS_KERN_TAG DWRITE_MAKE_OPENTYPE_TAG('k','e','r','n')
 
 /* 'sbix' formats */
 #define MS_PNG__TAG DWRITE_MAKE_OPENTYPE_TAG('p','n','g',' ')
@@ -399,7 +398,7 @@ struct ot_script
     WORD default_langsys;
     WORD langsys_count;
     struct ot_langsys_record langsys[1];
-} OT_Script;
+};
 
 struct ot_script_record
 {
@@ -801,24 +800,18 @@ struct ot_gpos_mark_to_mark_format1
     WORD mark2_array;
 };
 
-typedef struct {
-    WORD SubstFormat;
-    WORD Coverage;
-    WORD DeltaGlyphID;
-} GSUB_SingleSubstFormat1;
+struct kern_header
+{
+    WORD version;
+    WORD table_count;
+};
 
-typedef struct {
-    WORD SubstFormat;
-    WORD Coverage;
-    WORD GlyphCount;
-    WORD Substitute[1];
-} GSUB_SingleSubstFormat2;
-
-typedef struct {
-    WORD SubstFormat;
-    WORD ExtensionLookupType;
-    DWORD ExtensionOffset;
-} GSUB_ExtensionPosFormat1;
+struct kern_subtable_header
+{
+    WORD version;
+    WORD length;
+    WORD coverage;
+};
 
 #include "poppack.h"
 
@@ -1579,7 +1572,7 @@ struct cmap_format4_compare_context
     unsigned int ch;
 };
 
-static int cmap_format4_compare_range(const void *a, const void *b)
+static int __cdecl cmap_format4_compare_range(const void *a, const void *b)
 {
     const struct cmap_format4_compare_context *key = a;
     const UINT16 *end = b;
@@ -1664,7 +1657,7 @@ static unsigned int opentype_cmap_format6_10_get_ranges(const struct dwrite_cmap
     return 1;
 }
 
-static int cmap_format12_13_compare_group(const void *a, const void *b)
+static int __cdecl cmap_format12_13_compare_group(const void *a, const void *b)
 {
     const unsigned int *ch = a;
     const UINT32 *group = b;
@@ -1742,7 +1735,7 @@ UINT16 opentype_cmap_get_glyph(const struct dwrite_cmap *cmap, unsigned int ch)
     return glyph;
 }
 
-static int cmap_header_compare(const void *a, const void *b)
+static int __cdecl cmap_header_compare(const void *a, const void *b)
 {
     const UINT16 *key = a;
     const UINT16 *record = b;
@@ -1784,7 +1777,7 @@ void dwrite_cmap_init(struct dwrite_cmap *cmap, IDWriteFontFile *file, unsigned 
     /* For fontface stream is already available and preset. */
     if (!cmap->stream && FAILED(hr = get_filestream_from_file(file, &cmap->stream)))
     {
-        WARN("Failed to get file stream, hr %#x.\n", hr);
+        WARN("Failed to get file stream, hr %#lx.\n", hr);
         goto failed;
     }
 
@@ -2259,9 +2252,8 @@ static UINT get_name_record_codepage(enum OPENTYPE_PLATFORM_ID platform, USHORT 
 
 static void get_name_record_locale(enum OPENTYPE_PLATFORM_ID platform, USHORT lang_id, WCHAR *locale, USHORT locale_len)
 {
-    static const WCHAR enusW[] = {'e','n','-','U','S',0};
-
-    switch (platform) {
+    switch (platform)
+    {
     case OPENTYPE_PLATFORM_MAC:
     {
         const char *locale_name = NULL;
@@ -2276,21 +2268,33 @@ static void get_name_record_locale(enum OPENTYPE_PLATFORM_ID platform, USHORT la
         if (locale_name)
             MultiByteToWideChar(CP_ACP, 0, name_mac_langid_to_locale[lang_id], -1, locale, locale_len);
         else
-            strcpyW(locale, enusW);
+            wcscpy(locale, L"en-US");
         break;
     }
     case OPENTYPE_PLATFORM_WIN:
-        if (!LCIDToLocaleName(MAKELCID(lang_id, SORT_DEFAULT), locale, locale_len, 0)) {
-            FIXME("failed to get locale name for lcid=0x%08x\n", MAKELCID(lang_id, SORT_DEFAULT));
-            strcpyW(locale, enusW);
+        if (!LCIDToLocaleName(MAKELCID(lang_id, SORT_DEFAULT), locale, locale_len, 0))
+        {
+            FIXME("failed to get locale name for lcid=0x%08lx\n", MAKELCID(lang_id, SORT_DEFAULT));
+            wcscpy(locale, L"en-US");
         }
         break;
     case OPENTYPE_PLATFORM_UNICODE:
-        strcpyW(locale, enusW);
+        wcscpy(locale, L"en-US");
         break;
     default:
         FIXME("unknown platform %d\n", platform);
     }
+}
+
+static BOOL opentype_is_english_namerecord(const struct dwrite_fonttable *table, unsigned int idx)
+{
+    const struct name_header *header = (const struct name_header *)table->data;
+    const struct name_record *record;
+
+    record = &header->records[idx];
+
+    return GET_BE_WORD(record->platformID) == OPENTYPE_PLATFORM_MAC &&
+            GET_BE_WORD(record->languageID) == TT_NAME_MAC_LANGID_ENGLISH;
 }
 
 static BOOL opentype_decode_namerecord(const struct dwrite_fonttable *table, unsigned int idx,
@@ -2328,7 +2332,7 @@ static BOOL opentype_decode_namerecord(const struct dwrite_fonttable *table, uns
         if (codepage)
         {
             DWORD len = MultiByteToWideChar(codepage, 0, name, length, NULL, 0);
-            name_string = heap_alloc(sizeof(WCHAR) * (len+1));
+            name_string = malloc(sizeof(WCHAR) * (len+1));
             MultiByteToWideChar(codepage, 0, name, length, name_string, len);
             name_string[len] = 0;
         }
@@ -2342,8 +2346,9 @@ static BOOL opentype_decode_namerecord(const struct dwrite_fonttable *table, uns
 
         TRACE("string %s for locale %s found\n", debugstr_w(name_string), debugstr_w(locale));
         add_localizedstring(strings, locale, name_string);
-        heap_free(name_string);
-        ret = TRUE;
+        free(name_string);
+
+        ret = !wcscmp(locale, L"en-US");
     }
     else
         FIXME("handle NAME format 1\n");
@@ -2354,10 +2359,10 @@ static BOOL opentype_decode_namerecord(const struct dwrite_fonttable *table, uns
 static HRESULT opentype_get_font_strings_from_id(const struct dwrite_fonttable *table, enum OPENTYPE_STRING_ID id,
         IDWriteLocalizedStrings **strings)
 {
-    int i, count, candidate_mac, candidate_unicode;
+    int i, count, candidate_mac, candidate_mac_en, candidate_unicode;
     const struct name_record *records;
+    BOOL has_english;
     WORD format;
-    BOOL exists;
     HRESULT hr;
 
     if (!table->data)
@@ -2379,8 +2384,8 @@ static HRESULT opentype_get_font_strings_from_id(const struct dwrite_fonttable *
         count = 0;
     }
 
-    exists = FALSE;
-    candidate_unicode = candidate_mac = -1;
+    has_english = FALSE;
+    candidate_unicode = candidate_mac = candidate_mac_en = -1;
 
     for (i = 0; i < count; i++)
     {
@@ -2403,10 +2408,11 @@ static HRESULT opentype_get_font_strings_from_id(const struct dwrite_fonttable *
             case OPENTYPE_PLATFORM_MAC:
                 if (candidate_mac == -1)
                     candidate_mac = i;
+                if (candidate_mac_en == -1 && opentype_is_english_namerecord(table, i))
+                    candidate_mac_en = i;
                 break;
             case OPENTYPE_PLATFORM_WIN:
-                if (opentype_decode_namerecord(table, i, *strings))
-                    exists = TRUE;
+                has_english |= opentype_decode_namerecord(table, i, *strings);
                 break;
             default:
                 FIXME("platform %i not supported\n", platform);
@@ -2414,36 +2420,34 @@ static HRESULT opentype_get_font_strings_from_id(const struct dwrite_fonttable *
         }
     }
 
-    if (!exists)
-    {
-        if (candidate_mac != -1)
-            exists = opentype_decode_namerecord(table, candidate_mac, *strings);
-        if (!exists && candidate_unicode != -1)
-            exists = opentype_decode_namerecord(table, candidate_unicode, *strings);
+    if (!get_localizedstrings_count(*strings) && candidate_mac != -1)
+        has_english |= opentype_decode_namerecord(table, candidate_mac, *strings);
+    if (!get_localizedstrings_count(*strings) && candidate_unicode != -1)
+        has_english |= opentype_decode_namerecord(table, candidate_unicode, *strings);
+    if (!has_english && candidate_mac_en != -1)
+        opentype_decode_namerecord(table, candidate_mac_en, *strings);
 
-        if (!exists)
-        {
-            IDWriteLocalizedStrings_Release(*strings);
-            *strings = NULL;
-        }
+    if (!get_localizedstrings_count(*strings))
+    {
+        IDWriteLocalizedStrings_Release(*strings);
+        *strings = NULL;
     }
 
     if (*strings)
         sort_localizedstrings(*strings);
 
-    return exists ? S_OK : E_FAIL;
+    return *strings ? S_OK : E_FAIL;
 }
 
 static WCHAR *meta_get_lng_name(WCHAR *str, WCHAR **ctx)
 {
-    static const WCHAR delimW[] = {',',' ',0};
     WCHAR *ret;
 
     if (!str) str = *ctx;
-    while (*str && strchrW(delimW, *str)) str++;
+    while (*str && wcschr(L", ", *str)) str++;
     if (!*str) return NULL;
     ret = str++;
-    while (*str && !strchrW(delimW, *str)) str++;
+    while (*str && !wcschr(L", ", *str)) str++;
     if (*str) *str++ = 0;
     *ctx = str;
 
@@ -2453,7 +2457,6 @@ static WCHAR *meta_get_lng_name(WCHAR *str, WCHAR **ctx)
 static HRESULT opentype_get_font_strings_from_meta(const struct file_stream_desc *stream_desc,
         DWRITE_INFORMATIONAL_STRING_ID id, IDWriteLocalizedStrings **ret)
 {
-    static const WCHAR emptyW[] = { 0 };
     const struct meta_data_map *maps;
     IDWriteLocalizedStrings *strings;
     struct dwrite_fonttable meta;
@@ -2485,7 +2488,7 @@ static HRESULT opentype_get_font_strings_from_meta(const struct file_stream_desc
         version = table_read_be_dword(&meta, 0);
         if (version != 1)
         {
-            WARN("Unexpected meta table version %d.\n", version);
+            WARN("Unexpected meta table version %ld.\n", version);
             goto end;
         }
 
@@ -2504,9 +2507,9 @@ static HRESULT opentype_get_font_strings_from_meta(const struct file_stream_desc
 
                 if ((data = table_read_ensure(&meta, GET_BE_DWORD(maps[i].offset), length)))
                 {
-                    WCHAR *ptrW = heap_alloc((length + 1) * sizeof(WCHAR)), *ctx, *token;
+                    WCHAR *ptrW, *ctx, *token;
 
-                    if (!ptrW)
+                    if (!(ptrW = malloc((length + 1) * sizeof(WCHAR))))
                     {
                         hr = E_OUTOFMEMORY;
                         goto end;
@@ -2521,11 +2524,11 @@ static HRESULT opentype_get_font_strings_from_meta(const struct file_stream_desc
 
                     while (token)
                     {
-                        add_localizedstring(strings, emptyW, token);
+                        add_localizedstring(strings, L"", token);
                         token = meta_get_lng_name(NULL, &ctx);
                     }
 
-                    heap_free(ptrW);
+                    free(ptrW);
                 }
             }
         }
@@ -2625,7 +2628,6 @@ HRESULT opentype_get_font_facename(struct file_stream_desc *stream_desc, WCHAR *
     *lfname = 0;
     if (SUCCEEDED(opentype_get_font_strings_from_id(&name, OPENTYPE_STRING_FAMILY_NAME, &lfnames)))
     {
-        static const WCHAR enusW[] = {'e','n','-','u','s',0};
         WCHAR localeW[LOCALE_NAME_MAX_LENGTH];
         UINT32 index;
         BOOL exists;
@@ -2635,19 +2637,20 @@ HRESULT opentype_get_font_facename(struct file_stream_desc *stream_desc, WCHAR *
             IDWriteLocalizedStrings_FindLocaleName(lfnames, localeW, &index, &exists);
 
         if (!exists)
-            IDWriteLocalizedStrings_FindLocaleName(lfnames, enusW, &index, &exists);
+            IDWriteLocalizedStrings_FindLocaleName(lfnames, L"en-us", &index, &exists);
 
         if (exists) {
             UINT32 length = 0;
             WCHAR *nameW;
 
             IDWriteLocalizedStrings_GetStringLength(lfnames, index, &length);
-            nameW = heap_alloc((length + 1) * sizeof(WCHAR));
-            if (nameW) {
+            nameW = malloc((length + 1) * sizeof(WCHAR));
+            if (nameW)
+            {
                 *nameW = 0;
                 IDWriteLocalizedStrings_GetString(lfnames, index, nameW, length + 1);
                 lstrcpynW(lfname, nameW, LF_FACESIZE);
-                heap_free(nameW);
+                free(nameW);
             }
         }
 
@@ -2850,6 +2853,13 @@ HRESULT opentype_get_cpal_entries(const struct dwrite_fonttable *cpal, unsigned 
     unsigned int num_palettes, num_palette_entries, i;
     const struct cpal_color_record *records;
     const struct cpal_header_0 *header;
+    struct d3d_color
+    {
+        float r;
+        float g;
+        float b;
+        float a;
+    } *colors = (void *)entries;
 
     header = table_read_ensure(cpal, 0, sizeof(*header));
 
@@ -2875,17 +2885,18 @@ HRESULT opentype_get_cpal_entries(const struct dwrite_fonttable *cpal, unsigned 
 
     first_entry_index += GET_BE_WORD(header->color_record_indices[palette]);
 
-    for (i = 0; i < entry_count; i++) {
-        entries[i].u1.r = records[first_entry_index + i].red   / 255.0f;
-        entries[i].u2.g = records[first_entry_index + i].green / 255.0f;
-        entries[i].u3.b = records[first_entry_index + i].blue  / 255.0f;
-        entries[i].u4.a = records[first_entry_index + i].alpha / 255.0f;
+    for (i = 0; i < entry_count; ++i)
+    {
+        colors[i].r = records[first_entry_index + i].red   / 255.0f;
+        colors[i].g = records[first_entry_index + i].green / 255.0f;
+        colors[i].b = records[first_entry_index + i].blue  / 255.0f;
+        colors[i].a = records[first_entry_index + i].alpha / 255.0f;
     }
 
     return S_OK;
 }
 
-static int colr_compare_gid(const void *g, const void *r)
+static int __cdecl colr_compare_gid(const void *g, const void *r)
 {
     const struct colr_baseglyph_record *record = r;
     UINT16 glyph = *(UINT16*)g, GID = GET_BE_WORD(record->glyph);
@@ -3243,7 +3254,7 @@ unsigned int opentype_layout_find_language(const struct scriptshaping_cache *cac
     return 0;
 }
 
-static int gdef_class_compare_format2(const void *g, const void *r)
+static int __cdecl gdef_class_compare_format2(const void *g, const void *r)
 {
     const struct ot_gdef_class_range *range = r;
     UINT16 glyph = *(UINT16 *)g;
@@ -3352,7 +3363,7 @@ struct coverage_compare_format1_context
     unsigned int *coverage_index;
 };
 
-static int coverage_compare_format1(const void *left, const void *right)
+static int __cdecl coverage_compare_format1(const void *left, const void *right)
 {
     const struct coverage_compare_format1_context *context = left;
     UINT16 glyph = GET_BE_WORD(*(UINT16 *)right);
@@ -3365,7 +3376,7 @@ static int coverage_compare_format1(const void *left, const void *right)
     return ret;
 }
 
-static int coverage_compare_format2(const void *g, const void *r)
+static int __cdecl coverage_compare_format2(const void *g, const void *r)
 {
     const struct ot_coverage_range *range = r;
     UINT16 glyph = *(UINT16 *)g;
@@ -3424,7 +3435,7 @@ static unsigned int opentype_layout_is_glyph_covered(const struct dwrite_fonttab
 
 static inline unsigned int dwrite_popcount(unsigned int x)
 {
-#ifdef HAVE___BUILTIN_POPCOUNT
+#if defined(__MINGW32__)
     return __builtin_popcount(x);
 #else
     x -= x >> 1 & 0x55555555;
@@ -3850,7 +3861,7 @@ static BOOL opentype_layout_apply_gpos_single_adjustment(struct scriptshaping_co
     return TRUE;
 }
 
-static int gpos_pair_adjustment_compare_format1(const void *g, const void *r)
+static int __cdecl gpos_pair_adjustment_compare_format1(const void *g, const void *r)
 {
     const struct ot_gpos_pairvalue *pairvalue = r;
     UINT16 second_glyph = GET_BE_WORD(pairvalue->second_glyph);
@@ -4440,7 +4451,7 @@ struct lookups
     size_t count;
 };
 
-static int lookups_sorting_compare(const void *a, const void *b)
+static int __cdecl lookups_sorting_compare(const void *a, const void *b)
 {
     const struct lookup *left = (const struct lookup *)a;
     const struct lookup *right = (const struct lookup *)b;
@@ -4596,8 +4607,8 @@ static void opentype_layout_collect_lookups(struct scriptshaping_context *contex
     next_bit = global_bit_shift + 1;
     for (i = 0; i < features->count; ++i)
     {
-        unsigned int bits_needed;
         BOOL found = FALSE;
+        DWORD bits_needed;
 
         feature = &features->features[i];
 
@@ -4699,7 +4710,7 @@ static void opentype_layout_collect_lookups(struct scriptshaping_context *contex
     }
 }
 
-static int feature_search_compare(const void *a, const void* b)
+static int __cdecl feature_search_compare(const void *a, const void* b)
 {
     unsigned int tag = *(unsigned int *)a;
     const struct shaping_feature *feature = b;
@@ -4869,7 +4880,7 @@ void opentype_layout_apply_gpos_features(struct scriptshaping_context *context, 
         }
     }
 
-    heap_free(lookups.lookups);
+    free(lookups.lookups);
 
     if (context->has_gpos_attachment)
     {
@@ -4944,11 +4955,11 @@ static BOOL opentype_layout_gsub_ensure_buffer(struct scriptshaping_context *con
 
     new_capacity = context->u.subst.capacity * 2;
 
-    if ((glyphs = heap_realloc(context->u.subst.glyphs, new_capacity * sizeof(*glyphs))))
+    if ((glyphs = realloc(context->u.subst.glyphs, new_capacity * sizeof(*glyphs))))
         context->u.subst.glyphs = glyphs;
-    if ((glyph_props = heap_realloc(context->u.subst.glyph_props, new_capacity * sizeof(*glyph_props))))
+    if ((glyph_props = realloc(context->u.subst.glyph_props, new_capacity * sizeof(*glyph_props))))
         context->u.subst.glyph_props = glyph_props;
-    if ((glyph_infos = heap_realloc(context->glyph_infos, new_capacity * sizeof(*glyph_infos))))
+    if ((glyph_infos = realloc(context->glyph_infos, new_capacity * sizeof(*glyph_infos))))
         context->glyph_infos = glyph_infos;
 
     if ((ret = (glyphs && glyph_props && glyph_infos)))
@@ -5066,7 +5077,8 @@ static BOOL opentype_layout_apply_gsub_alt_substitution(struct scriptshaping_con
     if (format == 1)
     {
         const struct ot_gsub_altsubst_format1 *format1 = table_read_ensure(table, subtable_offset, sizeof(*format1));
-        unsigned int shift, alt_index;
+        DWORD shift;
+        unsigned int alt_index;
         UINT16 set_offset;
 
         coverage = table_read_be_word(table, subtable_offset + FIELD_OFFSET(struct ot_gsub_altsubst_format1, coverage));
@@ -6099,7 +6111,7 @@ void opentype_layout_apply_gsub_features(struct scriptshaping_context *context, 
     for (j = context->glyph_infos[start_idx].start_text_idx; j < context->length; ++j)
         context->u.buffer.clustermap[j] = start_idx;
 
-    heap_free(lookups.lookups);
+    free(lookups.lookups);
 }
 
 static BOOL opentype_layout_contextual_lookup_is_glyph_covered(struct scriptshaping_context *context, UINT16 glyph,
@@ -6328,7 +6340,7 @@ BOOL opentype_layout_check_feature(struct scriptshaping_context *context, unsign
             break;
     }
 
-    heap_free(lookups.lookups);
+    free(lookups.lookups);
 
     return ret;
 }
@@ -6341,6 +6353,9 @@ BOOL opentype_has_vertical_variants(struct dwrite_fontface *fontface)
     struct scriptshaping_context context = { 0 };
     struct lookups lookups = { 0 };
     UINT16 format;
+
+    if (fontface->flags & (FONTFACE_VERTICAL_VARIANTS | FONTFACE_NO_VERTICAL_VARIANTS))
+        return !!(fontface->flags & FONTFACE_VERTICAL_VARIANTS);
 
     context.cache = fontface_get_shaping_cache(fontface);
     context.table = &context.cache->gsub;
@@ -6382,9 +6397,14 @@ BOOL opentype_has_vertical_variants(struct dwrite_fontface *fontface)
         }
     }
 
-    heap_free(lookups.lookups);
+    free(lookups.lookups);
 
-    return !!count;
+    if (count)
+        fontface->flags |= FONTFACE_VERTICAL_VARIANTS;
+    else
+        fontface->flags |= FONTFACE_NO_VERTICAL_VARIANTS;
+
+    return !!(fontface->flags & FONTFACE_VERTICAL_VARIANTS);
 }
 
 HRESULT opentype_get_vertical_glyph_variants(struct dwrite_fontface *fontface, unsigned int glyph_count,
@@ -6398,15 +6418,15 @@ HRESULT opentype_get_vertical_glyph_variants(struct dwrite_fontface *fontface, u
 
     memcpy(glyphs, nominal_glyphs, glyph_count * sizeof(*glyphs));
 
-    if (!(fontface->flags & FONTFACE_HAS_VERTICAL_VARIANTS))
+    if (!opentype_has_vertical_variants(fontface))
         return S_OK;
 
     context.cache = fontface_get_shaping_cache(fontface);
     context.u.subst.glyphs = glyphs;
-    context.u.subst.glyph_props = heap_calloc(glyph_count, sizeof(*context.u.subst.glyph_props));
+    context.u.subst.glyph_props = calloc(glyph_count, sizeof(*context.u.subst.glyph_props));
     context.u.subst.max_glyph_count = glyph_count;
     context.u.subst.capacity = glyph_count;
-    context.glyph_infos = heap_alloc_zero(sizeof(*context.glyph_infos) * glyph_count);
+    context.glyph_infos = calloc(glyph_count, sizeof(*context.glyph_infos));
     context.table = &context.cache->gsub;
 
     vert_feature.tag = DWRITE_MAKE_OPENTYPE_TAG('v','e','r','t');
@@ -6437,9 +6457,138 @@ HRESULT opentype_get_vertical_glyph_variants(struct dwrite_fontface *fontface, u
         }
     }
 
-    heap_free(context.u.subst.glyph_props);
-    heap_free(context.glyph_infos);
-    heap_free(lookups.lookups);
+    free(context.u.subst.glyph_props);
+    free(context.glyph_infos);
+    free(lookups.lookups);
+
+    return S_OK;
+}
+
+BOOL opentype_has_kerning_pairs(struct dwrite_fontface *fontface)
+{
+    const struct kern_subtable_header *subtable;
+    struct file_stream_desc stream_desc;
+    const struct kern_header *header;
+    unsigned int offset, count, i;
+
+    if (fontface->flags & (FONTFACE_KERNING_PAIRS | FONTFACE_NO_KERNING_PAIRS))
+        return !!(fontface->flags & FONTFACE_KERNING_PAIRS);
+
+    fontface->flags |= FONTFACE_NO_KERNING_PAIRS;
+
+    stream_desc.stream = fontface->stream;
+    stream_desc.face_type = fontface->type;
+    stream_desc.face_index = fontface->index;
+
+    opentype_get_font_table(&stream_desc, MS_KERN_TAG, &fontface->kern);
+    if (fontface->kern.exists)
+    {
+        if ((header = table_read_ensure(&fontface->kern, 0, sizeof(*header))))
+        {
+            count = GET_BE_WORD(header->table_count);
+            offset = sizeof(*header);
+
+            /* FreeType limits table count this way. */
+            count = min(count, 32);
+
+            /* Check for presence of format 0 subtable with horizontal coverage. */
+            for (i = 0; i < count; ++i)
+            {
+                if (!(subtable = table_read_ensure(&fontface->kern, offset, sizeof(*subtable))))
+                    break;
+
+                if (subtable->version == 0 && GET_BE_WORD(subtable->coverage) & 1)
+                {
+                    fontface->flags &= ~FONTFACE_NO_KERNING_PAIRS;
+                    fontface->flags |= FONTFACE_KERNING_PAIRS;
+                    break;
+                }
+
+                offset += GET_BE_WORD(subtable->length);
+            }
+        }
+    }
+
+    if (fontface->flags & FONTFACE_NO_KERNING_PAIRS && fontface->kern.data)
+        IDWriteFontFileStream_ReleaseFileFragment(stream_desc.stream, fontface->kern.context);
+
+    return !!(fontface->flags & FONTFACE_KERNING_PAIRS);
+}
+
+struct kern_format0_compare_key
+{
+    UINT16 left;
+    UINT16 right;
+};
+
+static int __cdecl kern_format0_compare(const void *a, const void *b)
+{
+    const struct kern_format0_compare_key *key = a;
+    const WORD *data = b;
+    UINT16 left = GET_BE_WORD(data[0]), right = GET_BE_WORD(data[1]);
+    int ret;
+
+    if ((ret = (int)key->left - (int)left)) return ret;
+    if ((ret = (int)key->right - (int)right)) return ret;
+    return 0;
+}
+
+HRESULT opentype_get_kerning_pairs(struct dwrite_fontface *fontface, unsigned int count,
+        const UINT16 *glyphs, INT32 *values)
+{
+    const struct kern_subtable_header *subtable;
+    unsigned int i, s, offset, pair_count, subtable_count;
+    struct kern_format0_compare_key key;
+    const struct kern_header *header;
+    const WORD *data;
+
+    if (!opentype_has_kerning_pairs(fontface))
+    {
+        memset(values, 0, count * sizeof(*values));
+        return S_OK;
+    }
+
+    subtable_count = table_read_be_word(&fontface->kern, 2);
+    subtable_count = min(subtable_count, 32);
+
+    for (i = 0; i < count - 1; ++i)
+    {
+        offset = sizeof(*header);
+
+        key.left = glyphs[i];
+        key.right = glyphs[i + 1];
+        values[i] = 0;
+
+        for (s = 0; s < subtable_count; ++s)
+        {
+            if (!(subtable = table_read_ensure(&fontface->kern, offset, sizeof(*subtable))))
+                break;
+
+            if (subtable->version == 0 && GET_BE_WORD(subtable->coverage) & 1)
+            {
+                if ((data = table_read_ensure(&fontface->kern, offset, GET_BE_WORD(subtable->length))))
+                {
+                    /* Skip subtable header */
+                    data += 3;
+                    pair_count = GET_BE_WORD(*data);
+                    data += 4;
+                    /* Move to pair data */
+                    if ((data = table_read_ensure(&fontface->kern, offset + 7 * sizeof(*data),
+                            pair_count * 3 * sizeof(*data))))
+                    {
+                        if ((data = bsearch(&key, data, pair_count, 3 * sizeof(*data), kern_format0_compare)))
+                        {
+                            values[i] = (short)GET_BE_WORD(data[2]);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            offset += GET_BE_WORD(subtable->length);
+        }
+    }
+    values[count - 1] = 0;
 
     return S_OK;
 }

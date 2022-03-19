@@ -30,7 +30,7 @@
 
 #include "windef.h"
 #include "winbase.h"
-#include "wingdi.h"
+#include "ntgdi.h"
 #include "winuser.h"
 #include "winnls.h"
 #include "winreg.h"
@@ -694,7 +694,7 @@ static inline BOOL set_cache_font_properties(const HDC hdc, ScriptCache *sc)
            U+0640: kashida */
         WORD gi[4];
 
-        if (GetGlyphIndicesW(hdc, chars, 4, gi, GGI_MARK_NONEXISTING_GLYPHS) != GDI_ERROR)
+        if (NtGdiGetGlyphIndicesW(hdc, chars, 4, gi, GGI_MARK_NONEXISTING_GLYPHS) != GDI_ERROR)
         {
             if(gi[0] != 0xFFFF) /* 0xFFFF: index of default non exist char */
                 sc->sfp.wgBlank = gi[0];
@@ -822,7 +822,7 @@ static HRESULT init_script_cache(const HDC hdc, SCRIPT_CACHE *psc)
         sc->otm->otmSize = size;
         GetOutlineTextMetricsW(hdc, size, sc->otm);
     }
-    sc->sfnt = (GetFontData(hdc, MS_MAKE_TAG('h','e','a','d'), 0, NULL, 0)!=GDI_ERROR);
+    sc->sfnt = (NtGdiGetFontData(hdc, MS_MAKE_TAG('h','e','a','d'), 0, NULL, 0) != GDI_ERROR);
     if (!set_cache_font_properties(hdc, sc))
     {
         heap_free(sc);
@@ -864,7 +864,7 @@ static DWORD decode_surrogate_pair(const WCHAR *str, unsigned int index, unsigne
     if (index < end-1 && IS_SURROGATE_PAIR(str[index],str[index+1]))
     {
         DWORD ch = 0x10000 + ((str[index] - 0xd800) << 10) + (str[index+1] - 0xdc00);
-        TRACE("Surrogate Pair %x %x => %x\n",str[index], str[index+1], ch);
+        TRACE("Surrogate Pair %x %x => %lx\n",str[index], str[index+1], ch);
         return ch;
     }
     return 0;
@@ -1125,7 +1125,7 @@ HRESULT WINAPI ScriptRecordDigitSubstitution(LCID locale, SCRIPT_DIGITSUBSTITUTE
 {
     DWORD plgid, sub;
 
-    TRACE("0x%x, %p\n", locale, sds);
+    TRACE("0x%lx, %p\n", locale, sds);
 
     /* This implementation appears to be correct for all languages, but it's
      * not clear if sds->DigitSubstitute is ever set to anything except 
@@ -1908,7 +1908,7 @@ HRESULT WINAPI ScriptStringAnalyse(HDC hdc, const void *pString, int cString,
     BYTE   *BidiLevel;
     WCHAR *iString = NULL;
 
-    TRACE("(%p,%p,%d,%d,%d,0x%x,%d,%p,%p,%p,%p,%p,%p)\n",
+    TRACE("(%p,%p,%d,%d,%d,0x%lx,%d,%p,%p,%p,%p,%p,%p)\n",
           hdc, pString, cString, cGlyphs, iCharset, dwFlags, iReqWidth,
           psControl, psState, piDx, pTabdef, pbInClass, pssa);
 
@@ -2251,7 +2251,7 @@ static HRESULT SS_ItemOut( SCRIPT_STRING_ANALYSIS ssa,
                        &analysis->glyphs[iItem].piAdvance[iGlyph], NULL,
                        &analysis->glyphs[iItem].pGoffset[iGlyph]);
 
-    TRACE("ScriptTextOut hr=%08x\n", hr);
+    TRACE("ScriptTextOut hr=%08lx\n", hr);
 
     if (fSelected)
     {
@@ -3000,7 +3000,7 @@ HRESULT WINAPI ScriptIsComplex(const WCHAR *chars, int len, DWORD flag)
     enum usp10_script script;
     unsigned int i, consumed;
 
-    TRACE("(%s,%d,0x%x)\n", debugstr_wn(chars, len), len, flag);
+    TRACE("(%s,%d,0x%lx)\n", debugstr_wn(chars, len), len, flag);
 
     if (!chars || len < 0)
         return E_INVALIDARG;
@@ -3481,7 +3481,7 @@ HRESULT WINAPI ScriptGetCMap(HDC hdc, SCRIPT_CACHE *psc, const WCHAR *pwcInChars
     HRESULT hr;
     int i;
 
-    TRACE("(%p,%p,%s,%d,0x%x,%p)\n", hdc, psc, debugstr_wn(pwcInChars, cChars),
+    TRACE("(%p,%p,%s,%d,0x%lx,%p)\n", hdc, psc, debugstr_wn(pwcInChars, cChars),
           cChars, dwFlags, pwOutGlyphs);
 
     if ((hr = init_script_cache(hdc, psc)) != S_OK) return hr;
@@ -3499,7 +3499,8 @@ HRESULT WINAPI ScriptGetCMap(HDC hdc, SCRIPT_CACHE *psc, const WCHAR *pwcInChars
         {
             WORD glyph;
             if (!hdc) return E_PENDING;
-            if (GetGlyphIndicesW(hdc, &inChar, 1, &glyph, GGI_MARK_NONEXISTING_GLYPHS) == GDI_ERROR) return S_FALSE;
+            if (NtGdiGetGlyphIndicesW(hdc, &inChar, 1, &glyph, GGI_MARK_NONEXISTING_GLYPHS) == GDI_ERROR)
+                return S_FALSE;
             if (glyph == 0xffff)
             {
                 hr = S_FALSE;

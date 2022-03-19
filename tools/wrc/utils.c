@@ -19,7 +19,6 @@
  */
 
 #include "config.h"
-#include "wine/port.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -28,6 +27,7 @@
 #include <string.h>
 #include <ctype.h>
 
+#include "../tools.h"
 #include "wrc.h"
 #include "utils.h"
 #include "parser.h"
@@ -85,16 +85,6 @@ int parser_warning(const char *s, ...)
 	return 0;
 }
 
-void internal_error(const char *file, int line, const char *s, ...)
-{
-	va_list ap;
-	va_start(ap, s);
-	fprintf(stderr, "Internal error (please report) %s %d: ", file, line);
-	vfprintf(stderr, s, ap);
-	va_end(ap);
-	exit(3);
-}
-
 void fatal_perror( const char *msg, ... )
 {
         va_list valist;
@@ -137,95 +127,6 @@ void chat(const char *s, ...)
 	}
 }
 
-char *dup_basename(const char *name, const char *ext)
-{
-	int namelen;
-	int extlen = strlen(ext);
-	char *base;
-	char *slash;
-
-	if(!name)
-		name = "wrc.tab";
-
-	slash = strrchr(name, '/');
-	if (slash)
-		name = slash + 1;
-
-	namelen = strlen(name);
-
-	/* +4 for later extension and +1 for '\0' */
-	base = xmalloc(namelen +4 +1);
-	strcpy(base, name);
-	if(!strcasecmp(name + namelen-extlen, ext))
-	{
-		base[namelen - extlen] = '\0';
-	}
-	return base;
-}
-
-void *xmalloc(size_t size)
-{
-    void *res;
-
-    assert(size > 0);
-    res = malloc(size);
-    if(res == NULL)
-    {
-	error("Virtual memory exhausted.\n");
-    }
-    memset(res, 0x55, size);
-    return res;
-}
-
-
-void *xrealloc(void *p, size_t size)
-{
-    void *res;
-
-    assert(size > 0);
-    res = realloc(p, size);
-    if(res == NULL)
-    {
-	error("Virtual memory exhausted.\n");
-    }
-    return res;
-}
-
-char *strmake( const char* fmt, ... )
-{
-    int n;
-    size_t size = 100;
-    va_list ap;
-
-    for (;;)
-    {
-        char *p = xmalloc( size );
-        va_start( ap, fmt );
-        n = vsnprintf( p, size, fmt, ap );
-        va_end( ap );
-        if (n == -1) size *= 2;
-        else if ((size_t)n >= size) size = n + 1;
-        else return p;
-        free( p );
-    }
-}
-
-char *xstrdup(const char *str)
-{
-	char *s;
-
-	assert(str != NULL);
-	s = xmalloc(strlen(str)+1);
-	return strcpy(s, str);
-}
-
-int strendswith( const char *str, const char *end )
-{
-    int l = strlen(str);
-    int m = strlen(end);
-    return l >= m && !strcmp( str + l - m, end );
-}
-
 int compare_striA( const char *str1, const char *str2 )
 {
     for (;;)
@@ -252,6 +153,19 @@ int compare_striW( const WCHAR *str1, const WCHAR *str2 )
     }
 }
 
+int compare_striAW( const char *str1, const WCHAR *str2 )
+{
+    for (;;)
+    {
+        /* only the A-Z range is case-insensitive */
+        WCHAR ch1 = (*str1 >= 'a' && *str1 <= 'z') ? *str1 + 'A' - 'a' : (unsigned char)*str1;
+        WCHAR ch2 = (*str2 >= 'a' && *str2 <= 'z') ? *str2 + 'A' - 'a' : *str2;
+        if (!ch1 || ch1 != ch2) return ch1 - ch2;
+        str1++;
+        str2++;
+    }
+}
+
 /*
  *****************************************************************************
  * Function	: compare_name_id
@@ -264,36 +178,21 @@ int compare_striW( const WCHAR *str1, const WCHAR *str2 )
 */
 int compare_name_id(const name_id_t *n1, const name_id_t *n2)
 {
-	if(n1->type == name_ord && n2->type == name_ord)
-	{
-		return n1->name.i_name - n2->name.i_name;
-	}
-	else if(n1->type == name_str && n2->type == name_str)
-	{
-		if(n1->name.s_name->type == str_char
-		&& n2->name.s_name->type == str_char)
-		{
-			return compare_striA(n1->name.s_name->str.cstr, n2->name.s_name->str.cstr);
-		}
-		else if(n1->name.s_name->type == str_unicode
-		&& n2->name.s_name->type == str_unicode)
-		{
-			return compare_striW(n1->name.s_name->str.wstr, n2->name.s_name->str.wstr);
-		}
-		else
-		{
-			internal_error(__FILE__, __LINE__, "Can't yet compare strings of mixed type\n");
-		}
-	}
-	else if(n1->type == name_ord && n2->type == name_str)
-		return 1;
-	else if(n1->type == name_str && n2->type == name_ord)
-		return -1;
-	else
-		internal_error(__FILE__, __LINE__, "Comparing name-ids with unknown types (%d, %d)\n",
-				n1->type, n2->type);
+    if (n1->type != n2->type) return n1->type == name_ord ? 1 : -1;
+    if (n1->type == name_ord) return n1->name.i_name - n2->name.i_name;
 
-	return 0; /* Keep the compiler happy */
+    if (n1->name.s_name->type == str_char)
+    {
+        if (n2->name.s_name->type == str_char)
+            return compare_striA(n1->name.s_name->str.cstr, n2->name.s_name->str.cstr);
+        return compare_striAW(n1->name.s_name->str.cstr, n2->name.s_name->str.wstr);
+    }
+    else
+    {
+        if (n2->name.s_name->type == str_char)
+            return -compare_striAW(n2->name.s_name->str.cstr, n1->name.s_name->str.wstr);
+        return compare_striW(n1->name.s_name->str.wstr, n2->name.s_name->str.wstr);
+    }
 }
 
 #ifdef _WIN32
@@ -342,11 +241,10 @@ static void init_nls_info( struct nls_info *info, unsigned short *ptr )
 
 static const struct nls_info *get_nls_info( unsigned int codepage )
 {
-    struct stat st;
     unsigned short *data;
     char *path;
     unsigned int i;
-    int fd;
+    size_t size;
 
     for (i = 0; i < ARRAY_SIZE(nlsinfo) && nlsinfo[i].codepage; i++)
         if (nlsinfo[i].codepage == codepage) return &nlsinfo[i];
@@ -356,18 +254,15 @@ static const struct nls_info *get_nls_info( unsigned int codepage )
     for (i = 0; nlsdirs[i]; i++)
     {
         path = strmake( "%s/c_%03u.nls", nlsdirs[i], codepage );
-        if ((fd = open( path, O_RDONLY )) != -1) break;
+        if ((data = read_file( path, &size )))
+        {
+            free( path );
+            init_nls_info( &nlsinfo[i], data );
+            return &nlsinfo[i];
+        }
         free( path );
     }
-    if (!nlsdirs[i]) return NULL;
-
-    fstat( fd, &st );
-    data = xmalloc( st.st_size );
-    if (read( fd, data, st.st_size ) != st.st_size) error( "failed to load %s\n", path );
-    close( fd );
-    free( path );
-    init_nls_info( &nlsinfo[i], data );
-    return &nlsinfo[i];
+    return NULL;
 }
 
 int is_valid_codepage(int cp)

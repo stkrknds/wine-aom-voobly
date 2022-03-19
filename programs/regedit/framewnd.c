@@ -178,7 +178,7 @@ static void UpdateMenuItems(HMENU hMenu) {
     selection = (HTREEITEM)SendMessageW(hwndTV, TVM_GETNEXTITEM, TVGN_CARET, 0);
     keyName = GetItemPath(hwndTV, selection, &hRootKey);
     index = SendMessageW(g_pChildWnd->hListWnd, LVM_GETNEXTITEM, -1,
-                         MAKELPARAM(LVNI_FOCUSED | LVNI_SELECTED, 0));
+                         MAKELPARAM(LVNI_SELECTED, 0));
 
     update_expand_or_collapse_item(hwndTV, selection, hMenu);
     update_modify_items(hMenu, index);
@@ -220,7 +220,7 @@ static int add_favourite_key_items(HMENU hMenu, HWND hList)
                           &max_value_len, NULL, NULL, NULL);
     if (rc != ERROR_SUCCESS)
     {
-        ERR("RegQueryInfoKey failed: %d\n", rc);
+        ERR("RegQueryInfoKey failed: %ld\n", rc);
         goto exit;
     }
 

@@ -18,8 +18,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-
 #include <stdarg.h>
 
 #define NONAMELESSUNION
@@ -76,7 +74,7 @@ static ULONG WINAPI XAPOFX_AddRef(IXAPO *iface)
 {
     XA2XAPOFXImpl *This = impl_from_IXAPO(iface);
     ULONG ref = This->fapo->AddRef(This->fapo);
-    TRACE("(%p)->(): Refcount now %u\n", This, ref);
+    TRACE("(%p)->(): Refcount now %lu\n", This, ref);
     return ref;
 }
 
@@ -85,7 +83,7 @@ static ULONG WINAPI XAPOFX_Release(IXAPO *iface)
     XA2XAPOFXImpl *This = impl_from_IXAPO(iface);
     ULONG ref = This->fapo->Release(This->fapo);
 
-    TRACE("(%p)->(): Refcount now %u\n", This, ref);
+    TRACE("(%p)->(): Refcount now %lu\n", This, ref);
 
     if(!ref)
         HeapFree(GetProcessHeap(), 0, This);
@@ -288,7 +286,7 @@ static ULONG WINAPI xapocf_AddRef(IClassFactory *iface)
 {
     struct xapo_cf *This = xapo_impl_from_IClassFactory(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
-    TRACE("(%p)->(): Refcount now %u\n", This, ref);
+    TRACE("(%p)->(): Refcount now %lu\n", This, ref);
     return ref;
 }
 
@@ -296,7 +294,7 @@ static ULONG WINAPI xapocf_Release(IClassFactory *iface)
 {
     struct xapo_cf *This = xapo_impl_from_IClassFactory(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
-    TRACE("(%p)->(): Refcount now %u\n", This, ref);
+    TRACE("(%p)->(): Refcount now %lu\n", This, ref);
     if (!ref)
         HeapFree(GetProcessHeap(), 0, This);
     return ref;
@@ -313,7 +311,7 @@ static inline HRESULT get_fapo_from_clsid(REFCLSID clsid, FAPO **fapo)
             XAudio_Internal_Free,
             XAudio_Internal_Realloc
         );
-#if XAUDIO2_VER >= 9 && HAVE_FAUDIOCREATEREVERB9WITHCUSTOMALLOCATOREXT
+#if XAUDIO2_VER >= 9
     if(IsEqualGUID(clsid, &CLSID_AudioReverb27))
         return FAudioCreateReverb9WithCustomAllocatorEXT(
             fapo,

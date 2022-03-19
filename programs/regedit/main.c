@@ -142,21 +142,22 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
     HACCEL hAccel;
     BOOL is_wow64;
 
+    InitCommonControls();
+
     if (ProcessCmdLine(GetCommandLineW())) {
         return 0;
     }
 
     if (IsWow64Process( GetCurrentProcess(), &is_wow64 ) && is_wow64)
     {
+        static const WCHAR filename[] = L"C:\\windows\\regedit.exe";
         STARTUPINFOW si;
         PROCESS_INFORMATION pi;
-        WCHAR filename[MAX_PATH];
         void *redir;
         DWORD exit_code;
 
         memset( &si, 0, sizeof(si) );
         si.cb = sizeof(si);
-        GetModuleFileNameW( 0, filename, MAX_PATH );
 
         Wow64DisableWow64FsRedirection( &redir );
         if (CreateProcessW( filename, GetCommandLineW(), NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi ))
@@ -166,7 +167,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
             GetExitCodeProcess( pi.hProcess, &exit_code );
             ExitProcess( exit_code );
         }
-        else WINE_ERR( "failed to restart 64-bit %s, err %d\n", wine_dbgstr_w(filename), GetLastError() );
+        else WINE_ERR( "failed to restart 64-bit %s, err %ld\n", wine_dbgstr_w(filename), GetLastError() );
         Wow64RevertWow64FsRedirection( redir );
     }
 

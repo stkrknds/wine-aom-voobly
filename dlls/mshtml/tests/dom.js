@@ -16,7 +16,9 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-function test_input_selection() {
+var tests = [];
+
+sync_test("input_selection", function() {
     var input = document.createElement("input");
     input.type = "text";
     input.value = "test";
@@ -55,11 +57,9 @@ function test_input_selection() {
 
     input.setSelectionRange(3, 3);
     test_range(3, 3);
+});
 
-    next_test();
-}
-
-function test_textContent() {
+sync_test("textContent", function() {
     var text = document.createTextNode("test");
     ok(text.textContent === "test", "text.textContent = " + text.textContent);
 
@@ -85,11 +85,9 @@ function test_textContent() {
     ok(div.textContent === "10.5", "div.textContent = " + div.textContent);
 
     ok(document.textContent === null, "document.textContent = " + document.textContent);
+});
 
-    next_test();
-}
-
-function test_ElementTraversal() {
+sync_test("ElementTraversal", function() {
     var div = document.createElement("div");
     div.innerHTML = "abc<b>bold</b><script>/* */<script><div>text</div>def";
     ok(div.firstElementChild.outerHTML === "<b>bold</b>",
@@ -99,19 +97,15 @@ function test_ElementTraversal() {
     ok(div.firstElementChild === null, "div.firstElementChild = " + div.firstElementChild);
 
     ok(!("firstElementChild" in document), "firstElementChild found in document");
+});
 
-    next_test();
-}
-
-function test_head() {
+sync_test("head", function() {
     var h = document.head;
     ok(h.tagName === "HEAD", "h.tagName = " + h.tagName);
     ok(h === document.getElementsByTagName("head")[0], "unexpected head element");
+});
 
-    next_test();
-}
-
-function test_iframe() {
+async_test("iframe", function() {
     document.body.innerHTML = '<iframe src="runscript.html?frame.js"></iframe>'
     var iframe = document.body.firstChild;
 
@@ -124,9 +118,9 @@ function test_iframe() {
 
         next_test();
     });
-}
+});
 
-function test_iframe_location() {
+async_test("iframe_location", function() {
     document.body.innerHTML = '<iframe src="emptyfile"></iframe>'
     var iframe = document.body.firstChild;
 
@@ -140,33 +134,46 @@ function test_iframe_location() {
         }
         iframe.src = "empty/file";
     }
-}
+});
 
-function test_anchor() {
-    var iframe = document.body.firstChild;
-    var anchor = document.createElement("a");
-
+sync_test("anchor", function() {
     var anchor_tests = [
-        { href: "http://www.winehq.org:123/about", protocol: "http:", host: "www.winehq.org:123" },
-        { href: "https://www.winehq.org:123/about", protocol: "https:", host: "www.winehq.org:123" },
-        { href: "about:blank", protocol: "about:", host: "" },
-        { href: "file:///c:/dir/file.html", protocol: "file:", host: "" },
-        { href: "http://www.winehq.org/about", protocol: "http:", host: "www.winehq.org:80", todo_host: true },
-        { href: "https://www.winehq.org/about", protocol: "https:", host: "www.winehq.org:443", todo_host: true },
+        { href: "http://www.winehq.org:123/about",
+          protocol: "http:", host: "www.winehq.org:123", path: "/about" },
+        { href: "https://www.winehq.org:123/about",
+          protocol: "https:", host: "www.winehq.org:123", path: "/about" },
+        { href: "about:blank",
+          protocol: "about:", host: "", path: "/blank", todo_pathname: 1 },
+        { href: "unknown:path",
+          protocol: "unknown:", host: "", path: "path" },
+        { href: "ftp:path",
+          protocol: "ftp:", host: "", path: "path" },
+        { href: "mailto:path",
+          protocol: "mailto:", host: "", path: "path" },
+        { href: "ws:path",
+          protocol: "ws:", host: "", path: "path" },
+        { href: "file:path",
+          protocol: "file:", host: "", path: "/path", todo_pathname: 1 },
+        { href: "file:///c:/dir/file.html",
+          protocol: "file:", host: "", path: "/c:/dir/file.html" },
+        { href: "http://www.winehq.org/about",
+          protocol: "http:", host: "www.winehq.org", path: "/about" },
+        { href: "https://www.winehq.org/about",
+          protocol: "https:", host: "www.winehq.org", path: "/about" },
     ];
 
     for(var i in anchor_tests) {
         var t = anchor_tests[i];
-        anchor.href = t.href;
+        document.body.innerHTML = '<a href="' + t.href + '">';
+        var anchor = document.body.firstChild;
         ok(anchor.protocol === t.protocol, "anchor(" + t.href + ").protocol = " + anchor.protocol);
-        todo_wine_if("todo_host" in t).
         ok(anchor.host === t.host, "anchor(" + t.href + ").host = " + anchor.host);
+        todo_wine_if("todo_pathname" in t).
+        ok(anchor.pathname === t.path, "anchor(" + t.href + ").pathname = " + anchor.pathname);
     }
+});
 
-    next_test();
-}
-
-function test_getElementsByClassName() {
+sync_test("getElementsByClassName", function() {
     var elems;
 
     document.body.innerHTML = '<div class="class1">'
@@ -187,11 +194,9 @@ function test_getElementsByClassName() {
 
     elems = document.getElementsByClassName("classnotfound");
     ok(elems.length == 0, "elems.length = " + elems.length);
+});
 
-    next_test();
-}
-
-function test_createElementNS() {
+sync_test("createElementNS", function() {
     var svg_ns = "http://www.w3.org/2000/svg";
     var elem;
 
@@ -210,11 +215,9 @@ function test_createElementNS() {
     elem = document.createElementNS("test", "svg");
     ok(elem.tagName === "svg", "elem.tagName = " + elem.tagName);
     ok(elem.namespaceURI === "test", "elem.namespaceURI = " + elem.namespaceURI);
+});
 
-    next_test();
-}
-
-function test_query_selector() {
+sync_test("query_selector", function() {
     document.body.innerHTML = '<div class="class1">'
         + '<div class="class1"></div>'
         + '<a id="class1" class="class2"></a>'
@@ -237,11 +240,9 @@ function test_query_selector() {
     ok(e.tagName === "A", "e.tagName = " + e.tagName);
     e = document.body.querySelector("a");
     ok(e.tagName === "A", "e.tagName = " + e.tagName);
+});
 
-    next_test();
-}
-
-function test_compare_position() {
+sync_test("compare_position", function() {
     document.body.innerHTML = '<div><div></div><div></div></div>';
 
     var parent = document.body.firstChild;
@@ -261,11 +262,9 @@ function test_compare_position() {
     compare_position(parent, child2, 0x14);
     compare_position(parent, elem, 0x21, 6);
     compare_position(elem, parent, 0x21, 6);
+});
 
-    next_test();
-}
-
-function test_rects() {
+sync_test("rects", function() {
     document.body.innerHTML = '<div>test</div>';
     var elem = document.body.firstChild;
     var rects = elem.getClientRects();
@@ -278,11 +277,9 @@ function test_rects() {
     elem = document.createElement("style");
     rects = elem.getClientRects();
     ok(rects.length === 0, "rect.length = " + rects.length);
+});
 
-    next_test();
-}
-
-function test_document_owner() {
+sync_test("document_owner", function() {
     var node;
 
     ok(document.ownerDocument === null, "ownerDocument = " + document.ownerDocument);
@@ -299,11 +296,9 @@ function test_document_owner() {
 
     node = document.createTextNode("test");
     ok(node.ownerDocument === document, "text.ownerDocument = " + node.ownerDocument);
+});
 
-    next_test();
-}
-
-function test_style_properties() {
+sync_test("style_properties", function() {
     document.body.innerHTML = '<div>test</div><svg></svg>';
     var elem = document.body.firstChild;
     var style = elem.style;
@@ -354,7 +349,6 @@ function test_style_properties() {
         ok(style.borderWidth === "5px", "style.borderWidth = " + style.borderWidth);
     }catch(e) {
         win_skip("skipping setProperty tests on too old IE version");
-        next_test();
         return;
     }
 
@@ -398,12 +392,11 @@ function test_style_properties() {
     ok(computed_style.zIndex === 4, "computed_style.zIndex = " + computed_style.zIndex);
 
     window.getComputedStyle(elem, null);
+});
 
-    next_test();
-}
-
-function test_stylesheets() {
+sync_test("stylesheets", function() {
     document.body.innerHTML = '<style>.div { margin-right: 1px; }</style>';
+    var elem = document.body.firstChild;
 
     ok(document.styleSheets.length === 1, "document.styleSheets.length = " + document.styleSheets.length);
 
@@ -412,37 +405,254 @@ function test_stylesheets() {
     ok(typeof(stylesheet.rules.item(0)) === "object",
        "typeof(stylesheet.rules.item(0)) = " + typeof(stylesheet.rules.item(0)));
 
+    stylesheet = document.styleSheets[0];
+    ok(stylesheet.rules.length === 1, "document.styleSheets[0].rules.length = " + stylesheet.rules.length);
+
     try {
         stylesheet.rules.item(1);
         ok(false, "expected exception");
     }catch(e) {}
 
-    next_test();
-}
+    ok(stylesheet.href === null, "stylesheet.href = " + stylesheet.href);
 
-function test_storage() {
+    var id = stylesheet.insertRule(".input { margin-left: 1px; }", 0);
+    ok(id === 0, "id = " + id);
+    ok(document.styleSheets.length === 1, "document.styleSheets.length = " + document.styleSheets.length);
+
+    try {
+        stylesheet.insertRule(".input { margin-left: 1px; }", 3);
+        ok(false, "expected exception");
+    }catch(e) {}
+
+    id = stylesheet.addRule(".p", "margin-top: 2px");
+    ok(id === 2, "id = " + id);
+    ok(document.styleSheets.length === 1, "document.styleSheets.length = " + document.styleSheets.length);
+    ok(stylesheet.rules.length === 3, "stylesheet.rules.length = " + stylesheet.rules.length);
+
+    id = stylesheet.addRule(".pre", "border: none", -1);
+    ok(id === 3, "id = " + id);
+    ok(stylesheet.rules.length === 4, "stylesheet.rules.length = " + stylesheet.rules.length);
+
+    id = stylesheet.addRule(".h1", " ", 0);
+    ok(id === 0, "id = " + id);
+    ok(stylesheet.rules.length === 5, "stylesheet.rules.length = " + stylesheet.rules.length);
+
+    id = stylesheet.addRule(".h2", "color: black", 8);
+    ok(id === 5, "id = " + id);
+    ok(stylesheet.rules.length === 6, "stylesheet.rules.length = " + stylesheet.rules.length);
+
+    try {
+        stylesheet.addRule("", "border: none", 0);
+        ok(false, "expected exception");
+    }catch(e) {}
+    try {
+        stylesheet.addRule(".img", "", 0);
+        ok(false, "expected exception");
+    }catch(e) {}
+});
+
+sync_test("storage", function() {
     ok(typeof(window.sessionStorage) === "object",
        "typeof(window.sessionStorage) = " + typeof(window.sessionStorage));
-    ok(typeof(window.localStorage) === "object",
+    ok(typeof(window.localStorage) === "object" || typeof(window.localStorage) === "unknown",
        "typeof(window.localStorage) = " + typeof(window.localStorage));
-    next_test();
-}
 
-var tests = [
-    test_input_selection,
-    test_textContent,
-    test_ElementTraversal,
-    test_getElementsByClassName,
-    test_createElementNS,
-    test_head,
-    test_iframe,
-    test_iframe_location,
-    test_anchor,
-    test_query_selector,
-    test_compare_position,
-    test_rects,
-    test_document_owner,
-    test_style_properties,
-    test_stylesheets,
-    test_storage
-];
+    var item = sessionStorage.getItem("nonexisting");
+    ok(item === null, "item = " + item);
+});
+
+async_test("animation", function() {
+    document.body.innerHTML =
+        "<style>" +
+        "  @keyframes testAnimation {0% { opacity: 0; } 100% { opacity: 1; }}" +
+        "  .testAnimation { animation-name: testAnimation; animation-duration: 0.01s; }" +
+        "</style>";
+    var div = document.createElement("div");
+    div.addEventListener("animationstart", function() {
+        div.addEventListener("animationend", next_test);
+    });
+    document.body.appendChild(div);
+    div.className = "testAnimation";
+});
+
+sync_test("navigator", function() {
+    ok(typeof(window.navigator) === "object",
+       "typeof(window.navigator) = " + typeof(window.navigator));
+
+    var v = window.navigator;
+    ok(v === window.navigator, "v != window.navigator");
+    v.testProp = true;
+    ok(window.navigator.testProp, "window.navigator.testProp = " + window.navigator.testProp);
+});
+
+sync_test("elem_props", function() {
+    var elem = document.body;
+
+    ok(elem.accessKey === "", "accessKey = " + elem.accessKey);
+    elem.accessKey = "q";
+    ok(elem.accessKey === "q", "accessKey = " + elem.accessKey + " expected q");
+});
+
+async_test("animation_frame", function() {
+    var id = requestAnimationFrame(function(x) {
+        ok(this === window, "this != window");
+        ok(typeof(x) === "number", "x = " + x);
+        ok(arguments.length === 1, "arguments.length = " + arguments.length);
+        next_test();
+    });
+    ok(typeof(id) === "number", "id = " + id);
+});
+
+sync_test("title", function() {
+    var elem = document.createElement("div");
+    ok(elem.title === "", "div.title = " + elem.title);
+    ok(elem.getAttribute("title") === null, "title attribute = " + elem.getAttribute("title"));
+    elem.title = "test";
+    ok(elem.title === "test", "div.title = " + elem.title);
+    ok(elem.getAttribute("title") === "test", "title attribute = " + elem.getAttribute("title"));
+});
+
+sync_test("disabled", function() {
+    var elem = document.createElement("div");
+    document.body.appendChild(elem);
+    ok(elem.disabled === false, "div.disabled = " + elem.disabled);
+    ok(elem.getAttribute("disabled") === null, "disabled attribute = " + elem.getAttribute("disabled") + " expected null");
+
+    elem.disabled = true;
+    ok(elem.disabled === true, "div.disabled = " + elem.disabled);
+    ok(elem.getAttribute("disabled") === "", "disabled attribute = " + elem.getAttribute("disabled") + " expected \"\"");
+
+    elem.disabled = false;
+    ok(elem.disabled === false, "div.disabled = " + elem.disabled);
+    ok(elem.getAttribute("disabled") === null, "disabled attribute = " + elem.getAttribute("disabled") + " expected null");
+
+    elem.setAttribute("disabled", "false");
+    ok(elem.disabled === true, "div.disabled = " + elem.disabled);
+    ok(elem.getAttribute("disabled") === "false", "disabled attribute = " + elem.getAttribute("disabled"));
+
+    elem.removeAttribute("disabled");
+    ok(elem.disabled === false, "div.disabled = " + elem.disabled);
+    ok(elem.getAttribute("disabled") === null, "disabled attribute = " + elem.getAttribute("disabled") + " expected null");
+});
+
+sync_test("hasAttribute", function() {
+    document.body.innerHTML = '<div attr="test"></div>';
+    var elem = document.body.firstChild, r;
+
+    r = elem.hasAttribute("attr");
+    ok(r === true, "hasAttribute(attr) returned " + r);
+    r = elem.hasAttribute("attr2");
+    ok(r === false, "hasAttribute(attr2) returned " + r);
+
+    elem.setAttribute("attr2", "abc");
+    r = elem.hasAttribute("attr2");
+    ok(r === true, "hasAttribute(attr2) returned " + r);
+
+    elem.removeAttribute("attr");
+    r = elem.hasAttribute("attr");
+    ok(r === false, "hasAttribute(attr) returned " + r);
+});
+
+sync_test("classList", function() {
+    var elem = document.createElement("div");
+    var classList = elem.classList;
+
+    classList.add("a");
+    ok(elem.className === "a", "Expected className 'a', got " + elem.className);
+
+    classList.add("b");
+    ok(elem.className === "a b", "Expected className 'a b', got " + elem.className);
+
+    classList.add("c");
+    ok(elem.className === "a b c", "Expected className 'a b c', got " + elem.className);
+
+    classList.add(4);
+    ok(elem.className === "a b c 4", "Expected className 'a b c 4', got " + elem.className);
+
+    classList.add("c");
+    ok(elem.className === "a b c 4", "(2) Expected className 'a b c 4', got " + elem.className);
+    ok(("" + classList) === "a b c 4", "Expected classList value 'a b c 4', got " + classList);
+    ok(classList.toString() === "a b c 4", "Expected classList toString 'a b c 4', got " + classList.toString());
+
+    var exception = false
+
+    try
+    {
+        classList.add();
+    }
+    catch(e)
+    {
+        exception = true;
+    }
+    ok(exception && elem.className === "a b c 4", "Expected exception, className 'a b c 4', got exception "
+            + exception + ", className" + elem.className);
+
+    exception = false
+    try
+    {
+        classList.add("");
+    }
+    catch(e)
+    {
+        exception = true;
+    }
+    ok(exception, "Expected exception for classList.add(\"\")");
+
+    exception = false
+    try
+    {
+        classList.add("e f");
+    }
+    catch(e)
+    {
+        exception = true;
+    }
+    ok(exception, "Expected exception for classList.add(\"e f\")");
+
+    classList.remove("e");
+    ok(elem.className === "a b c 4", "remove: expected className 'a b c 4', got " + elem.className);
+
+    exception = false
+    try
+    {
+        classList.remove("e f");
+    }
+    catch(e)
+    {
+        exception = true;
+    }
+    ok(exception, "remove: expected exception for classList.remove(\"e f\")");
+
+    exception = false
+    try
+    {
+        classList.remove("");
+    }
+    catch(e)
+    {
+        exception = true;
+    }
+    ok(exception, "remove: expected exception for classList.remove(\"\")");
+
+    classList.remove("d");
+    ok(elem.className === "a b c 4", "remove: expected className 'a b c 4', got " + elem.className);
+
+    classList.remove("c");
+    ok(elem.className === "a b 4", "remove: expected className 'a b 4', got " + elem.className);
+
+    classList.remove(4);
+    ok(elem.className === "a b", "remove: expected className 'a b', got " + elem.className);
+
+    classList.remove('a');
+    ok(elem.className === "b", "remove: expected className 'b', got " + elem.className);
+
+    classList.remove("a");
+    ok(elem.className === "b", "remove (2): expected className 'b', got " + elem.className);
+
+    classList.remove("b");
+    ok(elem.className === "", "remove: expected className '', got " + elem.className);
+
+    elem.className = "  testclass    foobar  ";
+    ok(("" + classList) === "  testclass    foobar  ", "Expected classList value '  testclass    foobar  ', got " + classList);
+    ok(classList.toString() === "  testclass    foobar  ", "Expected classList toString '  testclass    foobar  ', got " + classList.toString());
+});

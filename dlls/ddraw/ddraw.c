@@ -559,7 +559,7 @@ static HRESULT ddraw_set_focus_window(struct ddraw *ddraw, HWND window)
 }
 
 static HRESULT ddraw_attach_d3d_device(struct ddraw *ddraw, HWND window,
-        BOOL windowed, struct wined3d_swapchain **wined3d_swapchain)
+        DWORD cooplevel, struct wined3d_swapchain **wined3d_swapchain)
 {
     struct wined3d_swapchain_desc swapchain_desc;
     struct wined3d_display_mode mode;
@@ -582,9 +582,11 @@ static HRESULT ddraw_attach_d3d_device(struct ddraw *ddraw, HWND window,
     swapchain_desc.backbuffer_count = 1;
     swapchain_desc.swap_effect = WINED3D_SWAP_EFFECT_DISCARD;
     swapchain_desc.device_window = window;
-    swapchain_desc.windowed = windowed;
-    swapchain_desc.flags = WINED3D_SWAPCHAIN_ALLOW_MODE_SWITCH
-            | WINED3D_SWAPCHAIN_IMPLICIT | WINED3D_SWAPCHAIN_NO_WINDOW_CHANGES;
+    swapchain_desc.windowed = !(cooplevel & DDSCL_FULLSCREEN);
+    swapchain_desc.flags = WINED3D_SWAPCHAIN_ALLOW_MODE_SWITCH | WINED3D_SWAPCHAIN_IMPLICIT;
+
+    if ((cooplevel & DDSCL_NOWINDOWCHANGES) || window != GetForegroundWindow())
+        swapchain_desc.flags |= WINED3D_SWAPCHAIN_NO_WINDOW_CHANGES;
 
     if (ddraw->flags & DDRAW_NO3D)
         return wined3d_swapchain_create(ddraw->wined3d_device, &swapchain_desc,
@@ -640,7 +642,7 @@ static HRESULT ddraw_attach_d3d_device(struct ddraw *ddraw, HWND window,
     return DD_OK;
 }
 
-static HRESULT ddraw_create_swapchain(struct ddraw *ddraw, HWND window, BOOL windowed)
+static HRESULT ddraw_create_swapchain(struct ddraw *ddraw, HWND window, DWORD cooplevel)
 {
     HRESULT hr;
 
@@ -650,7 +652,7 @@ static HRESULT ddraw_create_swapchain(struct ddraw *ddraw, HWND window, BOOL win
         return E_FAIL;
     }
 
-    if (FAILED(hr = ddraw_attach_d3d_device(ddraw, window, windowed, &ddraw->wined3d_swapchain)))
+    if (FAILED(hr = ddraw_attach_d3d_device(ddraw, window, cooplevel, &ddraw->wined3d_swapchain)))
     {
         ERR("Failed to create swapchain, hr %#x.\n", hr);
         return hr;
@@ -776,7 +778,7 @@ static HRESULT WINAPI ddraw1_RestoreDisplayMode(IDirectDraw *iface)
  * Unsure about this: DDSCL_FPUSETUP
  *
  * These don't seem very important for wine:
- *  DDSCL_ALLOWREBOOT, DDSCL_NOWINDOWCHANGES, DDSCL_ALLOWMODEX
+ *  DDSCL_ALLOWREBOOT, DDSCL_ALLOWMODEX
  *
  * Returns:
  *  DD_OK if the cooperative level was set successfully
@@ -931,34 +933,34 @@ static HRESULT ddraw_set_cooperative_level(struct ddraw *ddraw, HWND window,
                 goto done;
             }
 
-            rtv = wined3d_device_get_rendertarget_view(ddraw->wined3d_device, 0);
+            rtv = wined3d_device_context_get_rendertarget_view(ddraw->immediate_context, 0);
             /* Rendering to ddraw->wined3d_frontbuffer. */
             if (rtv && !wined3d_rendertarget_view_get_sub_resource_parent(rtv))
                 rtv = NULL;
             else if (rtv)
                 wined3d_rendertarget_view_incref(rtv);
 
-            if ((dsv = wined3d_device_get_depth_stencil_view(ddraw->wined3d_device)))
+            if ((dsv = wined3d_device_context_get_depth_stencil_view(ddraw->immediate_context)))
                 wined3d_rendertarget_view_incref(dsv);
         }
 
         ddraw_destroy_swapchain(ddraw);
     }
 
-    if (FAILED(hr = ddraw_create_swapchain(ddraw, window, !(cooplevel & DDSCL_FULLSCREEN))))
+    if (FAILED(hr = ddraw_create_swapchain(ddraw, window, cooplevel)))
         ERR("Failed to create swapchain, hr %#x.\n", hr);
 
     if (restore_state)
     {
         if (dsv)
         {
-            wined3d_device_set_depth_stencil_view(ddraw->wined3d_device, dsv);
+            wined3d_device_context_set_depth_stencil_view(ddraw->immediate_context, dsv);
             wined3d_rendertarget_view_decref(dsv);
         }
 
         if (rtv)
         {
-            wined3d_device_set_rendertarget_view(ddraw->wined3d_device, 0, rtv, FALSE);
+            wined3d_device_context_set_rendertarget_views(ddraw->immediate_context, 0, 1, &rtv, FALSE);
             wined3d_rendertarget_view_decref(rtv);
         }
 
@@ -968,6 +970,12 @@ static HRESULT ddraw_set_cooperative_level(struct ddraw *ddraw, HWND window,
 
     if (!(cooplevel & DDSCL_EXCLUSIVE) && (ddraw->cooperative_level & DDSCL_EXCLUSIVE))
     {
+        /* When going from exclusive mode to normal, ddraw removes the
+           topmost bit unless the DDSCL_NOWINDOWCHANGES flag is set in
+           this call that sets it to normal, not in the old coop level. */
+        if (!(cooplevel & DDSCL_NOWINDOWCHANGES))
+            SetWindowPos(window, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+
         if (restore_mode_on_normal && FAILED(ddraw7_RestoreDisplayMode(&ddraw->IDirectDraw7_iface)))
             ERR("RestoreDisplayMode failed\n");
         ClipCursor(NULL);
@@ -4330,7 +4338,7 @@ static HRESULT WINAPI d3d7_CreateDevice(IDirect3D7 *iface, REFCLSID riid,
     TRACE("iface %p, riid %s, surface %p, device %p.\n", iface, debugstr_guid(riid), surface, device);
 
     wined3d_mutex_lock();
-    if (SUCCEEDED(hr = d3d_device_create(ddraw, target, (IUnknown *)surface, 7, &object, NULL)))
+    if (SUCCEEDED(hr = d3d_device_create(ddraw, riid, target, (IUnknown *)surface, 7, &object, NULL)))
     {
         *device = &object->IDirect3DDevice7_iface;
     }
@@ -4359,7 +4367,7 @@ static HRESULT WINAPI d3d3_CreateDevice(IDirect3D3 *iface, REFCLSID riid,
         return CLASS_E_NOAGGREGATION;
 
     wined3d_mutex_lock();
-    if (SUCCEEDED(hr = d3d_device_create(ddraw, surface_impl, (IUnknown *)surface, 3, &device_impl, NULL)))
+    if (SUCCEEDED(hr = d3d_device_create(ddraw, riid, surface_impl, (IUnknown *)surface, 3, &device_impl, NULL)))
     {
         *device = &device_impl->IDirect3DDevice3_iface;
     }
@@ -4385,7 +4393,7 @@ static HRESULT WINAPI d3d2_CreateDevice(IDirect3D2 *iface, REFCLSID riid,
             iface, debugstr_guid(riid), surface, device);
 
     wined3d_mutex_lock();
-    if (SUCCEEDED(hr = d3d_device_create(ddraw, surface_impl, (IUnknown *)surface, 2, &device_impl, NULL)))
+    if (SUCCEEDED(hr = d3d_device_create(ddraw, riid, surface_impl, (IUnknown *)surface, 2, &device_impl, NULL)))
     {
         *device = &device_impl->IDirect3DDevice2_iface;
     }
@@ -5166,6 +5174,7 @@ HRESULT ddraw_init(struct ddraw *ddraw, DWORD flags, enum wined3d_device_type de
         wined3d_decref(ddraw->wined3d);
         return hr;
     }
+    ddraw->immediate_context = wined3d_device_get_immediate_context(ddraw->wined3d_device);
 
     list_init(&ddraw->surface_list);
 

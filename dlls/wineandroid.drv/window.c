@@ -24,7 +24,6 @@
 #define NONAMELESSSTRUCT
 
 #include "config.h"
-#include "wine/port.h"
 
 #include <assert.h>
 #include <fcntl.h>
@@ -33,16 +32,13 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <stdio.h>
-#ifdef HAVE_UNISTD_H
-# include <unistd.h>
-#endif
+#include <unistd.h>
 
 #define OEMRESOURCE
 #include "windef.h"
 #include "winbase.h"
 #include "wingdi.h"
 #include "winuser.h"
-#include "wine/unicode.h"
 
 #include "android.h"
 #include "wine/server.h"
@@ -521,7 +517,7 @@ static int process_events( DWORD mask )
                     }
                     SERVER_END_REQ;
                 }
-                __wine_send_input( capture ? capture : event->data.motion.hwnd, &event->data.motion.input );
+                __wine_send_input( capture ? capture : event->data.motion.hwnd, &event->data.motion.input, NULL );
             }
             break;
 
@@ -535,7 +531,7 @@ static int process_events( DWORD mask )
                       event->data.kbd.input.u.ki.wVk, event->data.kbd.input.u.ki.wVk,
                       event->data.kbd.input.u.ki.wScan );
             update_keyboard_lock_state( event->data.kbd.input.u.ki.wVk, event->data.kbd.lock_state );
-            __wine_send_input( 0, &event->data.kbd.input );
+            __wine_send_input( 0, &event->data.kbd.input, NULL );
             break;
 
         default:
@@ -1291,9 +1287,9 @@ static inline BOOL get_surface_rect( const RECT *visible_rect, RECT *surface_rec
 /***********************************************************************
  *           ANDROID_WindowPosChanging
  */
-void CDECL ANDROID_WindowPosChanging( HWND hwnd, HWND insert_after, UINT swp_flags,
-                                     const RECT *window_rect, const RECT *client_rect, RECT *visible_rect,
-                                     struct window_surface **surface )
+BOOL CDECL ANDROID_WindowPosChanging( HWND hwnd, HWND insert_after, UINT swp_flags,
+                                      const RECT *window_rect, const RECT *client_rect, RECT *visible_rect,
+                                      struct window_surface **surface )
 {
     struct android_win_data *data = get_win_data( hwnd );
     RECT surface_rect;
@@ -1306,7 +1302,7 @@ void CDECL ANDROID_WindowPosChanging( HWND hwnd, HWND insert_after, UINT swp_fla
            hwnd, wine_dbgstr_rect(window_rect), wine_dbgstr_rect(client_rect),
            GetWindowLongW( hwnd, GWL_STYLE ), swp_flags );
 
-    if (!data && !(data = create_win_data( hwnd, window_rect, client_rect ))) return;
+    if (!data && !(data = create_win_data( hwnd, window_rect, client_rect ))) return TRUE;
 
     *visible_rect = *window_rect;
 
@@ -1339,6 +1335,7 @@ void CDECL ANDROID_WindowPosChanging( HWND hwnd, HWND insert_after, UINT swp_fla
 
 done:
     release_win_data( data );
+    return TRUE;
 }
 
 
@@ -1385,7 +1382,6 @@ void CDECL ANDROID_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flag
  */
 UINT CDECL ANDROID_ShowWindow( HWND hwnd, INT cmd, RECT *rect, UINT swp )
 {
-    if (IsRectEmpty( rect )) return swp;
     if (!IsIconic( hwnd )) return swp;
     /* always hide icons off-screen */
     if (rect->left != -32000 || rect->top != -32000)

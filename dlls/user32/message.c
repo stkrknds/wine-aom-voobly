@@ -35,6 +35,7 @@
 #include "dbt.h"
 #include "dde.h"
 #include "imm.h"
+#include "hidusage.h"
 #include "ddk/imm.h"
 #include "wine/server.h"
 #include "user_private.h"
@@ -585,7 +586,7 @@ DWORD get_input_codepage( void )
 {
     DWORD cp;
     int ret;
-    HKL hkl = GetKeyboardLayout( 0 );
+    HKL hkl = NtUserGetKeyboardLayout( 0 );
 
     ret = GetLocaleInfoW( LOWORD(hkl), LOCALE_IDEFAULTANSICODEPAGE | LOCALE_RETURN_NUMBER,
                           (WCHAR *)&cp, sizeof(cp) / sizeof(WCHAR) );
@@ -602,7 +603,7 @@ BOOL map_wparam_AtoW( UINT message, WPARAM *wparam, enum wm_char_mapping mapping
 {
     char ch[2];
     WCHAR wch[2];
-    DWORD cp = get_input_codepage();
+    DWORD cp;
 
     wch[0] = wch[1] = 0;
     switch(message)
@@ -616,6 +617,7 @@ BOOL map_wparam_AtoW( UINT message, WPARAM *wparam, enum wm_char_mapping mapping
         {
             struct wm_char_mapping_data *data = get_user_thread_info()->wmchar_data;
             BYTE low = LOBYTE(*wparam);
+            cp = get_input_codepage();
 
             if (HIBYTE(*wparam))
             {
@@ -662,12 +664,14 @@ BOOL map_wparam_AtoW( UINT message, WPARAM *wparam, enum wm_char_mapping mapping
     case WM_SYSCHAR:
     case WM_SYSDEADCHAR:
     case WM_MENUCHAR:
+        cp = get_input_codepage();
         ch[0] = LOBYTE(*wparam);
         ch[1] = HIBYTE(*wparam);
         MultiByteToWideChar( cp, 0, ch, 2, wch, 2 );
         *wparam = MAKEWPARAM(wch[0], wch[1]);
         break;
     case WM_IME_CHAR:
+        cp = get_input_codepage();
         ch[0] = HIBYTE(*wparam);
         ch[1] = LOBYTE(*wparam);
         if (ch[0]) MultiByteToWideChar( cp, 0, ch, 2, wch, 2 );
@@ -689,13 +693,14 @@ static void map_wparam_WtoA( MSG *msg, BOOL remove )
     BYTE ch[4];
     WCHAR wch[2];
     DWORD len;
-    DWORD cp = get_input_codepage();
+    DWORD cp;
 
     switch(msg->message)
     {
     case WM_CHAR:
         if (!HIWORD(msg->wParam))
         {
+            cp = get_input_codepage();
             wch[0] = LOWORD(msg->wParam);
             ch[0] = ch[1] = 0;
             len = WideCharToMultiByte( cp, 0, wch, 1, (LPSTR)ch, 2, NULL, NULL );
@@ -723,6 +728,7 @@ static void map_wparam_WtoA( MSG *msg, BOOL remove )
     case WM_SYSCHAR:
     case WM_SYSDEADCHAR:
     case WM_MENUCHAR:
+        cp = get_input_codepage();
         wch[0] = LOWORD(msg->wParam);
         wch[1] = HIWORD(msg->wParam);
         ch[0] = ch[1] = 0;
@@ -730,6 +736,7 @@ static void map_wparam_WtoA( MSG *msg, BOOL remove )
         msg->wParam = MAKEWPARAM( ch[0] | (ch[1] << 8), 0 );
         break;
     case WM_IME_CHAR:
+        cp = get_input_codepage();
         wch[0] = LOWORD(msg->wParam);
         ch[0] = ch[1] = 0;
         len = WideCharToMultiByte( cp, 0, wch, 1, (LPSTR)ch, 2, NULL, NULL );
@@ -1848,53 +1855,14 @@ static void reply_message( struct received_message_info *info, LRESULT result, B
  *
  * Handle an internal Wine message instead of calling the window proc.
  */
-static LRESULT handle_internal_message( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam )
+LRESULT handle_internal_message( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam )
 {
-    switch(msg)
-    {
-    case WM_WINE_DESTROYWINDOW:
-        return WIN_DestroyWindow( hwnd );
-    case WM_WINE_SETWINDOWPOS:
-        if (is_desktop_window( hwnd )) return 0;
-        return USER_SetWindowPos( (WINDOWPOS *)lparam, 0, 0 );
-    case WM_WINE_SHOWWINDOW:
-        if (is_desktop_window( hwnd )) return 0;
-        return ShowWindow( hwnd, wparam );
-    case WM_WINE_SETPARENT:
-        if (is_desktop_window( hwnd )) return 0;
-        return (LRESULT)SetParent( hwnd, (HWND)wparam );
-    case WM_WINE_SETWINDOWLONG:
-        return WIN_SetWindowLong( hwnd, (short)LOWORD(wparam), HIWORD(wparam), lparam, TRUE );
-    case WM_WINE_SETSTYLE:
-        if (is_desktop_window( hwnd )) return 0;
-        return WIN_SetStyle(hwnd, wparam, lparam);
-    case WM_WINE_SETACTIVEWINDOW:
-        if (!wparam && GetForegroundWindow() == hwnd) return 0;
-        return (LRESULT)SetActiveWindow( (HWND)wparam );
-    case WM_WINE_KEYBOARD_LL_HOOK:
-    case WM_WINE_MOUSE_LL_HOOK:
-    {
-        struct hook_extra_info *h_extra = (struct hook_extra_info *)lparam;
-
-        return call_current_hook( h_extra->handle, HC_ACTION, wparam, h_extra->lparam );
-    }
-    case WM_WINE_CLIPCURSOR:
-        if (wparam)
-        {
-            RECT rect;
-            GetClipCursor( &rect );
-            return USER_Driver->pClipCursor( &rect );
-        }
-        return USER_Driver->pClipCursor( NULL );
-    case WM_WINE_UPDATEWINDOWSTATE:
-        update_window_state( hwnd );
-        return 0;
-    default:
-        if (msg >= WM_WINE_FIRST_DRIVER_MSG && msg <= WM_WINE_LAST_DRIVER_MSG)
-            return USER_Driver->pWindowMessage( hwnd, msg, wparam, lparam );
-        FIXME( "unknown internal message %x\n", msg );
-        return 0;
-    }
+    MSG m;
+    m.hwnd    = hwnd;
+    m.message = msg;
+    m.wParam  = wparam;
+    m.lParam  = lparam;
+    return NtUserCallOneParam( (UINT_PTR)&m, NtUserHandleInternalMessage );
 }
 
 /* since the WM_DDE_ACK response to a WM_DDE_EXECUTE message should contain the handle
@@ -2282,11 +2250,17 @@ static void accept_hardware_message( UINT hw_id )
 static BOOL process_rawinput_message( MSG *msg, UINT hw_id, const struct hardware_msg_data *msg_data )
 {
     struct rawinput_thread_data *thread_data = rawinput_thread_data();
-    if (!rawinput_from_hardware_message( thread_data->buffer, msg_data ))
-        return FALSE;
 
-    thread_data->hw_id = hw_id;
-    msg->lParam = (LPARAM)hw_id;
+    if (msg->message == WM_INPUT_DEVICE_CHANGE)
+        rawinput_update_device_list();
+    else
+    {
+        thread_data->buffer->header.dwSize = RAWINPUT_BUFFER_SIZE;
+        if (!rawinput_from_hardware_message( thread_data->buffer, msg_data )) return FALSE;
+        thread_data->hw_id = hw_id;
+        msg->lParam = (LPARAM)hw_id;
+    }
+
     msg->pt = point_phys_to_win_dpi( msg->hwnd, msg->pt );
     return TRUE;
 }
@@ -2366,7 +2340,7 @@ static BOOL process_keyboard_message( MSG *msg, UINT hw_id, HWND hwnd_filter,
     msg->pt = point_phys_to_win_dpi( msg->hwnd, msg->pt );
 
     if ( remove && msg->message == WM_KEYDOWN )
-        if (ImmProcessKey(msg->hwnd, GetKeyboardLayout(0), msg->wParam, msg->lParam, 0) )
+        if (ImmProcessKey(msg->hwnd, NtUserGetKeyboardLayout(0), msg->wParam, msg->lParam, 0) )
             msg->wParam = VK_PROCESSKEY;
 
     return TRUE;
@@ -2395,7 +2369,7 @@ static BOOL process_mouse_message( MSG *msg, UINT hw_id, ULONG_PTR extra_info, H
     /* find the window to dispatch this mouse message to */
 
     info.cbSize = sizeof(info);
-    GetGUIThreadInfo( GetCurrentThreadId(), &info );
+    NtUserGetGUIThreadInfo( GetCurrentThreadId(), &info );
     if (info.hwndCapture)
     {
         hittest = HTCLIENT;
@@ -2475,7 +2449,7 @@ static BOOL process_mouse_message( MSG *msg, UINT hw_id, ULONG_PTR extra_info, H
            if ((msg->message == clk_msg.message) &&
                (msg->hwnd == clk_msg.hwnd) &&
                (msg->wParam == clk_msg.wParam) &&
-               (msg->time - clk_msg.time < GetDoubleClickTime()) &&
+               (msg->time - clk_msg.time < NtUserGetDoubleClickTime()) &&
                (abs(msg->pt.x - clk_msg.pt.x) < GetSystemMetrics(SM_CXDOUBLECLK)/2) &&
                (abs(msg->pt.y - clk_msg.pt.y) < GetSystemMetrics(SM_CYDOUBLECLK)/2))
            {
@@ -2550,7 +2524,7 @@ static BOOL process_mouse_message( MSG *msg, UINT hw_id, ULONG_PTR extra_info, H
 
         if (msg->hwnd != info.hwndActive)
         {
-            HWND hwndTop = GetAncestor( msg->hwnd, GA_ROOT );
+            HWND hwndTop = NtUserGetAncestor( msg->hwnd, GA_ROOT );
 
             if ((GetWindowLongW( hwndTop, GWL_STYLE ) & (WS_POPUP|WS_CHILD)) != WS_CHILD)
             {
@@ -2606,7 +2580,7 @@ static BOOL process_hardware_message( MSG *msg, UINT hw_id, const struct hardwar
     /* hardware messages are always in physical coords */
     context = SetThreadDpiAwarenessContext( DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE );
 
-    if (msg->message == WM_INPUT)
+    if (msg->message == WM_INPUT || msg->message == WM_INPUT_DEVICE_CHANGE)
         ret = process_rawinput_message( msg, hw_id, msg_data );
     else if (is_keyboard_message( msg->message ))
         ret = process_keyboard_message( msg, hw_id, hwnd_filter, first, last, remove );
@@ -2652,7 +2626,7 @@ static int peek_message( MSG *msg, HWND hwnd, UINT first, UINT last, UINT flags,
     struct received_message_info info, *old_info;
     unsigned int hw_id = 0;  /* id of previous hardware message */
     void *buffer;
-    size_t buffer_size = 256;
+    size_t buffer_size = 1024;
 
     if (!(buffer = HeapAlloc( GetProcessHeap(), 0, buffer_size ))) return -1;
 
@@ -3221,12 +3195,13 @@ static BOOL send_message( struct send_message_info *info, DWORD_PTR *res_ptr, BO
 /***********************************************************************
  *		send_hardware_message
  */
-NTSTATUS send_hardware_message( HWND hwnd, const INPUT *input, UINT flags )
+NTSTATUS send_hardware_message( HWND hwnd, const INPUT *input, const RAWINPUT *rawinput, UINT flags )
 {
     struct user_key_state_info *key_state_info = get_user_thread_info()->key_state;
     struct send_message_info info;
     int prev_x, prev_y, new_x, new_y;
-    INT counter = global_key_state_counter;
+    INT counter = NtUserCallOneParam( 0, NtUserIncrementKeyStateCounter );
+    USAGE hid_usage_page, hid_usage;
     NTSTATUS ret;
     BOOL wait;
 
@@ -3235,6 +3210,23 @@ NTSTATUS send_hardware_message( HWND hwnd, const INPUT *input, UINT flags )
     info.hwnd     = hwnd;
     info.flags    = 0;
     info.timeout  = 0;
+
+    if (input->type == INPUT_HARDWARE && rawinput->header.dwType == RIM_TYPEHID)
+    {
+        if (input->u.hi.uMsg == WM_INPUT_DEVICE_CHANGE)
+        {
+            hid_usage_page = ((USAGE *)rawinput->data.hid.bRawData)[0];
+            hid_usage = ((USAGE *)rawinput->data.hid.bRawData)[1];
+        }
+        if (input->u.hi.uMsg == WM_INPUT)
+        {
+            if (!rawinput_device_get_usages( rawinput->header.hDevice, &hid_usage_page, &hid_usage ))
+            {
+                WARN( "unable to get HID usages for device %p\n", rawinput->header.hDevice );
+                return STATUS_INVALID_HANDLE;
+            }
+        }
+    }
 
     SERVER_START_REQ( send_hardware_message )
     {
@@ -3261,6 +3253,28 @@ NTSTATUS send_hardware_message( HWND hwnd, const INPUT *input, UINT flags )
         case INPUT_HARDWARE:
             req->input.hw.msg    = input->u.hi.uMsg;
             req->input.hw.lparam = MAKELONG( input->u.hi.wParamL, input->u.hi.wParamH );
+            switch (input->u.hi.uMsg)
+            {
+            case WM_INPUT:
+            case WM_INPUT_DEVICE_CHANGE:
+                req->input.hw.rawinput.type = rawinput->header.dwType;
+                switch (rawinput->header.dwType)
+                {
+                case RIM_TYPEHID:
+                    req->input.hw.rawinput.hid.device = HandleToUlong( rawinput->header.hDevice );
+                    req->input.hw.rawinput.hid.param = rawinput->header.wParam;
+                    req->input.hw.rawinput.hid.usage_page = hid_usage_page;
+                    req->input.hw.rawinput.hid.usage = hid_usage;
+                    req->input.hw.rawinput.hid.count = rawinput->data.hid.dwCount;
+                    req->input.hw.rawinput.hid.length = rawinput->data.hid.dwSizeHid;
+                    wine_server_add_data( req, rawinput->data.hid.bRawData,
+                                          rawinput->data.hid.dwCount * rawinput->data.hid.dwSizeHid );
+                    break;
+                default:
+                    assert( 0 );
+                    break;
+                }
+            }
             break;
         }
         if (key_state_info) wine_server_set_reply( req, key_state_info->state,
@@ -3301,9 +3315,9 @@ NTSTATUS send_hardware_message( HWND hwnd, const INPUT *input, UINT flags )
  * Same as SendMessageTimeoutW but sends the message to a specific thread
  * without requiring a window handle. Only works for internal Wine messages.
  */
-LRESULT MSG_SendInternalMessageTimeout( DWORD dest_pid, DWORD dest_tid,
-                                        UINT msg, WPARAM wparam, LPARAM lparam,
-                                        UINT flags, UINT timeout, PDWORD_PTR res_ptr )
+LRESULT WINAPI MSG_SendInternalMessageTimeout( DWORD dest_pid, DWORD dest_tid,
+                                               UINT msg, WPARAM wparam, LPARAM lparam,
+                                               UINT flags, UINT timeout, PDWORD_PTR res_ptr )
 {
     struct send_message_info info;
     LRESULT ret, result;
@@ -3837,7 +3851,7 @@ BOOL WINAPI TranslateMessage( const MSG *msg )
         return ImmTranslateMessage(msg->hwnd, msg->message, msg->wParam, msg->lParam);
     }
 
-    GetKeyboardState( state );
+    NtUserGetKeyboardState( state );
     len = ToUnicode(msg->wParam, HIWORD(msg->lParam), state, wp, ARRAY_SIZE(wp), 0);
     if (len == -1)
     {
@@ -3907,7 +3921,7 @@ LRESULT WINAPI DECLSPEC_HOTPATCH DispatchMessageA( const MSG* msg )
     {
         /* send a WM_NCPAINT and WM_ERASEBKGND if the non-client area is still invalid */
         HRGN hrgn = CreateRectRgn( 0, 0, 0, 0 );
-        GetUpdateRgn( msg->hwnd, hrgn, TRUE );
+        NtUserGetUpdateRgn( msg->hwnd, hrgn, TRUE );
         DeleteObject( hrgn );
     }
     return retval;
@@ -3978,7 +3992,7 @@ LRESULT WINAPI DECLSPEC_HOTPATCH DispatchMessageW( const MSG* msg )
     {
         /* send a WM_NCPAINT and WM_ERASEBKGND if the non-client area is still invalid */
         HRGN hrgn = CreateRectRgn( 0, 0, 0, 0 );
-        GetUpdateRgn( msg->hwnd, hrgn, TRUE );
+        NtUserGetUpdateRgn( msg->hwnd, hrgn, TRUE );
         DeleteObject( hrgn );
     }
     return retval;
@@ -4270,7 +4284,7 @@ static BOOL CALLBACK bcast_desktop( LPWSTR desktop, LPARAM lp )
     }
 
     ret = EnumDesktopWindows( hdesktop, bcast_childwindow, lp );
-    CloseDesktop(hdesktop);
+    NtUserCloseDesktop( hdesktop );
     TRACE("-->%d\n", ret);
     return parm->success;
 }
@@ -4284,7 +4298,7 @@ static BOOL CALLBACK bcast_winsta( LPWSTR winsta, LPARAM lp )
         return TRUE;
     ((BroadcastParm *)lp)->winsta = hwinsta;
     ret = EnumDesktopsW( hwinsta, bcast_desktop, lp );
-    CloseWindowStation( hwinsta );
+    NtUserCloseWindowStation( hwinsta );
     TRACE("-->%d\n", ret);
     return ret;
 }
@@ -4379,43 +4393,7 @@ BOOL WINAPI SetMessageQueue( INT size )
  */
 BOOL WINAPI MessageBeep( UINT i )
 {
-    BOOL active = TRUE;
-    SystemParametersInfoA( SPI_GETBEEP, 0, &active, FALSE );
-    if (active) USER_Driver->pBeep();
-    return TRUE;
-}
-
-
-/***********************************************************************
- *      SetCoalescableTimer (USER32.@)
- */
-UINT_PTR WINAPI SetCoalescableTimer( HWND hwnd, UINT_PTR id, UINT timeout, TIMERPROC proc, ULONG tolerance )
-{
-    UINT_PTR ret;
-    WNDPROC winproc = 0;
-
-    if (proc) winproc = WINPROC_AllocProc( (WNDPROC)proc, FALSE );
-
-    timeout = min( max( USER_TIMER_MINIMUM, timeout ), USER_TIMER_MAXIMUM );
-
-    SERVER_START_REQ( set_win_timer )
-    {
-        req->win    = wine_server_user_handle( hwnd );
-        req->msg    = WM_TIMER;
-        req->id     = id;
-        req->rate   = timeout;
-        req->lparam = (ULONG_PTR)winproc;
-        if (!wine_server_call_err( req ))
-        {
-            ret = reply->id;
-            if (!ret) ret = TRUE;
-        }
-        else ret = 0;
-    }
-    SERVER_END_REQ;
-
-    TRACE("Added %p %lx %p timeout %d\n", hwnd, id, winproc, timeout );
-    return ret;
+    return NtUserCallOneParam( i, NtUserMessageBeep );
 }
 
 
@@ -4424,59 +4402,7 @@ UINT_PTR WINAPI SetCoalescableTimer( HWND hwnd, UINT_PTR id, UINT timeout, TIMER
  */
 UINT_PTR WINAPI SetTimer( HWND hwnd, UINT_PTR id, UINT timeout, TIMERPROC proc )
 {
-    return SetCoalescableTimer( hwnd, id, timeout, proc, TIMERV_DEFAULT_COALESCING );
-}
-
-
-/***********************************************************************
- *		SetSystemTimer (USER32.@)
- */
-UINT_PTR WINAPI SetSystemTimer( HWND hwnd, UINT_PTR id, UINT timeout, TIMERPROC proc )
-{
-    UINT_PTR ret;
-    WNDPROC winproc = 0;
-
-    if (proc) winproc = WINPROC_AllocProc( (WNDPROC)proc, FALSE );
-
-    timeout = min( max( USER_TIMER_MINIMUM, timeout ), USER_TIMER_MAXIMUM );
-
-    SERVER_START_REQ( set_win_timer )
-    {
-        req->win    = wine_server_user_handle( hwnd );
-        req->msg    = WM_SYSTIMER;
-        req->id     = id;
-        req->rate   = timeout;
-        req->lparam = (ULONG_PTR)winproc;
-        if (!wine_server_call_err( req ))
-        {
-            ret = reply->id;
-            if (!ret) ret = TRUE;
-        }
-        else ret = 0;
-    }
-    SERVER_END_REQ;
-
-    TRACE("Added %p %lx %p timeout %d\n", hwnd, id, winproc, timeout );
-    return ret;
-}
-
-
-/***********************************************************************
- *		KillTimer (USER32.@)
- */
-BOOL WINAPI KillTimer( HWND hwnd, UINT_PTR id )
-{
-    BOOL ret;
-
-    SERVER_START_REQ( kill_win_timer )
-    {
-        req->win = wine_server_user_handle( hwnd );
-        req->msg = WM_TIMER;
-        req->id  = id;
-        ret = !wine_server_call_err( req );
-    }
-    SERVER_END_REQ;
-    return ret;
+    return NtUserSetTimer( hwnd, id, timeout, proc, TIMERV_DEFAULT_COALESCING );
 }
 
 
@@ -4485,17 +4411,7 @@ BOOL WINAPI KillTimer( HWND hwnd, UINT_PTR id )
  */
 BOOL WINAPI KillSystemTimer( HWND hwnd, UINT_PTR id )
 {
-    BOOL ret;
-
-    SERVER_START_REQ( kill_win_timer )
-    {
-        req->win = wine_server_user_handle( hwnd );
-        req->msg = WM_SYSTIMER;
-        req->id  = id;
-        ret = !wine_server_call_err( req );
-    }
-    SERVER_END_REQ;
-    return ret;
+    return NtUserCallHwndParam( hwnd, id, NtUserKillSystemTimer );
 }
 
 
@@ -4506,45 +4422,6 @@ BOOL WINAPI IsGUIThread( BOOL convert )
 {
     FIXME( "%u: stub\n", convert );
     return TRUE;
-}
-
-
-/**********************************************************************
- *		GetGUIThreadInfo  (USER32.@)
- */
-BOOL WINAPI GetGUIThreadInfo( DWORD id, GUITHREADINFO *info )
-{
-    BOOL ret;
-
-    if (info->cbSize != sizeof(*info))
-    {
-        SetLastError( ERROR_INVALID_PARAMETER );
-        return FALSE;
-    }
-
-    SERVER_START_REQ( get_thread_input )
-    {
-        req->tid = id;
-        if ((ret = !wine_server_call_err( req )))
-        {
-            info->flags          = 0;
-            info->hwndActive     = wine_server_ptr_handle( reply->active );
-            info->hwndFocus      = wine_server_ptr_handle( reply->focus );
-            info->hwndCapture    = wine_server_ptr_handle( reply->capture );
-            info->hwndMenuOwner  = wine_server_ptr_handle( reply->menu_owner );
-            info->hwndMoveSize   = wine_server_ptr_handle( reply->move_size );
-            info->hwndCaret      = wine_server_ptr_handle( reply->caret );
-            info->rcCaret.left   = reply->rect.left;
-            info->rcCaret.top    = reply->rect.top;
-            info->rcCaret.right  = reply->rect.right;
-            info->rcCaret.bottom = reply->rect.bottom;
-            if (reply->menu_owner) info->flags |= GUI_INMENUMODE;
-            if (reply->move_size) info->flags |= GUI_INMOVESIZE;
-            if (reply->caret) info->flags |= GUI_CARETBLINKING;
-        }
-    }
-    SERVER_END_REQ;
-    return ret;
 }
 
 

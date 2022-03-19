@@ -19,6 +19,8 @@
 #ifndef __WINE_WINERROR_H
 #define __WINE_WINERROR_H
 
+#include <specstrings.h>
+
 #define FACILITY_NULL                         0
 #define FACILITY_RPC                          1
 #define FACILITY_DISPATCH                     2
@@ -87,11 +89,11 @@
 #define __HRESULT_FROM_WIN32(x)   ((HRESULT)(x) > 0 ? ((HRESULT) (((x) & 0x0000FFFF) | (FACILITY_WIN32 << 16) | 0x80000000)) : (HRESULT)(x) )
 #ifndef _HRESULT_DEFINED
 #define _HRESULT_DEFINED
-# ifdef _MSC_VER
-typedef long            HRESULT;
-# else
-typedef int             HRESULT;
-# endif
+#if !defined(__LP64__) && !defined(WINE_NO_LONG_TYPES)
+typedef long HRESULT;
+#else
+typedef int HRESULT;
+#endif
 #endif
 static inline HRESULT HRESULT_FROM_WIN32(unsigned int x)
 {
@@ -410,6 +412,7 @@ static inline HRESULT HRESULT_FROM_WIN32(unsigned int x)
 #define ERROR_THREAD_MODE_NOT_BACKGROUND                   401
 #define ERROR_PROCESS_MODE_ALREADY_BACKGROUND              402
 #define ERROR_PROCESS_MODE_NOT_BACKGROUND                  403
+#define ERROR_NO_SUCH_DEVICE                               433
 #define ERROR_PNP_QUERY_REMOVE_DEVICE_TIMEOUT              480
 #define ERROR_PNP_QUERY_REMOVE_RELATED_DEVICE_TIMEOUT      481
 #define ERROR_PNP_QUERY_REMOVE_UNRELATED_DEVICE_TIMEOUT    482
@@ -3037,6 +3040,21 @@ static inline HRESULT HRESULT_FROM_WIN32(unsigned int x)
 #define CO_E_DECODEFAILED                                  _HRESULT_TYPEDEF_(0x8004021A)
 #define CO_E_ACNOTINITIALIZED                              _HRESULT_TYPEDEF_(0x8004021B)
 
+#define CONTEXT_S_FIRST                                    _HRESULT_TYPEDEF_(0x0004e000)
+#define CONTEXT_S_LAST                                     _HRESULT_TYPEDEF_(0x0004e02f)
+#define CONTEXT_E_FIRST                                    _HRESULT_TYPEDEF_(0x8004e000)
+#define CONTEXT_E_ABORTED                                  _HRESULT_TYPEDEF_(0x8004e002)
+#define CONTEXT_E_ABORTING                                 _HRESULT_TYPEDEF_(0x8004e003)
+#define CONTEXT_E_NOCONTEXT                                _HRESULT_TYPEDEF_(0x8004e004)
+#define CONTEXT_E_WOULD_DEADLOCK                           _HRESULT_TYPEDEF_(0x8004e005)
+#define CONTEXT_E_SYNCH_TIMEOUT                            _HRESULT_TYPEDEF_(0x8004e006)
+#define CONTEXT_E_OLDREF                                   _HRESULT_TYPEDEF_(0x8004e007)
+#define CONTEXT_E_ROLENOTFOUND                             _HRESULT_TYPEDEF_(0x8004e00c)
+#define CONTEXT_E_TMNOTAVAILABLE                           _HRESULT_TYPEDEF_(0x8004e00f)
+#define CONTEXT_E_NOJIT                                    _HRESULT_TYPEDEF_(0x8004e026)
+#define CONTEXT_E_NOTRANSACTION                            _HRESULT_TYPEDEF_(0x8004e027)
+#define CONTEXT_E_LAST                                     _HRESULT_TYPEDEF_(0x8004e02f)
+
 /* Task Scheduler Service Error Codes */
 #define SCHED_S_TASK_READY                                 _HRESULT_TYPEDEF_(0x00041300)
 #define SCHED_S_TASK_RUNNING                               _HRESULT_TYPEDEF_(0x00041301)
@@ -3637,6 +3655,29 @@ static inline HRESULT HRESULT_FROM_WIN32(unsigned int x)
 #define DWM_E_NOT_QUEUING_PRESENTS                         _HRESULT_TYPEDEF_(0x80263004)
 #define DWM_E_ADAPTER_NOT_FOUND                            _HRESULT_TYPEDEF_(0x80263005)
 #define DWM_S_GDI_REDIRECTION_SURFACE                      _HRESULT_TYPEDEF_(0x00263005)
+
+#define TBS_E_INTERNAL_ERROR                               _HRESULT_TYPEDEF_(0x80284001)
+#define TBS_E_BAD_PARAMETER                                _HRESULT_TYPEDEF_(0x80284002)
+#define TBS_E_INVALID_OUTPUT_POINTER                       _HRESULT_TYPEDEF_(0x80284003)
+#define TBS_E_INVALID_CONTEXT                              _HRESULT_TYPEDEF_(0x80284004)
+#define TBS_E_INSUFFICIENT_BUFFER                          _HRESULT_TYPEDEF_(0x80284005)
+#define TBS_E_IOERROR                                      _HRESULT_TYPEDEF_(0x80284006)
+#define TBS_E_INVALID_CONTEXT_PARAM                        _HRESULT_TYPEDEF_(0x80284007)
+#define TBS_E_SERVICE_NOT_RUNNING                          _HRESULT_TYPEDEF_(0x80284008)
+#define TBS_E_TOO_MANY_TBS_CONTEXTS                        _HRESULT_TYPEDEF_(0x80284009)
+#define TBS_E_TOO_MANY_RESOURCES                           _HRESULT_TYPEDEF_(0x8028400a)
+#define TBS_E_SERVICE_START_PENDING                        _HRESULT_TYPEDEF_(0x8028400b)
+#define TBS_E_PPI_NOT_SUPPORTED                            _HRESULT_TYPEDEF_(0x8028400c)
+#define TBS_E_COMMAND_CANCELED                             _HRESULT_TYPEDEF_(0x8028400d)
+#define TBS_E_BUFFER_TOO_LARGE                             _HRESULT_TYPEDEF_(0x8028400e)
+#define TBS_E_TPM_NOT_FOUND                                _HRESULT_TYPEDEF_(0x8028400f)
+#define TBS_E_SERVICE_DISABLED                             _HRESULT_TYPEDEF_(0x80284010)
+#define TBS_E_NO_EVENT_LOG                                 _HRESULT_TYPEDEF_(0x80284011)
+#define TBS_E_ACCESS_DENIED                                _HRESULT_TYPEDEF_(0x80284012)
+#define TBS_E_PROVISIONING_NOT_ALLOWED                     _HRESULT_TYPEDEF_(0x80284013)
+#define TBS_E_PPI_FUNCTION_UNSUPPORTED                     _HRESULT_TYPEDEF_(0x80284014)
+#define TBS_E_OWNERAUTH_NOT_FOUND                          _HRESULT_TYPEDEF_(0x80284015)
+#define TBS_E_PROVISIONING_INCOMPLETE                      _HRESULT_TYPEDEF_(0x80284016)
 
 #define UI_E_CREATE_FAILED                                 _HRESULT_TYPEDEF_(0x802a0001)
 #define UI_E_SHUTDOWN_CALLED                               _HRESULT_TYPEDEF_(0x802a0002)

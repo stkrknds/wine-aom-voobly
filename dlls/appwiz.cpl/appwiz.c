@@ -89,7 +89,7 @@ static const WCHAR PathUninstallW[] = L"Software\\Microsoft\\Windows\\CurrentVer
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason,
                     LPVOID lpvReserved)
 {
-    TRACE("(%p, %d, %p)\n", hinstDLL, fdwReason, lpvReserved);
+    TRACE("(%p, %ld, %p)\n", hinstDLL, fdwReason, lpvReserved);
 
     switch (fdwReason)
     {
@@ -542,7 +542,7 @@ static void SetInfoDialogText(HKEY hKey, LPCWSTR lpKeyName, LPCWSTR lpAltMessage
     }
     else
     {
-        buflen = MAX_STRING_LEN;
+        buflen = sizeof(buf);
 
         if ((RegQueryValueExW(hKey, lpKeyName, 0, 0, (LPBYTE) buf, &buflen) ==
            ERROR_SUCCESS) && buf[0])

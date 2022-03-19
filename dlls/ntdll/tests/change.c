@@ -17,6 +17,7 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
+#undef WINE_NO_LONG_TYPES /* temporary for migration */
 
 #include <ntstatus.h>
 #define WIN32_NO_STATUS
@@ -168,7 +169,7 @@ static void test_ntncdf_async(void)
     HANDLE hdir, hEvent;
     char buffer[0x1000];
     DWORD fflags, filter = 0;
-    IO_STATUS_BLOCK iosb, iosb2;
+    IO_STATUS_BLOCK iosb, iosb2, iosb3;
     WCHAR path[MAX_PATH], subdir[MAX_PATH];
     static const WCHAR szBoo[] = { '\\','b','o','o',0 };
     static const WCHAR szHoo[] = { '\\','h','o','o',0 };
@@ -293,16 +294,28 @@ static void test_ntncdf_async(void)
     ok(U(iosb).Status == 0x01234567, "status set too soon\n");
     ok(iosb.Information == 0x12345678, "info set too soon\n");
 
-    r = pNtCancelIoFile(hdir, &iosb);
+    U(iosb3).Status   = 0x111111;
+    iosb3.Information = 0x222222;
+
+    r = pNtCancelIoFile(hdir, &iosb3);
     ok( r == STATUS_SUCCESS, "cancel failed\n");
 
     CloseHandle(hdir);
 
-    ok(U(iosb).Status == STATUS_SUCCESS, "status wrong\n");
-    ok(U(iosb2).Status == STATUS_CANCELLED, "status wrong %x\n",U(iosb2).Status);
+    ok(U(iosb).Status == STATUS_CANCELLED, "status wrong %lx\n",U(iosb).Status);
+    ok(U(iosb2).Status == STATUS_CANCELLED, "status wrong %lx\n",U(iosb2).Status);
+    ok(U(iosb3).Status == STATUS_SUCCESS, "status wrong %lx\n",U(iosb3).Status);
 
     ok(iosb.Information == 0, "info wrong\n");
     ok(iosb2.Information == 0, "info wrong\n");
+    ok(iosb3.Information == 0, "info wrong\n");
+
+    U(iosb3).Status   = 0x111111;
+    iosb3.Information = 0x222222;
+    r = pNtCancelIoFile(hdir, &iosb3);
+    ok( r == STATUS_INVALID_HANDLE, "cancel failed %lx\n", r);
+    ok(U(iosb3).Status == 0x111111, "status wrong %lx\n",U(iosb3).Status);
+    ok(iosb3.Information == 0x222222, "info wrong\n");
 
     r = RemoveDirectoryW( path );
     ok( r == TRUE, "failed to remove directory\n");

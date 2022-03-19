@@ -39,14 +39,14 @@ static void ME_SetCursorToEnd(ME_TextEditor *editor, ME_Cursor *cursor, BOOL fin
 }
 
 
-int ME_GetSelectionOfs(ME_TextEditor *editor, int *from, int *to)
+int ME_GetSelectionOfs(ME_TextEditor *editor, LONG *from, LONG *to)
 {
   *from = ME_GetCursorOfs(&editor->pCursors[0]);
   *to =   ME_GetCursorOfs(&editor->pCursors[1]);
 
   if (*from > *to)
   {
-    int tmp = *from;
+    LONG tmp = *from;
     *from = *to;
     *to = tmp;
     return 1;
@@ -99,7 +99,7 @@ int ME_GetTextLengthEx(ME_TextEditor *editor, const GETTEXTLENGTHEX *how)
   
   length = ME_GetTextLength(editor);
 
-  if ((editor->styleFlags & ES_MULTILINE)
+  if ((editor->props & TXTBIT_MULTILINE)
         && (how->flags & GTL_USECRLF)
         && !editor->bEmulateVersion10) /* Ignore GTL_USECRLF flag in 1.0 emulation */
     length += editor->nParagraphs - 1;
@@ -160,7 +160,7 @@ int set_selection_cursors(ME_TextEditor *editor, int from, int to)
     /* deselected and caret moved to end of the current selection */
     if (from < 0)
     {
-      int start, end;
+      LONG start, end;
       ME_GetSelectionOfs(editor, &start, &end);
       if (start != end)
       {
@@ -227,12 +227,13 @@ void cursor_coords( ME_TextEditor *editor, ME_Cursor *cursor,
   ME_Run *size_run = run, *prev;
   ME_Context c;
   int run_x;
+  HDC hdc = ITextHost_TxGetDC( editor->texthost );
 
   assert(~para->nFlags & MEPF_REWRAP);
 
   row = row_from_cursor( cursor );
 
-  ME_InitContext(&c, editor, ITextHost_TxGetDC(editor->texthost));
+  ME_InitContext( &c, editor, hdc );
 
   if (!cursor->nOffset && (prev = run_prev( run ))) size_run = prev;
 
@@ -243,6 +244,7 @@ void cursor_coords( ME_TextEditor *editor, ME_Cursor *cursor,
   *y = c.rcView.top + para->pt.y + row->nBaseline
        + run->pt.y - size_run->nAscent - editor->vert_si.nPos;
   ME_DestroyContext(&c);
+  ITextHost_TxReleaseDC( editor->texthost, hdc );
   return;
 }
 
@@ -453,15 +455,23 @@ static struct re_object* create_re_object(const REOBJECT *reo)
   return reobj;
 }
 
-void ME_InsertOLEFromCursor(ME_TextEditor *editor, const REOBJECT* reo, int nCursor)
+void editor_insert_oleobj(ME_TextEditor *editor, const REOBJECT *reo)
 {
   ME_Run *run, *prev;
   const WCHAR space = ' ';
   struct re_object *reobj_prev = NULL;
-  ME_Cursor *cursor = editor->pCursors + nCursor;
-  ME_Style *style = style_get_insert_style( editor, cursor );
+  ME_Cursor *cursor, cursor_from_ofs;
+  ME_Style *style;
 
-  /* FIXME no no no */
+  if (reo->cp == REO_CP_SELECTION)
+    cursor = editor->pCursors;
+  else
+  {
+    cursor_from_char_ofs( editor, reo->cp, &cursor_from_ofs );
+    cursor = &cursor_from_ofs;
+  }
+  style = style_get_insert_style( editor, cursor );
+
   if (ME_IsSelection(editor))
     ME_DeleteSelection(editor);
 
@@ -549,7 +559,7 @@ void ME_InsertTextFromCursor(ME_TextEditor *editor, int nCursor,
       int eol_len = 0;
 
       /* Check if new line is allowed for this control */
-      if (!(editor->styleFlags & ES_MULTILINE))
+      if (!(editor->props & TXTBIT_MULTILINE))
         break;
 
       /* Find number of CR and LF in end of paragraph run */
@@ -983,30 +993,15 @@ static BOOL cursor_from_virtual_coords( ME_TextEditor *editor, int x, int y,
  *
  * x & y are pixel positions in client coordinates.
  *
- * isExact will be set to TRUE if the run is directly under the pixel
- * position, FALSE if it not, unless isExact is set to NULL.
- *
- * return FALSE if outside client area and the cursor is not set,
- * otherwise TRUE is returned.
+ * return TRUE if the run is directly under the pixel
+ * position, FALSE if it not.
  */
-BOOL ME_CharFromPos(ME_TextEditor *editor, int x, int y,
-                    ME_Cursor *cursor, BOOL *isExact)
+BOOL cursor_from_coords( ME_TextEditor *editor, int x, int y, ME_Cursor *cursor )
 {
-  RECT rc;
-  BOOL bResult;
-
-  ITextHost_TxGetClientRect(editor->texthost, &rc);
-  if (x < 0 || y < 0 || x >= rc.right || y >= rc.bottom) {
-    if (isExact) *isExact = FALSE;
-    return FALSE;
-  }
-  x += editor->horz_si.nPos;
-  y += editor->vert_si.nPos;
-  bResult = cursor_from_virtual_coords( editor, x, y, cursor, FALSE );
-  if (isExact) *isExact = bResult;
-  return TRUE;
+    x += editor->horz_si.nPos;
+    y += editor->vert_si.nPos;
+    return cursor_from_virtual_coords( editor, x, y, cursor, FALSE );
 }
-
 
 
 /* Extends the selection with a word, line, or paragraph selection type.
@@ -1358,7 +1353,7 @@ BOOL ME_IsSelection(ME_TextEditor *editor)
 
 void ME_DeleteSelection(ME_TextEditor *editor)
 {
-  int from, to;
+  LONG from, to;
   int nStartCursor = ME_GetSelectionOfs(editor, &from, &to);
   int nEndCursor = nStartCursor ^ 1;
   ME_DeleteTextAtCursor(editor, nStartCursor, to - from);
@@ -1392,7 +1387,7 @@ void ME_SendSelChange(ME_TextEditor *editor)
 
     if (editor->nEventMask & ENM_SELCHANGE)
     {
-      TRACE("cpMin=%d cpMax=%d seltyp=%d (%s %s)\n",
+      TRACE("cpMin=%ld cpMax=%ld seltyp=%d (%s %s)\n",
             sc.chrg.cpMin, sc.chrg.cpMax, sc.seltyp,
             (sc.seltyp & SEL_TEXT) ? "SEL_TEXT" : "",
             (sc.seltyp & SEL_MULTICHAR) ? "SEL_MULTICHAR" : "");

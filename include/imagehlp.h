@@ -23,66 +23,6 @@
 
 #include <wintrust.h>
 
-/* A set of documentation macros (see also dbghelp.h) */
-#ifndef __deref_out
-# define __deref_out
-#endif
-#ifndef __deref_out_opt
-# define __deref_out_opt
-#endif
-#ifndef __deref_opt_out
-# define __deref_opt_out
-#endif
-#ifndef __in
-# define __in
-#endif
-#ifndef __in_opt
-# define __in_opt
-#endif
-#ifndef __in_bcount
-# define __in_bcount(x)
-#endif
-#ifndef __in_bcount_opt
-# define __in_bcount_opt(x)
-#endif
-#ifndef __in_ecount
-# define __in_ecount(x)
-#endif
-#ifndef __inout
-# define __inout
-#endif
-#ifndef __inout_opt
-# define __inout_opt
-#endif
-#ifndef __inout_bcount
-# define __inout_bcount(x)
-#endif
-#ifndef __inout_ecount
-# define __inout_ecount(x)
-#endif
-#ifndef __out
-# define __out
-#endif
-#ifndef __out_opt
-# define __out_opt
-#endif
-#ifndef __out_bcount
-# define __out_bcount(x)
-#endif
-#ifndef __out_bcount_opt
-# define __out_bcount_opt(x)
-#endif
-#ifndef __out_ecount
-# define __out_ecount(x)
-#endif
-#ifndef __out_ecount_opt
-# define __out_ecount_opt(x)
-#endif
-#ifndef __out_xcount
-# define __out_xcount(x)
-#endif
-
-
 #ifdef __cplusplus
 extern "C" {
 #endif /* defined(__cplusplus) */
@@ -239,6 +179,7 @@ typedef struct _API_VERSION {
   USHORT  Reserved;
 } API_VERSION, *LPAPI_VERSION;
 
+#ifndef _WIN64
 typedef struct _IMAGE_DEBUG_INFORMATION {
   LIST_ENTRY List;
   DWORD        Size;
@@ -281,6 +222,15 @@ typedef struct _IMAGE_DEBUG_INFORMATION {
 
   DWORD Reserved[3];
 } IMAGE_DEBUG_INFORMATION, *PIMAGE_DEBUG_INFORMATION;
+
+PIMAGE_DEBUG_INFORMATION WINAPI MapDebugInformation(
+  HANDLE FileHandle, PCSTR FileName,
+  PCSTR SymbolPath, ULONG ImageBase
+);
+BOOL WINAPI UnmapDebugInformation(
+  PIMAGE_DEBUG_INFORMATION DebugInfo
+);
+#endif
 
 typedef struct _ADDRESS {
     DWORD          Offset;
@@ -459,6 +409,8 @@ typedef struct _IMAGEHLP_MODULE64
     BOOL                        TypeInfo;
     BOOL                        SourceIndexed;
     BOOL                        Publics;
+    DWORD                       MachineType;
+    DWORD                       Reserved;
 } IMAGEHLP_MODULE64, *PIMAGEHLP_MODULE64;
 
 typedef struct _IMAGEHLP_MODULEW64
@@ -486,6 +438,8 @@ typedef struct _IMAGEHLP_MODULEW64
     BOOL                        TypeInfo;
     BOOL                        SourceIndexed;
     BOOL                        Publics;
+    DWORD                       MachineType;
+    DWORD                       Reserved;
 } IMAGEHLP_MODULEW64, *PIMAGEHLP_MODULEW64;
 
 typedef struct _IMAGEHLP_LINE {
@@ -954,10 +908,6 @@ BOOL WINAPI MapAndLoad(
   PCSTR ImageName, PCSTR DllPath, PLOADED_IMAGE LoadedImage,
   BOOL DotDll, BOOL ReadOnly
 );
-PIMAGE_DEBUG_INFORMATION WINAPI MapDebugInformation(
-  HANDLE FileHandle, PCSTR FileName,
-  PCSTR SymbolPath, ULONG ImageBase
-);
 DWORD WINAPI MapFileAndCheckSumA(
   PCSTR Filename, PDWORD HeaderSum, PDWORD CheckSum
 );
@@ -1380,9 +1330,6 @@ DWORD WINAPI UnDecorateSymbolNameW(
 );
 BOOL WINAPI UnMapAndLoad(
   PLOADED_IMAGE LoadedImage
-);
-BOOL WINAPI UnmapDebugInformation(
-  PIMAGE_DEBUG_INFORMATION DebugInfo
 );
 BOOL WINAPI UpdateDebugInfoFile(
   PCSTR ImageFileName, PCSTR SymbolPath,

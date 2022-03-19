@@ -64,16 +64,14 @@
  */
 
 #include "config.h"
-#include "wine/port.h"
 
 #include <string.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
-#ifdef HAVE_UNISTD_H
-# include <unistd.h>
-#endif
+#include <unistd.h>
 #include <fcntl.h>
+#include <dlfcn.h>
 #include <limits.h>
 #include <time.h>
 #include <assert.h>
@@ -2064,9 +2062,8 @@ static DWORD WINAPI clipboard_thread( void *arg )
     clipboard_thread_id = GetCurrentThreadId();
     AddClipboardFormatListener( clipboard_hwnd );
     register_builtin_formats();
-    request_selection_contents( clipboard_display, TRUE );
-
     xfixes_init();
+    request_selection_contents( clipboard_display, TRUE );
 
     TRACE( "clipboard thread %04x running\n", GetCurrentThreadId() );
     while (GetMessageW( &msg, 0, 0, 0 )) DispatchMessageW( &msg );

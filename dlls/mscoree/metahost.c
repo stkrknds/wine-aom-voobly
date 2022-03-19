@@ -89,6 +89,7 @@ MonoImage* (CDECL *mono_assembly_get_image)(MonoAssembly *assembly);
 MonoAssembly* (CDECL *mono_assembly_load_from)(MonoImage *image, const char *fname, MonoImageOpenStatus *status);
 const char* (CDECL *mono_assembly_name_get_name)(MonoAssemblyName *aname);
 const char* (CDECL *mono_assembly_name_get_culture)(MonoAssemblyName *aname);
+WORD (CDECL *mono_assembly_name_get_version)(MonoAssemblyName *aname, WORD *minor, WORD *build, WORD *revision);
 MonoAssembly* (CDECL *mono_assembly_open)(const char *filename, MonoImageOpenStatus *status);
 void (CDECL *mono_callspec_set_assembly)(MonoAssembly *assembly);
 MonoClass* (CDECL *mono_class_from_mono_type)(MonoType *type);
@@ -129,14 +130,14 @@ MonoThread* (CDECL *mono_thread_attach)(MonoDomain *domain);
 void (CDECL *mono_thread_manage)(void);
 void (CDECL *mono_trace_set_print_handler)(MonoPrintCallback callback);
 void (CDECL *mono_trace_set_printerr_handler)(MonoPrintCallback callback);
+static void (CDECL *wine_mono_install_assembly_preload_hook)(WineMonoAssemblyPreLoadFunc func, void *user_data);
 
 static BOOL find_mono_dll(LPCWSTR path, LPWSTR dll_path);
 
 static MonoAssembly* CDECL mono_assembly_preload_hook_fn(MonoAssemblyName *aname, char **assemblies_path, void *user_data);
+static MonoAssembly* CDECL wine_mono_assembly_preload_hook_fn(MonoAssemblyName *aname, char **assemblies_path, int *search_path, void *user_data);
 
 static void CDECL mono_shutdown_callback_fn(MonoProfiler *prof);
-
-static void CDECL mono_print_handler_fn(const char *string, INT is_stdout);
 
 static MonoImage* CDECL image_open_module_handle_dummy(HMODULE module_handle,
     char* fname, UINT has_entry_point, MonoImageOpenStatus* status)
@@ -199,6 +200,7 @@ static HRESULT load_mono(LPCWSTR mono_path)
         LOAD_MONO_FUNCTION(mono_assembly_load_from);
         LOAD_MONO_FUNCTION(mono_assembly_name_get_name);
         LOAD_MONO_FUNCTION(mono_assembly_name_get_culture);
+        LOAD_MONO_FUNCTION(mono_assembly_name_get_version);
         LOAD_MONO_FUNCTION(mono_assembly_open);
         LOAD_MONO_FUNCTION(mono_config_parse);
         LOAD_MONO_FUNCTION(mono_class_from_mono_type);
@@ -249,6 +251,7 @@ static HRESULT load_mono(LPCWSTR mono_path)
         LOAD_OPT_MONO_FUNCTION(mono_set_crash_chaining, set_crash_chaining_dummy);
         LOAD_OPT_MONO_FUNCTION(mono_trace_set_print_handler, set_print_handler_dummy);
         LOAD_OPT_MONO_FUNCTION(mono_trace_set_printerr_handler, set_print_handler_dummy);
+        LOAD_OPT_MONO_FUNCTION(wine_mono_install_assembly_preload_hook, NULL);
 
 #undef LOAD_OPT_MONO_FUNCTION
 
@@ -279,7 +282,10 @@ static HRESULT load_mono(LPCWSTR mono_path)
 
         mono_config_parse(NULL);
 
-        mono_install_assembly_preload_hook(mono_assembly_preload_hook_fn, NULL);
+        if (wine_mono_install_assembly_preload_hook)
+            wine_mono_install_assembly_preload_hook(wine_mono_assembly_preload_hook_fn, NULL);
+        else
+            mono_install_assembly_preload_hook(mono_assembly_preload_hook_fn, NULL);
 
         aot_size = GetEnvironmentVariableA("WINE_MONO_AOT", aot_setting, sizeof(aot_setting));
 
@@ -374,17 +380,6 @@ MonoDomain* get_root_domain(void)
 static void CDECL mono_shutdown_callback_fn(MonoProfiler *prof)
 {
     is_mono_shutdown = TRUE;
-}
-
-static void CDECL mono_print_handler_fn(const char *string, INT is_stdout)
-{
-    const char *p;
-    for (; *string; string = p)
-    {
-        if ((p = strstr(string, "\n"))) p++;
-        else p = string + strlen(string);
-        wine_dbg_printf("%.*s", (int)(p - string), string);
-    }
 }
 
 static HRESULT WINAPI thread_set_fn(void)
@@ -500,7 +495,7 @@ static HRESULT WINAPI CLRRuntimeInfo_GetVersionString(ICLRRuntimeInfo* iface,
 
     TRACE("%p %p %p\n", iface, pwzBuffer, pcchBuffer);
 
-    size = snprintf(version, sizeof(version), "v%u.%u.%u", This->major, This->minor, This->build);
+    size = snprintf(version, sizeof(version), "v%lu.%lu.%lu", This->major, This->minor, This->build);
 
     assert(size <= sizeof(version));
 
@@ -589,7 +584,7 @@ static HRESULT WINAPI CLRRuntimeInfo_IsLoaded(ICLRRuntimeInfo* iface,
 static HRESULT WINAPI CLRRuntimeInfo_LoadErrorString(ICLRRuntimeInfo* iface,
     UINT iResourceID, LPWSTR pwzBuffer, DWORD *pcchBuffer, LONG iLocaleid)
 {
-    FIXME("%p %u %p %p %x\n", iface, iResourceID, pwzBuffer, pcchBuffer, iLocaleid);
+    FIXME("%p %u %p %p %lx\n", iface, iResourceID, pwzBuffer, pcchBuffer, iLocaleid);
 
     return E_NOTIMPL;
 }
@@ -646,7 +641,7 @@ static HRESULT WINAPI CLRRuntimeInfo_IsLoadable(ICLRRuntimeInfo* iface,
 static HRESULT WINAPI CLRRuntimeInfo_SetDefaultStartupFlags(ICLRRuntimeInfo* iface,
     DWORD dwStartupFlags, LPCWSTR pwzHostConfigFile)
 {
-    FIXME("%p %x %s\n", iface, dwStartupFlags, debugstr_w(pwzHostConfigFile));
+    FIXME("%p %lx %s\n", iface, dwStartupFlags, debugstr_w(pwzHostConfigFile));
 
     return E_NOTIMPL;
 }
@@ -912,7 +907,7 @@ static ULONG WINAPI InstalledRuntimeEnum_AddRef(IEnumUnknown* iface)
     struct InstalledRuntimeEnum *This = impl_from_IEnumUnknown(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) refcount=%u\n", iface, ref);
+    TRACE("(%p) refcount=%lu\n", iface, ref);
 
     return ref;
 }
@@ -922,7 +917,7 @@ static ULONG WINAPI InstalledRuntimeEnum_Release(IEnumUnknown* iface)
     struct InstalledRuntimeEnum *This = impl_from_IEnumUnknown(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) refcount=%u\n", iface, ref);
+    TRACE("(%p) refcount=%lu\n", iface, ref);
 
     if (ref == 0)
     {
@@ -940,7 +935,7 @@ static HRESULT WINAPI InstalledRuntimeEnum_Next(IEnumUnknown *iface, ULONG celt,
     HRESULT hr=S_OK;
     IUnknown *item;
 
-    TRACE("(%p,%u,%p,%p)\n", iface, celt, rgelt, pceltFetched);
+    TRACE("(%p,%lu,%p,%p)\n", iface, celt, rgelt, pceltFetched);
 
     while (num_fetched < celt)
     {
@@ -968,7 +963,7 @@ static HRESULT WINAPI InstalledRuntimeEnum_Skip(IEnumUnknown *iface, ULONG celt)
     ULONG num_fetched = 0;
     HRESULT hr=S_OK;
 
-    TRACE("(%p,%u)\n", iface, celt);
+    TRACE("(%p,%lu)\n", iface, celt);
 
     while (num_fetched < celt)
     {
@@ -1349,7 +1344,7 @@ static HRESULT WINAPI metahostpolicy_GetRequestedRuntime(ICLRMetaHostPolicy *ifa
         ICLRRuntimeInfo_Release(result);
     }
 
-    TRACE("<- 0x%08x\n", hr);
+    TRACE("<- 0x%08lx\n", hr);
 
     return hr;
 }
@@ -1377,6 +1372,9 @@ HRESULT CLRMetaHostPolicy_CreateInstance(REFIID riid, void **ppobj)
  * WINE_MONO_OVERRIDES=*,Gac=n
  *  Never search the GAC for libraries.
  *
+ * WINE_MONO_OVERRIDES=*,PrivatePath=n
+ *  Never search the AppDomain search path for libraries.
+ *
  * WINE_MONO_OVERRIDES=Microsoft.Xna.Framework,Gac=n
  *  Never search the GAC for Microsoft.Xna.Framework
  *
@@ -1388,7 +1386,8 @@ HRESULT CLRMetaHostPolicy_CreateInstance(REFIID riid, void **ppobj)
 /* assembly search override flags */
 #define ASSEMBLY_SEARCH_GAC 1
 #define ASSEMBLY_SEARCH_UNDEFINED 2
-#define ASSEMBLY_SEARCH_DEFAULT ASSEMBLY_SEARCH_GAC
+#define ASSEMBLY_SEARCH_PRIVATEPATH 4
+#define ASSEMBLY_SEARCH_DEFAULT (ASSEMBLY_SEARCH_GAC|ASSEMBLY_SEARCH_PRIVATEPATH)
 
 typedef struct override_entry {
     char *name;
@@ -1435,6 +1434,14 @@ static void parse_override_entry(override_entry *entry, const char *string, int 
                         entry->flags |= ASSEMBLY_SEARCH_GAC;
                     else if (IS_OPTION_FALSE(*value))
                         entry->flags &= ~ASSEMBLY_SEARCH_GAC;
+                }
+                break;
+            case 11:
+                if (!_strnicmp(string, "privatepath", 11)) {
+                    if (IS_OPTION_TRUE(*value))
+                        entry->flags |= ASSEMBLY_SEARCH_PRIVATEPATH;
+                    else if (IS_OPTION_FALSE(*value))
+                        entry->flags &= ~ASSEMBLY_SEARCH_PRIVATEPATH;
                 }
                 break;
             default:
@@ -1553,8 +1560,9 @@ static DWORD get_basename_search_flags(const char *basename, MonoAssemblyName *a
         return reg_entry.flags;
     }
 
-    if (strcmp(basename, "Microsoft.Xna.Framework.*") == 0)
-        /* XNA redist is broken in Wine Mono, use FNA instead. */
+    if (strcmp(basename, "Microsoft.Xna.Framework.*") == 0 &&
+        mono_assembly_name_get_version(aname, NULL, NULL, NULL) == 4)
+        /* Use FNA as a replacement for XNA4. */
         return 0;
 
     return ASSEMBLY_SEARCH_UNDEFINED;
@@ -1699,6 +1707,12 @@ static MonoAssembly* mono_assembly_try_load(WCHAR *path)
 
 static MonoAssembly* CDECL mono_assembly_preload_hook_fn(MonoAssemblyName *aname, char **assemblies_path, void *user_data)
 {
+    int dummy;
+    return wine_mono_assembly_preload_hook_fn(aname, assemblies_path, &dummy, user_data);
+}
+
+static MonoAssembly* CDECL wine_mono_assembly_preload_hook_fn(MonoAssemblyName *aname, char **assemblies_path, int *halt_search, void *user_data)
+{
     HRESULT hr;
     MonoAssembly *result=NULL;
     char *stringname=NULL;
@@ -1730,7 +1744,7 @@ static MonoAssembly* CDECL mono_assembly_preload_hook_fn(MonoAssemblyName *aname
     if (!stringname || !assemblyname) return NULL;
 
     search_flags = get_assembly_search_flags(aname);
-    if (private_path)
+    if (private_path && (search_flags & ASSEMBLY_SEARCH_PRIVATEPATH) != 0)
     {
         stringnameW_size = MultiByteToWideChar(CP_UTF8, 0, assemblyname, -1, NULL, 0);
         stringnameW = HeapAlloc(GetProcessHeap(), 0, stringnameW_size * sizeof(WCHAR));
@@ -1808,8 +1822,14 @@ static MonoAssembly* CDECL mono_assembly_preload_hook_fn(MonoAssemblyName *aname
     else
         TRACE("skipping Windows GAC search due to override setting\n");
 
+    if ((search_flags & ASSEMBLY_SEARCH_PRIVATEPATH) == 0)
+    {
+        TRACE("skipping AppDomain search path due to override setting\n");
+        *halt_search = 1;
+    }
+
 done:
-    if (cultureW) HeapFree(GetProcessHeap(), 0, cultureW);
+    HeapFree(GetProcessHeap(), 0, cultureW);
     mono_free(stringname);
 
     return result;
@@ -1830,10 +1850,10 @@ HRESULT get_runtime_info(LPCWSTR exefile, LPCWSTR version, LPCWSTR config_file,
     parsed_config_file parsed_config;
 
     if (startup_flags & ~supported_startup_flags)
-        FIXME("unsupported startup flags %x\n", startup_flags & ~supported_startup_flags);
+        FIXME("unsupported startup flags %lx\n", startup_flags & ~supported_startup_flags);
 
     if (runtimeinfo_flags & ~supported_runtime_flags)
-        FIXME("unsupported runtimeinfo flags %x\n", runtimeinfo_flags & ~supported_runtime_flags);
+        FIXME("unsupported runtimeinfo flags %lx\n", runtimeinfo_flags & ~supported_runtime_flags);
 
     if (exefile && !exefile[0])
         exefile = NULL;
@@ -1869,7 +1889,7 @@ HRESULT get_runtime_info(LPCWSTR exefile, LPCWSTR version, LPCWSTR config_file,
         }
         else
         {
-            WARN("failed to parse config file %s, hr=%x\n", debugstr_w(config_file), hr);
+            WARN("failed to parse config file %s, hr=%lx\n", debugstr_w(config_file), hr);
         }
 
         free_parsed_config_file(&parsed_config);

@@ -24,9 +24,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-#include "wine/port.h"
-
 #include <stdio.h>
 
 #include "wined3d_private.h"
@@ -172,19 +169,6 @@ static const struct wined3d_format_channels formats[] =
     {WINED3DFMT_BC7_TYPELESS,               0,  0,  0,  0,   0,  0,  0,  0,    1,   0,     0},
     {WINED3DFMT_B8G8R8A8_TYPELESS,          8,  8,  8,  8,  16,  8,  0, 24,    4,   0,     0},
     {WINED3DFMT_B8G8R8X8_TYPELESS,          8,  8,  8,  0,  16,  8,  0,  0,    4,   0,     0},
-};
-
-enum wined3d_channel_type
-{
-    WINED3D_CHANNEL_TYPE_NONE,
-    WINED3D_CHANNEL_TYPE_UNORM,
-    WINED3D_CHANNEL_TYPE_SNORM,
-    WINED3D_CHANNEL_TYPE_UINT,
-    WINED3D_CHANNEL_TYPE_SINT,
-    WINED3D_CHANNEL_TYPE_FLOAT,
-    WINED3D_CHANNEL_TYPE_DEPTH,
-    WINED3D_CHANNEL_TYPE_STENCIL,
-    WINED3D_CHANNEL_TYPE_UNUSED,
 };
 
 struct wined3d_typed_format_info
@@ -359,8 +343,9 @@ static const struct wined3d_format_base_flags format_base_flags[] =
     {WINED3DFMT_R32G32_SINT,           WINED3DFMT_FLAG_CAST_TO_BLOCK},
     {WINED3DFMT_R32_TYPELESS,          WINED3DFMT_FLAG_CAST_TO_BLOCK},
     {WINED3DFMT_R32_FLOAT,             WINED3DFMT_FLAG_CAST_TO_BLOCK},
-    {WINED3DFMT_R32_UINT,              WINED3DFMT_FLAG_CAST_TO_BLOCK},
+    {WINED3DFMT_R32_UINT,              WINED3DFMT_FLAG_CAST_TO_BLOCK | WINED3DFMT_FLAG_INDEX_BUFFER},
     {WINED3DFMT_R32_SINT,              WINED3DFMT_FLAG_CAST_TO_BLOCK},
+    {WINED3DFMT_R16_UINT,              WINED3DFMT_FLAG_INDEX_BUFFER},
 };
 
 static void rgb888_from_rgb565(WORD rgb565, BYTE *r, BYTE *g, BYTE *b)
@@ -568,6 +553,84 @@ static void decompress_bc1(const BYTE *src, BYTE *dst, unsigned int src_row_pitc
             dst_slice_pitch, width, height, depth, WINED3DFMT_BC1_UNORM);
 }
 
+static void build_rgtc_colour_table(uint8_t red0, uint8_t red1, uint8_t colour_table[8])
+{
+    unsigned int i;
+
+    colour_table[0] = red0;
+    colour_table[1] = red1;
+    if (red0 <= red1)
+    {
+        for (i = 0; i < 4; ++i)
+        {
+            colour_table[i + 2] = ((8 - 2 * i) * red0 + (2 + 2 * i) * red1 + 5) / 10;
+        }
+        colour_table[6] = 0x00;
+        colour_table[7] = 0xff;
+    }
+    else
+    {
+        for (i = 0; i < 6; ++i)
+        {
+            colour_table[i + 2] = ((12 - 2 * i) * red0 + (2 + 2 * i) * red1 + 7) / 14;
+        }
+    }
+}
+
+static void decompress_rgtc_block(const uint8_t *src, uint8_t *dst,
+        unsigned int width, unsigned int height, unsigned int dst_row_pitch)
+{
+    const uint64_t *s = (const uint64_t *)src;
+    uint8_t red0, red1, red_idx;
+    uint8_t colour_table[8];
+    unsigned int x, y;
+    uint32_t *dst_row;
+    uint64_t bits;
+
+    red0 = s[0] & 0xff;
+    red1 = (s[0] >> 8) & 0xff;
+    bits = s[0] >> 16;
+    build_rgtc_colour_table(red0, red1, colour_table);
+
+    for (y = 0; y < height; ++y)
+    {
+        dst_row = (uint32_t *)&dst[y * dst_row_pitch];
+        for (x = 0; x < width; ++x)
+        {
+            red_idx = (bits >> (y * 12 + x * 3)) & 0x7;
+            /* Decompressing to bgra32 is perhaps not ideal for RGTC formats.
+             * It's convenient though. */
+            dst_row[x] = 0xff000000 | (colour_table[red_idx] << 16);
+        }
+    }
+}
+
+static void decompress_bc4(const uint8_t *src, uint8_t *dst, unsigned int src_row_pitch,
+        unsigned int src_slice_pitch, unsigned int dst_row_pitch, unsigned int dst_slice_pitch,
+        unsigned int width, unsigned int height, unsigned int depth)
+{
+    unsigned int block_w, block_h, x, y, z;
+    const uint8_t *src_row, *src_slice;
+    uint8_t *dst_row, *dst_slice;
+
+    for (z = 0; z < depth; ++z)
+    {
+        src_slice = &src[z * src_slice_pitch];
+        dst_slice = &dst[z * dst_slice_pitch];
+        for (y = 0; y < height; y += 4)
+        {
+            src_row = &src_slice[(y / 4) * src_row_pitch];
+            dst_row = &dst_slice[y * dst_row_pitch];
+            for (x = 0; x < width; x += 4)
+            {
+                block_w = min(width - x, 4);
+                block_h = min(height - y, 4);
+                decompress_rgtc_block(&src_row[(x / 4) * 8], &dst_row[x * 4], block_w, block_h, dst_row_pitch);
+            }
+        }
+    }
+}
+
 static const struct wined3d_format_decompress_info
 {
     enum wined3d_format_id id;
@@ -585,6 +648,7 @@ format_decompress_info[] =
     {WINED3DFMT_BC1_UNORM, decompress_bc1},
     {WINED3DFMT_BC2_UNORM, decompress_bc2},
     {WINED3DFMT_BC3_UNORM, decompress_bc3},
+    {WINED3DFMT_BC4_UNORM, decompress_bc4},
 };
 
 struct wined3d_format_block_info
@@ -644,6 +708,8 @@ static const struct wined3d_format_vertex_info format_vertex_info[] =
     {WINED3DFMT_R16G16B16A16_SNORM, WINED3D_FFP_EMIT_SHORT4N,   GL_SHORT},
     {WINED3DFMT_R16G16_UNORM,       WINED3D_FFP_EMIT_USHORT2N,  GL_UNSIGNED_SHORT},
     {WINED3DFMT_R16G16B16A16_UNORM, WINED3D_FFP_EMIT_USHORT4N,  GL_UNSIGNED_SHORT},
+    {WINED3DFMT_R11G11B10_FLOAT,    WINED3D_FFP_EMIT_INVALID,   GL_UNSIGNED_INT_10F_11F_11F_REV,
+            ARB_VERTEX_TYPE_10F_11F_11F_REV},
     {WINED3DFMT_R10G10B10X2_UINT,   WINED3D_FFP_EMIT_UDEC3,     GL_UNSIGNED_SHORT},
     {WINED3DFMT_R10G10B10X2_SNORM,  WINED3D_FFP_EMIT_DEC3N,     GL_SHORT},
     {WINED3DFMT_R10G10B10A2_UNORM,  WINED3D_FFP_EMIT_INVALID,   GL_UNSIGNED_INT_2_10_10_10_REV,
@@ -660,6 +726,8 @@ static const struct wined3d_format_vertex_info format_vertex_info[] =
     {WINED3DFMT_R8_UNORM,           WINED3D_FFP_EMIT_INVALID,   GL_UNSIGNED_BYTE},
     {WINED3DFMT_R8_UINT,            WINED3D_FFP_EMIT_INVALID,   GL_UNSIGNED_BYTE},
     {WINED3DFMT_R8_SINT,            WINED3D_FFP_EMIT_INVALID,   GL_BYTE},
+    {WINED3DFMT_R8G8_UINT,          WINED3D_FFP_EMIT_INVALID,   GL_UNSIGNED_BYTE},
+    {WINED3DFMT_R16_FLOAT,          WINED3D_FFP_EMIT_INVALID,   GL_HALF_FLOAT, ARB_HALF_FLOAT_VERTEX},
     {WINED3DFMT_R16_UINT,           WINED3D_FFP_EMIT_INVALID,   GL_UNSIGNED_SHORT},
     {WINED3DFMT_R16_SINT,           WINED3D_FFP_EMIT_INVALID,   GL_SHORT},
     {WINED3DFMT_R32_UINT,           WINED3D_FFP_EMIT_INVALID,   GL_UNSIGNED_INT},
@@ -3071,7 +3139,9 @@ static void query_internal_format(struct wined3d_adapter *adapter,
     query_view_class(format);
 
     if (format->internal && format->f.flags[WINED3D_GL_RES_TYPE_RB]
-            & (WINED3DFMT_FLAG_RENDERTARGET | WINED3DFMT_FLAG_DEPTH_STENCIL))
+            & (WINED3DFMT_FLAG_RENDERTARGET | WINED3DFMT_FLAG_DEPTH_STENCIL)
+            && (gl_info->supported[ARB_FRAMEBUFFER_OBJECT] || gl_info->supported[EXT_FRAMEBUFFER_MULTISAMPLE])
+            && wined3d_settings.offscreen_rendering_mode == ORM_FBO)
     {
         if (gl_info->supported[ARB_INTERNALFORMAT_QUERY])
         {
@@ -3132,6 +3202,10 @@ static BOOL init_format_texture_info(struct wined3d_adapter *adapter, struct win
         /* ARB_texture_rg defines integer formats if EXT_texture_integer is also supported. */
         if (!gl_info->supported[EXT_TEXTURE_INTEGER]
                 && (format->f.flags[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3DFMT_FLAG_INTEGER))
+            continue;
+
+        if (wined3d_settings.offscreen_rendering_mode != ORM_FBO
+                && (format->f.id == WINED3DFMT_D16_LOCKABLE || format->f.id == WINED3DFMT_NULL))
             continue;
 
         format->internal = format_texture_info[i].gl_internal;
@@ -3342,7 +3416,6 @@ static void init_format_filter_info(struct wined3d_adapter *adapter,
     if (wined3d_settings.offscreen_rendering_mode != ORM_FBO
             || !gl_info->supported[WINED3D_GL_LEGACY_CONTEXT])
     {
-        WARN("No FBO support, or no FBO ORM, guessing filter info from GL caps\n");
         if (vendor == HW_VENDOR_NVIDIA && gl_info->supported[ARB_TEXTURE_FLOAT])
         {
             TRACE("Nvidia card with texture_float support: Assuming float16 blending\n");
@@ -3677,8 +3750,6 @@ static void apply_format_fixups(struct wined3d_adapter *adapter, struct wined3d_
     format->f.flags[WINED3D_GL_RES_TYPE_TEX_3D] &= ~WINED3DFMT_FLAG_TEXTURE;
     format = get_format_gl_internal(adapter, WINED3DFMT_ATI2N);
     format->f.flags[WINED3D_GL_RES_TYPE_TEX_3D] &= ~WINED3DFMT_FLAG_TEXTURE;
-    format = get_format_gl_internal(adapter, WINED3DFMT_BC4_UNORM);
-    format->f.flags[WINED3D_GL_RES_TYPE_TEX_3D] &= ~WINED3DFMT_FLAG_TEXTURE;
     format = get_format_gl_internal(adapter, WINED3DFMT_BC4_SNORM);
     format->f.flags[WINED3D_GL_RES_TYPE_TEX_3D] &= ~WINED3DFMT_FLAG_TEXTURE;
     format = get_format_gl_internal(adapter, WINED3DFMT_BC5_UNORM);
@@ -3845,6 +3916,100 @@ BOOL wined3d_caps_gl_ctx_test_viewport_subpixel_bits(struct wined3d_caps_gl_ctx 
     return TRUE;
 }
 
+bool wined3d_caps_gl_ctx_test_filling_convention(struct wined3d_caps_gl_ctx *ctx, float offset)
+{
+    static const struct wined3d_color red = {1.0f, 0.0f, 0.0f, 1.0f};
+    const struct wined3d_gl_info *gl_info = ctx->gl_info;
+    unsigned int x, y, clear = 0, draw = 0;
+    GLuint texture, fbo;
+    DWORD readback[8][8];
+
+    /* This is a very simple test to find out how GL handles polygon edges:
+     * Draw a 1x1 quad exactly through 4 adjacent pixel centers in an 8x8
+     * viewport and see which pixel it ends up in. So far we've seen top left
+     * and bottom left conventions. This test may produce unexpected results
+     * if the driver forces multisampling on us.
+     *
+     * If we find a bottom-left filling behavior we also move the x-axis
+     * by the same amount. This is necessary to keep diagonals that go
+     * through the pixel center intact.
+     *
+     * Note that we are ignoring some settings that might influence the
+     * driver: How we switch GL to an upper-left coordinate system,
+     * shaders vs fixed function GL. Testing these isn't possible with
+     * the current draw_test_quad() infrastructure. Also the test is
+     * skipped if we are not using FBOs. Drawing into the onscreen
+     * frame buffer may also yield different driver behavior.
+     *
+     * The minimum offset also depends on the viewport size, although
+     * the relation between those two is GPU dependent and not exactly
+     * sensible. E.g. a 8192x8192 viewport on a GeForce 9 needs at
+     * least an offset of 1/240.9, whereas a 8x8 one needs 1/255.982;
+     * 32x32 needs 1/255.935. 4x4 and lower are happy with something
+     * below 1/256. The 8x8 size below has been arbitrarily chosen to
+     * get a useful result out of that card and avoid allocating a
+     * gigantic texture during library init.
+     *
+     * Newer cards usually do the right thing anyway. In cases where
+     * they do not (e.g. Radeon GPUs in a macbookpro14,3 running MacOS)
+     * an offset of 1/2^20 is enough. */
+    const struct wined3d_vec3 edge_geometry[] =
+    {
+        {(-1.0f + offset) / 8.0f, (-1.0f + offset) / 8.0f, 0.0f},
+        {( 1.0f + offset) / 8.0f, (-1.0f + offset) / 8.0f, 0.0f},
+        {(-1.0f + offset) / 8.0f, ( 1.0f + offset) / 8.0f, 0.0f},
+        {( 1.0f + offset) / 8.0f, ( 1.0f + offset) / 8.0f, 0.0f},
+    };
+
+    gl_info->gl_ops.gl.p_glGenTextures(1, &texture);
+    gl_info->gl_ops.gl.p_glBindTexture(GL_TEXTURE_2D, texture);
+    gl_info->gl_ops.gl.p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+    gl_info->gl_ops.gl.p_glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 8, 8, 0,
+            GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, NULL);
+    gl_info->fbo_ops.glGenFramebuffers(1, &fbo);
+    gl_info->fbo_ops.glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    gl_info->fbo_ops.glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+            GL_TEXTURE_2D, texture, 0);
+    checkGLcall("create resources");
+
+    gl_info->gl_ops.gl.p_glViewport(0, 0, 8, 8);
+    gl_info->gl_ops.gl.p_glClearColor(0.0f, 0.0f, 1.0f, 1.0f);
+    gl_info->gl_ops.gl.p_glClear(GL_COLOR_BUFFER_BIT);
+
+    draw_test_quad(ctx, edge_geometry, &red);
+    checkGLcall("draw");
+
+    gl_info->gl_ops.gl.p_glBindTexture(GL_TEXTURE_2D, texture);
+    gl_info->gl_ops.gl.p_glGetTexImage(GL_TEXTURE_2D, 0,
+            GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, readback);
+    checkGLcall("readback");
+
+    gl_info->gl_ops.gl.p_glDeleteTextures(1, &texture);
+    gl_info->fbo_ops.glDeleteFramebuffers(1, &fbo);
+    gl_info->fbo_ops.glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    checkGLcall("delete resources");
+
+    /* We expect that exactly one fragment is generated. */
+    for (y = 0; y < ARRAY_SIZE(readback); ++y)
+    {
+        for (x = 0; x < ARRAY_SIZE(readback[0]); ++x)
+        {
+            if (readback[y][x] == 0xff0000ff)
+                clear++;
+            else if (readback[y][x] == 0xffff0000)
+                draw++;
+        }
+    }
+
+    if (clear != 63 || draw != 1)
+    {
+        FIXME("Unexpected filling convention test result.\n");
+        return FALSE;
+    }
+
+    /* One pixel was drawn, check if it is the expected one */
+    return readback[3][3] == 0xffff0000;
+}
 static float wined3d_adapter_find_polyoffset_scale(struct wined3d_caps_gl_ctx *ctx, GLenum format)
 {
     const struct wined3d_gl_info *gl_info = ctx->gl_info;
@@ -4142,7 +4307,7 @@ static void init_vulkan_format_info(struct wined3d_format_vk *format,
         {WINED3DFMT_D32_FLOAT_S8X24_UINT,       VK_FORMAT_D32_SFLOAT_S8_UINT,      },
         {WINED3DFMT_R32_FLOAT_X8X24_TYPELESS,   VK_FORMAT_D32_SFLOAT_S8_UINT,      },
         {WINED3DFMT_X32_TYPELESS_G8X24_UINT,    VK_FORMAT_D32_SFLOAT_S8_UINT,      },
-        {WINED3DFMT_D24_UNORM_S8_UINT,          VK_FORMAT_D32_SFLOAT_S8_UINT,      },
+        {WINED3DFMT_D24_UNORM_S8_UINT,          VK_FORMAT_D24_UNORM_S8_UINT,       },
     };
     VkFormat vk_format = VK_FORMAT_UNDEFINED;
     VkImageFormatProperties image_properties;
@@ -4177,6 +4342,17 @@ static void init_vulkan_format_info(struct wined3d_format_vk *format,
         format->f.color_fixup = COLOR_FIXUP_IDENTITY;
 
     VK_CALL(vkGetPhysicalDeviceFormatProperties(vk_physical_device, vk_format, &properties));
+    if (vk_format == VK_FORMAT_D24_UNORM_S8_UINT)
+    {
+        if (~properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT)
+        {
+            /* AMD doesn't support VK_FORMAT_D24_UNORM_S8_UINT. */
+            WARN("Mapping VK_FORMAT_D24_UNORM_S8_UINT to VK_FORMAT_D32_SFLOAT_S8_UINT.\n");
+
+            format->vk_format = vk_format = VK_FORMAT_D32_SFLOAT_S8_UINT;
+            VK_CALL(vkGetPhysicalDeviceFormatProperties(vk_physical_device, vk_format, &properties));
+        }
+    }
 
     if (properties.bufferFeatures & VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT)
         format->f.flags[WINED3D_GL_RES_TYPE_BUFFER] |= WINED3DFMT_FLAG_VERTEX_ATTRIBUTE;
@@ -4209,6 +4385,9 @@ static void init_vulkan_format_info(struct wined3d_format_vk *format,
     {
         flags |= WINED3DFMT_FLAG_UNORDERED_ACCESS;
     }
+
+    if (!(~flags & (WINED3DFMT_FLAG_RENDERTARGET | WINED3DFMT_FLAG_FILTERING)))
+        flags |= WINED3DFMT_FLAG_GEN_MIPMAP;
 
     format->f.flags[WINED3D_GL_RES_TYPE_TEX_1D] |= flags;
     format->f.flags[WINED3D_GL_RES_TYPE_TEX_2D] |= flags;
@@ -4297,6 +4476,22 @@ const struct wined3d_format *wined3d_get_format(const struct wined3d_adapter *ad
     }
 
     return format;
+}
+
+enum wined3d_format_id wined3d_get_typed_format_id(const struct wined3d_adapter *adapter,
+        const struct wined3d_format *format, enum wined3d_channel_type channel_type)
+{
+    const struct wined3d_typed_format_info *info;
+    uint32_t i;
+
+    for (i = 0; i < ARRAY_SIZE(typed_formats); ++i)
+    {
+        info = &typed_formats[i];
+        if (info->typeless_id == format->typeless_id && map_channel_type(info->channels[0]) == channel_type)
+            return info->id;
+    }
+
+    return WINED3DFMT_UNKNOWN;
 }
 
 BOOL wined3d_format_is_depth_view(enum wined3d_format_id resource_format_id,
@@ -4420,7 +4615,7 @@ const char *debug_const_bo_address(const struct wined3d_const_bo_address *addres
 {
     if (!address)
         return "(null)";
-    return wine_dbg_sprintf("{%#lx:%p}", address->buffer_object, address->addr);
+    return wine_dbg_sprintf("{%p:%p}", address->buffer_object, address->addr);
 }
 
 const char *debug_bo_address(const struct wined3d_bo_address *address)
@@ -5443,22 +5638,30 @@ void get_projection_matrix(const struct wined3d_context *context, const struct w
      *   - We need to flip along the y-axis in case of offscreen rendering.
      *   - OpenGL Z range is {-Wc,...,Wc} while D3D Z range is {0,...,Wc}.
      *   - <= D3D9 coordinates refer to pixel centers while GL coordinates
-     *     refer to pixel corners.
-     *   - D3D has a top-left filling convention. We need to maintain this
-     *     even after the y-flip mentioned above.
-     * In order to handle the last two points, we translate by
-     * (63.0 / 128.0) / VPw and (63.0 / 128.0) / VPh. This is equivalent to
-     * translating slightly less than half a pixel. We want the difference to
-     * be large enough that it doesn't get lost due to rounding inside the
-     * driver, but small enough to prevent it from interfering with any
-     * anti-aliasing. */
+     *     refer to pixel corners. D3D10 fixed this particular oddity.
+     *   - D3D has a top-left filling convention while GL does not specify
+     *     a particular behavior, other than that that the GL implementation
+     *     needs to be consistent.
+     *
+     * In order to handle the pixel center, we translate by 0.5 / VPw and
+     * 0.5 / VPh. We test the filling convention during adapter init and
+     * add a small offset to correct it if necessary. See
+     * wined3d_caps_gl_ctx_test_filling_convention() for more details on how
+     * we test GL and considerations regarding the added offset value.
+     *
+     * If we have GL_ARB_clip_control we take care of all this through
+     * viewport properties and don't have to translate geometry. */
+
+    /* Projection matrices are <= d3d9, which all have integer pixel centers. */
+    if (!(d3d_info->wined3d_creation_flags & WINED3D_PIXEL_CENTER_INTEGER))
+        ERR("Did not expect to enter this codepath without WINED3D_PIXEL_CENTER_INTEGER.\n");
 
     clip_control = d3d_info->clip_control;
     flip = !clip_control && context->render_offscreen;
-    if (!clip_control && d3d_info->wined3d_creation_flags & WINED3D_PIXEL_CENTER_INTEGER)
-        center_offset = 63.0f / 64.0f;
+    if (!clip_control)
+        center_offset = 1.0f + d3d_info->filling_convention_offset;
     else
-        center_offset = -1.0f / 64.0f;
+        center_offset = 0.0f;
 
     if (context->last_was_rhw)
     {
@@ -5783,6 +5986,18 @@ BOOL wined3d_get_primary_adapter_luid(LUID *luid)
     return TRUE;
 }
 
+uint32_t wined3d_format_pack(const struct wined3d_format *format, const struct wined3d_uvec4 *value)
+{
+    uint32_t p = 0;
+
+    p |= (value->x & wined3d_mask_from_size(format->red_size)) << format->red_offset;
+    p |= (value->y & wined3d_mask_from_size(format->green_size)) << format->green_offset;
+    p |= (value->z & wined3d_mask_from_size(format->blue_size)) << format->blue_offset;
+    p |= (value->w & wined3d_mask_from_size(format->alpha_size)) << format->alpha_offset;
+
+    return p;
+}
+
 /* Note: It's the caller's responsibility to ensure values can be expressed
  * in the requested format. UNORM formats for example can only express values
  * in the range 0.0f -> 1.0f. */
@@ -5882,7 +6097,7 @@ DWORD wined3d_format_convert_from_float(const struct wined3d_format *format, con
 
 static float color_to_float(DWORD color, DWORD size, DWORD offset)
 {
-    DWORD mask = size < 32 ? (1u << size) - 1 : ~0u;
+    uint32_t mask = wined3d_mask_from_size(size);
 
     if (!size)
         return 1.0f;
@@ -5918,10 +6133,10 @@ void wined3d_format_get_float_color_key(const struct wined3d_format *format,
         case WINED3DFMT_R8G8B8X8_UNORM:
         case WINED3DFMT_R16G16_UNORM:
         case WINED3DFMT_B10G10R10A2_UNORM:
-            slop.r = 0.5f / ((1u << format->red_size) - 1);
-            slop.g = 0.5f / ((1u << format->green_size) - 1);
-            slop.b = 0.5f / ((1u << format->blue_size) - 1);
-            slop.a = 0.5f / ((1u << format->alpha_size) - 1);
+            slop.r = 0.5f / wined3d_mask_from_size(format->red_size);
+            slop.g = 0.5f / wined3d_mask_from_size(format->green_size);
+            slop.b = 0.5f / wined3d_mask_from_size(format->blue_size);
+            slop.a = 0.5f / wined3d_mask_from_size(format->alpha_size);
 
             float_colors[0].r = color_to_float(key->color_space_low_value, format->red_size, format->red_offset)
                     - slop.r;
@@ -5977,17 +6192,19 @@ void wined3d_format_copy_data(const struct wined3d_format *format, const uint8_t
         unsigned int dst_slice_pitch, unsigned int w, unsigned int h, unsigned int d)
 {
     unsigned int row_block_count, row_count, row_size, slice, row;
-    unsigned int slice_count = d;
+    unsigned int slice_count = d, slice_size;
     const uint8_t *src_row;
     uint8_t *dst_row;
 
     row_block_count = (w + format->block_width - 1) / format->block_width;
     row_count = (h + format->block_height - 1) / format->block_height;
     row_size = row_block_count * format->block_byte_count;
+    slice_size = row_size * row_count;
 
-    if (src_row_pitch == row_size && dst_row_pitch == row_size && src_slice_pitch == dst_slice_pitch)
+    if (src_row_pitch == row_size && dst_row_pitch == row_size
+            && ((src_slice_pitch == slice_size && dst_slice_pitch == slice_size) || slice_count == 1))
     {
-        memcpy(dst, src, slice_count * row_count * row_size);
+        memcpy(dst, src, slice_count * slice_size);
         return;
     }
 
@@ -6031,7 +6248,7 @@ void multiply_matrix(struct wined3d_matrix *dst, const struct wined3d_matrix *sr
     *dst = tmp;
 }
 
-void gen_ffp_frag_op(const struct wined3d_context *context, const struct wined3d_state *state,
+void wined3d_ffp_get_fs_settings(const struct wined3d_context *context, const struct wined3d_state *state,
         struct ffp_frag_settings *settings, BOOL ignore_textype)
 {
 #define ARG1 0x01
@@ -6331,7 +6548,7 @@ void gen_ffp_frag_op(const struct wined3d_context *context, const struct wined3d
     }
     else
     {
-        settings->texcoords_initialized = (1u << WINED3D_MAX_TEXTURES) - 1;
+        settings->texcoords_initialized = wined3d_mask_from_size(WINED3D_MAX_TEXTURES);
     }
 
     settings->pointsprite = state->render_states[WINED3D_RS_POINTSPRITEENABLE]
@@ -6516,7 +6733,7 @@ void wined3d_ffp_get_vs_settings(const struct wined3d_context *context,
             settings->texgen[i] = state->texture_states[i][WINED3D_TSS_TEXCOORD_INDEX];
         }
         if (d3d_info->full_ffp_varyings)
-            settings->texcoords = (1u << WINED3D_MAX_TEXTURES) - 1;
+            settings->texcoords = wined3d_mask_from_size(WINED3D_MAX_TEXTURES);
 
         if (d3d_info->emulated_flatshading)
             settings->flatshading = state->render_states[WINED3D_RS_SHADEMODE] == WINED3D_SHADE_FLAT;
@@ -6565,7 +6782,7 @@ void wined3d_ffp_get_vs_settings(const struct wined3d_context *context,
         settings->texgen[i] = state->texture_states[i][WINED3D_TSS_TEXCOORD_INDEX];
     }
     if (d3d_info->full_ffp_varyings)
-        settings->texcoords = (1u << WINED3D_MAX_TEXTURES) - 1;
+        settings->texcoords = wined3d_mask_from_size(WINED3D_MAX_TEXTURES);
 
     for (i = 0; i < WINED3D_MAX_ACTIVE_LIGHTS; ++i)
     {
@@ -6645,6 +6862,7 @@ const char *wined3d_debug_location(DWORD location)
 #define LOCATION_TO_STR(x) if (location & x) { debug_append(&buffer, #x, " | "); location &= ~x; }
     LOCATION_TO_STR(WINED3D_LOCATION_DISCARDED);
     LOCATION_TO_STR(WINED3D_LOCATION_SYSMEM);
+    LOCATION_TO_STR(WINED3D_LOCATION_CLEARED);
     LOCATION_TO_STR(WINED3D_LOCATION_BUFFER);
     LOCATION_TO_STR(WINED3D_LOCATION_TEXTURE_RGB);
     LOCATION_TO_STR(WINED3D_LOCATION_TEXTURE_SRGB);
@@ -7314,6 +7532,8 @@ bool wined3d_allocator_init(struct wined3d_allocator *allocator,
     {
         list_init(&allocator->pools[i].chunks);
     }
+
+    allocator->free = NULL;
 
     return true;
 }

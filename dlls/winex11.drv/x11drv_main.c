@@ -20,19 +20,15 @@
  */
 
 #include "config.h"
-#include "wine/port.h"
 
 #include <fcntl.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifdef HAVE_SYS_TIME_H
-# include <sys/time.h>
-#endif
-#ifdef HAVE_UNISTD_H
-# include <unistd.h>
-#endif
+#include <sys/time.h>
+#include <unistd.h>
+#include <dlfcn.h>
 #include <X11/cursorfont.h>
 #include <X11/Xlib.h>
 #ifdef HAVE_XKB
@@ -108,6 +104,15 @@ static CRITICAL_SECTION_DEBUG critsect_debug =
 };
 static CRITICAL_SECTION x11drv_section = { &critsect_debug, -1, 0, 0, 0, 0 };
 
+static CRITICAL_SECTION x11drv_error_section;
+static CRITICAL_SECTION_DEBUG x11drv_error_section_debug =
+{
+    0, 0, &x11drv_error_section,
+    { &x11drv_error_section_debug.ProcessLocksList, &x11drv_error_section_debug.ProcessLocksList },
+    0, 0, { (DWORD_PTR)(__FILE__ ": x11drv_error_section") }
+};
+static CRITICAL_SECTION x11drv_error_section = { &x11drv_error_section_debug, -1, 0, 0, 0, 0 };
+
 struct d3dkmt_vidpn_source
 {
     D3DKMT_VIDPNSOURCEOWNER_TYPE type;      /* VidPN source owner type */
@@ -129,6 +134,7 @@ static const char * const atom_names[NB_XATOMS - FIRST_XATOM] =
 {
     "CLIPBOARD",
     "COMPOUND_TEXT",
+    "EDID",
     "INCR",
     "MANAGER",
     "MULTIPLE",
@@ -256,6 +262,7 @@ static inline BOOL ignore_error( Display *display, XErrorEvent *event )
  */
 void X11DRV_expect_error( Display *display, x11drv_error_callback callback, void *arg )
 {
+    EnterCriticalSection( &x11drv_error_section );
     err_callback         = callback;
     err_callback_display = display;
     err_callback_arg     = arg;
@@ -272,8 +279,10 @@ void X11DRV_expect_error( Display *display, x11drv_error_callback callback, void
  */
 int X11DRV_check_error(void)
 {
+    int res = err_callback_result;
     err_callback = NULL;
-    return err_callback_result;
+    LeaveCriticalSection( &x11drv_error_section );
+    return res;
 }
 
 
@@ -618,6 +627,7 @@ static BOOL process_attach(void)
     X11DRV_InitKeyboard( gdi_display );
     if (use_xim) use_xim = X11DRV_InitXIM( input_style );
 
+    init_user_driver();
     X11DRV_DisplayDevices_Init(FALSE);
     return TRUE;
 }
@@ -632,6 +642,7 @@ void CDECL X11DRV_ThreadDetach(void)
 
     if (data)
     {
+        vulkan_thread_detach();
         if (data->xim) XCloseIM( data->xim );
         if (data->font_set) XFreeFontSet( data->display, data->font_set );
         XCloseDisplay( data->display );

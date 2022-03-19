@@ -51,8 +51,10 @@ struct process
     struct fd           *msg_fd;          /* fd for sendmsg/recvmsg */
     process_id_t         id;              /* id of the process */
     process_id_t         group_id;        /* group id of the process */
+    unsigned int         session_id;      /* session id */
     struct timeout_user *sigkill_timeout; /* timeout for final SIGKILL */
-    enum cpu_type        cpu;             /* client CPU type */
+    timeout_t            sigkill_delay;   /* delay before final SIGKILL */
+    unsigned short       machine;         /* client machine type */
     int                  unix_pid;        /* Unix pid for final SIGKILL */
     int                  exit_code;       /* process exit code */
     int                  running_threads; /* number of threads running in this process */
@@ -64,7 +66,9 @@ struct process
     unsigned int         is_system:1;     /* is it a system process? */
     unsigned int         debug_children:1;/* also debug all child processes */
     unsigned int         is_terminating:1;/* is process terminating? */
-    struct job          *job;             /* job object ascoicated with this process */
+    data_size_t          imagelen;        /* length of image path in bytes */
+    WCHAR               *image;           /* main exe image full path */
+    struct job          *job;             /* job object associated with this process */
     struct list          job_entry;       /* list entry for job object */
     struct list          asyncs;          /* list of async object owned by the process */
     struct list          locks;           /* list of file locks owned by the process */
@@ -85,17 +89,15 @@ struct process
     const struct rawinput_device *rawinput_mouse; /* rawinput mouse device, if any */
     const struct rawinput_device *rawinput_kbd;   /* rawinput keyboard device, if any */
     struct list          kernel_object;   /* list of kernel object pointers */
+    pe_image_info_t      image_info;      /* main exe image info */
 };
-
-#define CPU_FLAG(cpu) (1 << (cpu))
-#define CPU_64BIT_MASK (CPU_FLAG(CPU_x86_64) | CPU_FLAG(CPU_ARM64))
 
 /* process functions */
 
 extern unsigned int alloc_ptid( void *ptr );
 extern void free_ptid( unsigned int id );
 extern void *get_ptid_entry( unsigned int id );
-extern struct process *create_process( int fd, struct process *parent, int inherit_all, const startup_info_t *info,
+extern struct process *create_process( int fd, struct process *parent, unsigned int flags, const startup_info_t *info,
                                        const struct security_descriptor *sd, const obj_handle_t *handles,
                                        unsigned int handle_count, struct token *token );
 extern data_size_t get_process_startup_info_size( struct process *process );
@@ -142,5 +144,7 @@ static inline int is_process_init_done( struct process *process )
 {
     return process->startup_state == STARTUP_DONE;
 }
+
+static const unsigned int default_session_id = 1;
 
 #endif  /* __WINE_SERVER_PROCESS_H */

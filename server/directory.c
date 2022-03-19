@@ -20,7 +20,6 @@
  */
 
 #include "config.h"
-#include "wine/port.h"
 
 #include <assert.h>
 #include <stdarg.h>
@@ -379,6 +378,7 @@ void init_directories( struct fd *intl_fd )
 
     /* symlinks */
     static const WCHAR link_dosdevW[] = {'D','o','s','D','e','v','i','c','e','s'};
+    static const WCHAR link_globalrootW[] = {'G','L','O','B','A','L','R','O','O','T'};
     static const WCHAR link_globalW[] = {'G','l','o','b','a','l'};
     static const WCHAR link_nulW[]    = {'N','U','L'};
     static const WCHAR link_pipeW[]   = {'P','I','P','E'};
@@ -393,6 +393,7 @@ void init_directories( struct fd *intl_fd )
     static const WCHAR link_consoleW[]    = {'\\','D','e','v','i','c','e','\\','C','o','n','D','r','v',
         '\\','C','o','n','s','o','l','e'};
     static const struct unicode_str link_dosdev_str = {link_dosdevW, sizeof(link_dosdevW)};
+    static const struct unicode_str link_globalroot_str = {link_globalrootW, sizeof(link_globalrootW)};
     static const struct unicode_str link_global_str = {link_globalW, sizeof(link_globalW)};
     static const struct unicode_str link_nul_str    = {link_nulW, sizeof(link_nulW)};
     static const struct unicode_str link_pipe_str   = {link_pipeW, sizeof(link_pipeW)};
@@ -462,7 +463,7 @@ void init_directories( struct fd *intl_fd )
 
     /* sessions */
     create_session( 0 );
-    create_session( 1 );
+    create_session( default_session_id );
 
     /* object types */
 
@@ -471,6 +472,7 @@ void init_directories( struct fd *intl_fd )
 
     /* symlinks */
     release_object( create_obj_symlink( &root_directory->obj, &link_dosdev_str, OBJ_PERMANENT, &dir_global->obj, NULL ));
+    release_object( create_root_symlink( &dir_global->obj, &link_globalroot_str, OBJ_PERMANENT, NULL ));
     release_object( create_obj_symlink( &dir_global->obj, &link_global_str, OBJ_PERMANENT, &dir_global->obj, NULL ));
     release_object( create_obj_symlink( &dir_global->obj, &link_nul_str, OBJ_PERMANENT, null_device, NULL ));
     release_object( create_obj_symlink( &dir_global->obj, &link_pipe_str, OBJ_PERMANENT, named_pipe_device, NULL ));

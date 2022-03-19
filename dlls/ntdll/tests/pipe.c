@@ -1662,8 +1662,10 @@ static void test_volume_info(void)
                            PIPE_TYPE_MESSAGE, 4096 )) return;
 
     memset( buffer, 0xaa, sizeof(buffer) );
+    memset( &iosb, 0xaa, sizeof(iosb) );
     status = pNtQueryVolumeInformationFile( read, &iosb, buffer, sizeof(buffer), FileFsDeviceInformation );
     ok( status == STATUS_SUCCESS, "NtQueryVolumeInformationFile failed: %x\n", status );
+    ok( iosb.Status == STATUS_SUCCESS, "got status %#x\n", iosb.Status );
     ok( iosb.Information == sizeof(*device_info), "Information = %lu\n", iosb.Information );
     device_info = (FILE_FS_DEVICE_INFORMATION*)buffer;
     ok( device_info->DeviceType == FILE_DEVICE_NAMED_PIPE, "DeviceType = %u\n", device_info->DeviceType );
@@ -1671,8 +1673,10 @@ static void test_volume_info(void)
         "Characteristics = %x\n", device_info->Characteristics );
 
     memset( buffer, 0xaa, sizeof(buffer) );
+    memset( &iosb, 0xaa, sizeof(iosb) );
     status = pNtQueryVolumeInformationFile( write, &iosb, buffer, sizeof(buffer), FileFsDeviceInformation );
     ok( status == STATUS_SUCCESS, "NtQueryVolumeInformationFile failed: %x\n", status );
+    ok( iosb.Status == STATUS_SUCCESS, "got status %#x\n", iosb.Status );
     ok( iosb.Information == sizeof(*device_info), "Information = %lu\n", iosb.Information );
     device_info = (FILE_FS_DEVICE_INFORMATION*)buffer;
     ok( device_info->DeviceType == FILE_DEVICE_NAMED_PIPE, "DeviceType = %u\n", device_info->DeviceType );
@@ -1884,8 +1888,16 @@ static void test_pipe_with_data_state(HANDLE pipe, BOOL is_server, DWORD state)
             "NtQueryInformationFile(FilePipeLocalInformation) failed in %s state %u: %x\n",
             is_server ? "server" : "client", state, status);
     if (!status)
+    {
         ok(local_info.NamedPipeState == state, "%s NamedPipeState = %u, expected %u\n",
             is_server ? "server" : "client", local_info.NamedPipeState, state);
+        if (state != FILE_PIPE_DISCONNECTED_STATE && state != FILE_PIPE_LISTENING_STATE)
+            ok(local_info.ReadDataAvailable != 0, "ReadDataAvailable, expected non-zero, in %s state %u\n",
+                is_server ? "server" : "client", state);
+        else
+            ok(local_info.ReadDataAvailable == 0, "ReadDataAvailable, expected zero, in %s state %u\n",
+                is_server ? "server" : "client", state);
+    }
 
     status = pNtQueryInformationFile(pipe, &io, &pipe_info, sizeof(pipe_info), FilePipeInformation);
     if (!is_server && state == FILE_PIPE_DISCONNECTED_STATE)

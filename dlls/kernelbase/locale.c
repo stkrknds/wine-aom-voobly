@@ -106,6 +106,7 @@ static const struct { UINT cp; const WCHAR *name; } codepage_names[] =
     { 437,   L"OEM United States" },
     { 500,   L"IBM EBCDIC International" },
     { 708,   L"Arabic ASMO" },
+    { 720,   L"Arabic (Transparent ASMO)" },
     { 737,   L"OEM Greek 437G" },
     { 775,   L"OEM Baltic" },
     { 850,   L"OEM Multilingual Latin 1" },
@@ -159,6 +160,7 @@ static const struct { UINT cp; const WCHAR *name; } codepage_names[] =
     { 20127, L"US-ASCII (7bit)" },
     { 20866, L"Russian KOI8" },
     { 20932, L"EUC-JP" },
+    { 20949, L"Korean Wansung" },
     { 21866, L"Ukrainian KOI8" },
     { 28591, L"ISO 8859-1 Latin 1" },
     { 28592, L"ISO 8859-2 Latin 2 (East European)" },
@@ -533,6 +535,7 @@ static const struct geoinfo geoinfodata[] =
     { 161832015, L"BL", L"BLM", 10039880, 652 }, /* Saint Barthélemy */
     { 161832256, L"UM", L"UMI", 27114, 581 }, /* U.S. Minor Outlying Islands */
     { 161832257, L"XX", L"XX", 10026358, 419, LOCATION_REGION }, /* Latin America and the Caribbean */
+    { 161832258, L"BG", L"BES", 10039880, 535 }, /* Bonaire, Sint Eustatius and Saba */
 };
 
 /* NLS normalization file */
@@ -807,9 +810,9 @@ void init_locale(void)
     if (!RegQueryValueExW( intl_key, L"Locale", NULL, NULL, (BYTE *)bufferW, &count ))
     {
         if (wcstoul( bufferW, NULL, 16 ) == user_lcid) return;  /* already set correctly */
-        TRACE( "updating registry, locale changed %s -> %08x\n", debugstr_w(bufferW), user_lcid );
+        TRACE( "updating registry, locale changed %s -> %08lx\n", debugstr_w(bufferW), user_lcid );
     }
-    else TRACE( "updating registry, locale changed none -> %08x\n", user_lcid );
+    else TRACE( "updating registry, locale changed none -> %08lx\n", user_lcid );
     swprintf( bufferW, ARRAY_SIZE(bufferW), L"%08x", user_lcid );
     RegSetValueExW( intl_key, L"Locale", 0, REG_SZ,
                     (BYTE *)bufferW, (lstrlenW(bufferW) + 1) * sizeof(WCHAR) );
@@ -2724,8 +2727,8 @@ BOOL WINAPI DECLSPEC_HOTPATCH Internal_EnumCalendarInfo( CALINFO_ENUMPROCW proc,
                                                          BOOL exex, LPARAM lparam )
 {
     WCHAR buffer[256];
-    DWORD optional = 0;
-    INT ret;
+    CALID calendars[2] = { id };
+    INT ret, i;
 
     if (!proc)
     {
@@ -2736,13 +2739,14 @@ BOOL WINAPI DECLSPEC_HOTPATCH Internal_EnumCalendarInfo( CALINFO_ENUMPROCW proc,
     if (id == ENUM_ALL_CALENDARS)
     {
         if (!GetLocaleInfoW( lcid, LOCALE_ICALENDARTYPE | LOCALE_RETURN_NUMBER,
-                             (WCHAR *)&id, sizeof(id) / sizeof(WCHAR) )) return FALSE;
+                             (WCHAR *)&calendars[0], sizeof(calendars[0]) / sizeof(WCHAR) )) return FALSE;
         if (!GetLocaleInfoW( lcid, LOCALE_IOPTIONALCALENDAR | LOCALE_RETURN_NUMBER,
-                             (WCHAR *)&optional, sizeof(optional) / sizeof(WCHAR) )) optional = 0;
+                             (WCHAR *)&calendars[1], sizeof(calendars[1]) / sizeof(WCHAR) )) calendars[1] = 0;
     }
 
-    for (;;)
+    for (i = 0; i < ARRAY_SIZE(calendars) && calendars[i]; i++)
     {
+        id = calendars[i];
         if (type & CAL_RETURN_NUMBER)
             ret = GetCalendarInfoW( lcid, id, type, NULL, 0, (LPDWORD)buffer );
         else if (unicode)
@@ -2761,8 +2765,6 @@ BOOL WINAPI DECLSPEC_HOTPATCH Internal_EnumCalendarInfo( CALINFO_ENUMPROCW proc,
             else ret = proc( buffer );
         }
         if (!ret) break;
-        if (!optional) break;
-        id = optional;
     }
     return TRUE;
 }
@@ -2801,7 +2803,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH Internal_EnumDateFormats( DATEFMT_ENUMPROCW proc, 
         lctype = LOCALE_SYEARMONTH;
         break;
     default:
-        FIXME( "unknown date format 0x%08x\n", flags );
+        FIXME( "unknown date format 0x%08lx\n", flags );
         SetLastError( ERROR_INVALID_PARAMETER );
         return FALSE;
     }
@@ -2944,7 +2946,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH Internal_EnumSystemLanguageGroups( LANGUAGEGROUP_E
 
         if (!(flags & LGRPID_SUPPORTED) && !wcstoul( value, NULL, 10 )) continue;
         if (!LoadStringW( kernel32_handle, 0x2000 + id, descr, ARRAY_SIZE(descr) )) descr[0] = 0;
-        TRACE( "%p: %u %s %s %x %lx\n", proc, id, debugstr_w(name), debugstr_w(descr), flags, param );
+        TRACE( "%p: %lu %s %s %lx %Ix\n", proc, id, debugstr_w(name), debugstr_w(descr), flags, param );
         if (!unicode)
         {
             char nameA[10], descrA[80];
@@ -2983,7 +2985,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH Internal_EnumTimeFormats( TIMEFMT_ENUMPROCW proc, 
         lctype = LOCALE_SSHORTTIME;
         break;
     default:
-        FIXME( "Unknown time format %x\n", flags );
+        FIXME( "Unknown time format %lx\n", flags );
         SetLastError( ERROR_INVALID_PARAMETER );
         return FALSE;
     }
@@ -3054,7 +3056,8 @@ INT WINAPI CompareStringEx( const WCHAR *locale, DWORD flags, const WCHAR *str1,
 {
     DWORD supported_flags = NORM_IGNORECASE | NORM_IGNORENONSPACE | NORM_IGNORESYMBOLS | SORT_STRINGSORT |
                             NORM_IGNOREKANATYPE | NORM_IGNOREWIDTH | LOCALE_USE_CP_ACP;
-    DWORD semistub_flags = NORM_LINGUISTIC_CASING | LINGUISTIC_IGNORECASE | 0x10000000;
+    DWORD semistub_flags = NORM_LINGUISTIC_CASING | LINGUISTIC_IGNORECASE | LINGUISTIC_IGNOREDIACRITIC |
+                           SORT_DIGITSASNUMBERS | 0x10000000;
     /* 0x10000000 is related to diacritics in Arabic, Japanese, and Hebrew */
     INT ret;
     static int once;
@@ -3077,7 +3080,7 @@ INT WINAPI CompareStringEx( const WCHAR *locale, DWORD flags, const WCHAR *str1,
 
     if (flags & semistub_flags)
     {
-        if (!once++) FIXME( "semi-stub behavior for flag(s) 0x%x\n", flags & semistub_flags );
+        if (!once++) FIXME( "semi-stub behavior for flag(s) 0x%lx\n", flags & semistub_flags );
     }
 
     if (len1 < 0) len1 = lstrlenW(str1);
@@ -3113,6 +3116,13 @@ INT WINAPI DECLSPEC_HOTPATCH CompareStringA( LCID lcid, DWORD flags, const char 
         SetLastError( ERROR_INVALID_PARAMETER );
         return 0;
     }
+
+    if (flags & SORT_DIGITSASNUMBERS)
+    {
+        SetLastError( ERROR_INVALID_FLAGS );
+        return 0;
+    }
+
     if (len1 < 0) len1 = strlen(str1);
     if (len2 < 0) len2 = strlen(str2);
 
@@ -3370,7 +3380,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH EnumSystemGeoID( GEOCLASS class, GEOID parent, GEO
 {
     INT i;
 
-    TRACE( "(%d, %d, %p)\n", class, parent, proc );
+    TRACE( "(%ld, %ld, %p)\n", class, parent, proc );
 
     if (!proc)
     {
@@ -3550,7 +3560,7 @@ INT WINAPI DECLSPEC_HOTPATCH FindNLSStringEx( const WCHAR *locale, DWORD flags, 
     DWORD mask = flags;
     int offset, inc, count;
 
-    TRACE( "%s %x %s %d %s %d %p %p %p %ld\n", wine_dbgstr_w(locale), flags,
+    TRACE( "%s %lx %s %d %s %d %p %p %p %Id\n", wine_dbgstr_w(locale), flags,
            wine_dbgstr_w(src), srclen, wine_dbgstr_w(value), valuelen, found,
            version, reserved, handle );
 
@@ -3592,7 +3602,7 @@ INT WINAPI DECLSPEC_HOTPATCH FindStringOrdinal( DWORD flag, const WCHAR *src, IN
 {
     INT offset, inc, count;
 
-    TRACE( "%#x %s %d %s %d %d\n", flag, wine_dbgstr_w(src), src_size,
+    TRACE( "%#lx %s %d %s %d %d\n", flag, wine_dbgstr_w(src), src_size,
            wine_dbgstr_w(val), val_size, ignore_case );
 
     if (!src || !val)
@@ -3717,7 +3727,7 @@ static const WCHAR *get_message( DWORD flags, const void *src, UINT id, UINT lan
  *	FormatMessageA   (kernelbase.@)
  */
 DWORD WINAPI DECLSPEC_HOTPATCH FormatMessageA( DWORD flags, const void *source, DWORD msgid, DWORD langid,
-                                               char *buffer, DWORD size, __ms_va_list *args )
+                                               char *buffer, DWORD size, va_list *args )
 {
     DWORD ret = 0;
     ULONG len, retsize = 0;
@@ -3726,7 +3736,7 @@ DWORD WINAPI DECLSPEC_HOTPATCH FormatMessageA( DWORD flags, const void *source, 
     WCHAR *result, *message = NULL;
     NTSTATUS status;
 
-    TRACE( "(0x%x,%p,%#x,0x%x,%p,%u,%p)\n", flags, source, msgid, langid, buffer, size, args );
+    TRACE( "(0x%lx,%p,%#lx,0x%lx,%p,%lu,%p)\n", flags, source, msgid, langid, buffer, size, args );
 
     if (flags & FORMAT_MESSAGE_ALLOCATE_BUFFER)
     {
@@ -3800,7 +3810,7 @@ done:
  *	FormatMessageW   (kernelbase.@)
  */
 DWORD WINAPI DECLSPEC_HOTPATCH FormatMessageW( DWORD flags, const void *source, DWORD msgid, DWORD langid,
-                                               WCHAR *buffer, DWORD size, __ms_va_list *args )
+                                               WCHAR *buffer, DWORD size, va_list *args )
 {
     ULONG retsize = 0;
     ULONG width = (flags & FORMAT_MESSAGE_MAX_WIDTH_MASK);
@@ -3808,7 +3818,7 @@ DWORD WINAPI DECLSPEC_HOTPATCH FormatMessageW( DWORD flags, const void *source, 
     WCHAR *message = NULL;
     NTSTATUS status;
 
-    TRACE( "(0x%x,%p,%#x,0x%x,%p,%u,%p)\n", flags, source, msgid, langid, buffer, size, args );
+    TRACE( "(0x%lx,%p,%#lx,0x%lx,%p,%lu,%p)\n", flags, source, msgid, langid, buffer, size, args );
 
     if (!buffer)
     {
@@ -3894,7 +3904,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetCPInfo( UINT codepage, CPINFO *cpinfo )
     case CP_UTF8:
         cpinfo->DefaultChar[0] = 0x3f;
         cpinfo->DefaultChar[1] = 0;
-        cpinfo->LeadByte[0] = cpinfo->LeadByte[1] = 0;
+        memset( cpinfo->LeadByte, 0, sizeof(cpinfo->LeadByte) );
         cpinfo->MaxCharSize = (codepage == CP_UTF7) ? 5 : 4;
         break;
     default:
@@ -4057,14 +4067,14 @@ INT WINAPI DECLSPEC_HOTPATCH GetCalendarInfoW( LCID lcid, CALID calendar, CALTYP
         return GetLocaleInfoW( lcid, LOCALE_ICALENDARTYPE, data, count );
 
     case CAL_SCALNAME:
-        FIXME( "Unimplemented caltype %d\n", calinfo );
+        FIXME( "Unimplemented caltype %ld\n", calinfo );
         if (data) *data = 0;
         return 1;
 
     case CAL_IYEAROFFSETRANGE:
     case CAL_SERASTRING:
     case CAL_SABBREVERASTRING:
-        FIXME( "Unimplemented caltype %d\n", calinfo );
+        FIXME( "Unimplemented caltype %ld\n", calinfo );
         return 0;
 
     case CAL_SSHORTDATE:
@@ -4141,7 +4151,7 @@ INT WINAPI DECLSPEC_HOTPATCH GetCalendarInfoW( LCID lcid, CALID calendar, CALTYP
         }
         break;
     default:
-        FIXME( "Unknown caltype %d\n", calinfo );
+        FIXME( "Unknown caltype %ld\n", calinfo );
         SetLastError( ERROR_INVALID_FLAGS );
         return 0;
     }
@@ -4252,7 +4262,7 @@ done:
 BOOL WINAPI /* DECLSPEC_HOTPATCH */ GetFileMUIInfo( DWORD flags, const WCHAR *path,
                                                     FILEMUIINFO *info, DWORD *size )
 {
-    FIXME( "stub: %u, %s, %p, %p\n", flags, debugstr_w(path), info, size );
+    FIXME( "stub: %lu, %s, %p, %p\n", flags, debugstr_w(path), info, size );
     SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
     return FALSE;
 }
@@ -4266,7 +4276,7 @@ BOOL WINAPI /* DECLSPEC_HOTPATCH */ GetFileMUIPath( DWORD flags, const WCHAR *fi
                                                     WCHAR *muipath, ULONG *muipathlen,
                                                     ULONGLONG *enumerator )
 {
-    FIXME( "stub: 0x%x, %s, %s, %p, %p, %p, %p\n", flags, debugstr_w(filepath),
+    FIXME( "stub: 0x%lx, %s, %s, %p, %p, %p, %p\n", flags, debugstr_w(filepath),
            debugstr_w(language), languagelen, muipath, muipathlen, enumerator );
     SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
     return FALSE;
@@ -4283,7 +4293,7 @@ INT WINAPI DECLSPEC_HOTPATCH GetGeoInfoW( GEOID id, GEOTYPE type, WCHAR *data, i
     const WCHAR *str = bufferW;
     int len;
 
-    TRACE( "%d %d %p %d %d\n", id, type, data, count, lang );
+    TRACE( "%ld %ld %p %d %d\n", id, type, data, count, lang );
 
     if (!ptr)
     {
@@ -4322,11 +4332,11 @@ INT WINAPI DECLSPEC_HOTPATCH GetGeoInfoW( GEOID id, GEOTYPE type, WCHAR *data, i
     case GEO_CURRENCYCODE:
     case GEO_CURRENCYSYMBOL:
     case GEO_NAME:
-        FIXME( "type %d is not supported\n", type );
+        FIXME( "type %ld is not supported\n", type );
         SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
         return 0;
     default:
-        WARN( "unrecognized type %d\n", type );
+        WARN( "unrecognized type %ld\n", type );
         SetLastError( ERROR_INVALID_FLAGS );
         return 0;
     }
@@ -4348,7 +4358,7 @@ INT WINAPI DECLSPEC_HOTPATCH GetLocaleInfoA( LCID lcid, LCTYPE lctype, char *buf
     WCHAR *bufferW;
     INT lenW, ret;
 
-    TRACE( "lcid=0x%x lctype=0x%x %p %d\n", lcid, lctype, buffer, len );
+    TRACE( "lcid=0x%lx lctype=0x%lx %p %d\n", lcid, lctype, buffer, len );
 
     if (len < 0 || (len && !buffer))
     {
@@ -4407,7 +4417,7 @@ INT WINAPI DECLSPEC_HOTPATCH GetLocaleInfoW( LCID lcid, LCTYPE lctype, WCHAR *bu
     lcid = ConvertDefaultLocale( lcid );
     lctype = LOWORD(lctype);
 
-    TRACE( "(lcid=0x%x,lctype=0x%x,%p,%d)\n", lcid, lctype, buffer, len );
+    TRACE( "(lcid=0x%lx,lctype=0x%lx,%p,%d)\n", lcid, lctype, buffer, len );
 
     /* first check for overrides in the registry */
 
@@ -4500,7 +4510,7 @@ INT WINAPI DECLSPEC_HOTPATCH GetLocaleInfoW( LCID lcid, LCTYPE lctype, WCHAR *bu
         }
         HeapFree( GetProcessHeap(), 0, tmp );
 
-        TRACE( "(lcid=0x%x,lctype=0x%x,%p,%d) returning number %d\n",
+        TRACE( "(lcid=0x%lx,lctype=0x%lx,%p,%d) returning number %d\n",
                lcid, lctype, buffer, len, number );
     }
     else
@@ -4508,7 +4518,7 @@ INT WINAPI DECLSPEC_HOTPATCH GetLocaleInfoW( LCID lcid, LCTYPE lctype, WCHAR *bu
         memcpy( buffer, p + 1, ret * sizeof(WCHAR) );
         if (lctype != LOCALE_FONTSIGNATURE) buffer[ret-1] = 0;
 
-        TRACE( "(lcid=0x%x,lctype=0x%x,%p,%d) returning %d %s\n",
+        TRACE( "(lcid=0x%lx,lctype=0x%lx,%p,%d) returning %d %s\n",
                lcid, lctype, buffer, len, ret, debugstr_w(buffer) );
     }
     return ret;
@@ -4522,7 +4532,7 @@ INT WINAPI DECLSPEC_HOTPATCH GetLocaleInfoEx( const WCHAR *locale, LCTYPE info, 
 {
     LCID lcid = LocaleNameToLCID( locale, 0 );
 
-    TRACE( "%s lcid=0x%x 0x%x\n", debugstr_w(locale), lcid, info );
+    TRACE( "%s lcid=0x%lx 0x%lx\n", debugstr_w(locale), lcid, info );
 
     if (!lcid) return 0;
 
@@ -4894,7 +4904,7 @@ GEOID WINAPI DECLSPEC_HOTPATCH GetUserGeoID( GEOCLASS geoclass )
         name = L"Region";
         break;
     default:
-        WARN("Unknown geoclass %d\n", geoclass);
+        WARN("Unknown geoclass %ld\n", geoclass);
         return GEOID_NOT_AVAILABLE;
     }
     if (!RegOpenKeyExW( intl_key, L"Geo", 0, KEY_ALL_ACCESS, &hkey ))
@@ -5227,7 +5237,7 @@ DWORD WINAPI DECLSPEC_HOTPATCH IsValidNLSVersion( NLS_FUNCTION func, const WCHAR
 INT WINAPI DECLSPEC_HOTPATCH LCIDToLocaleName( LCID lcid, WCHAR *name, INT count, DWORD flags )
 {
     static int once;
-    if (flags && !once++) FIXME( "unsupported flags %x\n", flags );
+    if (flags && !once++) FIXME( "unsupported flags %lx\n", flags );
 
     return GetLocaleInfoW( lcid, LOCALE_SNAME | LOCALE_NOUSEROVERRIDE, name, count );
 }
@@ -5249,7 +5259,7 @@ INT WINAPI DECLSPEC_HOTPATCH LCMapStringEx( const WCHAR *locale, DWORD flags, co
     if (handle)
     {
         static int once;
-        if (!once++) FIXME( "unsupported lparam %lx\n", handle );
+        if (!once++) FIXME( "unsupported lparam %Ix\n", handle );
     }
 
     if (!src || !srclen || dstlen < 0)
@@ -5289,7 +5299,7 @@ INT WINAPI DECLSPEC_HOTPATCH LCMapStringEx( const WCHAR *locale, DWORD flags, co
         }
         if (srclen < 0) srclen = lstrlenW(src);
 
-        TRACE( "(%s,0x%08x,%s,%d,%p,%d)\n",
+        TRACE( "(%s,0x%08lx,%s,%d,%p,%d)\n",
                debugstr_w(locale), flags, debugstr_wn(src, srclen), srclen, dst, dstlen );
 
         if ((ret = get_sortkey( flags, src, srclen, (char *)dst, dstlen ))) ret++;
@@ -5314,7 +5324,7 @@ INT WINAPI DECLSPEC_HOTPATCH LCMapStringEx( const WCHAR *locale, DWORD flags, co
 
     if (srclen < 0) srclen = lstrlenW(src) + 1;
 
-    TRACE( "(%s,0x%08x,%s,%d,%p,%d)\n",
+    TRACE( "(%s,0x%08lx,%s,%d,%p,%d)\n",
            debugstr_w(locale), flags, debugstr_wn(src, srclen), srclen, dst, dstlen );
 
     if (!dst) /* return required string length */
@@ -5568,9 +5578,6 @@ INT WINAPI DECLSPEC_HOTPATCH MultiByteToWideChar( UINT codepage, DWORD flags, co
         if (unix_cp == CP_UTF8)
         {
             ret = mbstowcs_utf8( flags, src, srclen, dst, dstlen );
-#ifdef __APPLE__  /* work around broken Mac OS X filesystem that enforces decomposed Unicode */
-            if (ret && dstlen) RtlNormalizeString( NormalizationC, dst, ret, dst, &ret );
-#endif
             break;
         }
         codepage = unix_cp;
@@ -5643,7 +5650,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH SetLocaleInfoW( LCID lcid, LCTYPE lctype, const WC
         return FALSE;
     }
 
-    TRACE( "setting %x (%s) to %s\n", lctype, debugstr_w(value->name), debugstr_w(data) );
+    TRACE( "setting %lx (%s) to %s\n", lctype, debugstr_w(value->name), debugstr_w(data) );
 
     /* FIXME: should check that data to set is sane */
 
@@ -5689,7 +5696,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH SetLocaleInfoW( LCID lcid, LCTYPE lctype, const WC
  */
 INT WINAPI /* DECLSPEC_HOTPATCH */ SetCalendarInfoW( LCID lcid, CALID calendar, CALTYPE type, const WCHAR *data )
 {
-    FIXME( "(%08x,%08x,%08x,%s): stub\n", lcid, calendar, type, debugstr_w(data) );
+    FIXME( "(%08lx,%08lx,%08lx,%s): stub\n", lcid, calendar, type, debugstr_w(data) );
     return 0;
 }
 
@@ -5740,6 +5747,12 @@ BOOL WINAPI DECLSPEC_HOTPATCH SetUserGeoID( GEOID id )
         const WCHAR *name = geoinfo->kind == LOCATION_NATION ? L"Nation" : L"Region";
         swprintf( bufferW, ARRAY_SIZE(bufferW), L"%u", geoinfo->id );
         RegSetValueExW( hkey, name, 0, REG_SZ, (BYTE *)bufferW, (lstrlenW(bufferW) + 1) * sizeof(WCHAR) );
+
+        if (geoinfo->kind == LOCATION_NATION || geoinfo->kind == LOCATION_BOTH)
+            lstrcpyW( bufferW, geoinfo->iso2W );
+        else
+            swprintf( bufferW, ARRAY_SIZE(bufferW), L"%03u", geoinfo->uncode );
+        RegSetValueExW( hkey, L"Name", 0, REG_SZ, (BYTE *)bufferW, (lstrlenW(bufferW) + 1) * sizeof(WCHAR) );
         RegCloseKey( hkey );
     }
     return TRUE;
@@ -5876,4 +5889,94 @@ INT WINAPI DECLSPEC_HOTPATCH WideCharToMultiByte( UINT codepage, DWORD flags, LP
     }
     TRACE( "cp %d %s -> %s, ret = %d\n", codepage, debugstr_wn(src, srclen), debugstr_an(dst, ret), ret );
     return ret;
+}
+
+
+/***********************************************************************
+ *	GetUserDefaultGeoName  (kernelbase.@)
+ */
+INT WINAPI GetUserDefaultGeoName(LPWSTR geo_name, int count)
+{
+    const struct geoinfo *geoinfo;
+    WCHAR buffer[32];
+    LSTATUS status;
+    DWORD size;
+    HKEY key;
+
+    TRACE( "geo_name %p, count %d.\n", geo_name, count );
+
+    if (count && !geo_name)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return 0;
+    }
+    if (!(status = RegOpenKeyExW( intl_key, L"Geo", 0, KEY_ALL_ACCESS, &key )))
+    {
+        size = sizeof(buffer);
+        status = RegQueryValueExW( key, L"Name", NULL, NULL, (BYTE *)buffer, &size );
+        RegCloseKey( key );
+    }
+    if (status)
+    {
+        if ((geoinfo = get_geoinfo_ptr( GetUserGeoID( GEOCLASS_NATION ))) && geoinfo->id != 39070)
+            lstrcpyW( buffer, geoinfo->iso2W );
+        else
+            lstrcpyW( buffer, L"001" );
+    }
+    size = lstrlenW( buffer ) + 1;
+    if (count < size)
+    {
+        if (!count)
+            return size;
+        SetLastError( ERROR_INSUFFICIENT_BUFFER );
+        return 0;
+    }
+    lstrcpyW( geo_name, buffer );
+    return size;
+}
+
+
+/***********************************************************************
+ *	SetUserDefaultGeoName  (kernelbase.@)
+ */
+BOOL WINAPI SetUserGeoName(PWSTR geo_name)
+{
+    unsigned int i;
+    WCHAR *endptr;
+    int uncode;
+
+    TRACE( "geo_name %s.\n", debugstr_w( geo_name ));
+
+    if (!geo_name)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+
+    if (lstrlenW( geo_name ) == 3)
+    {
+        uncode = wcstol( geo_name, &endptr, 10 );
+        if (!uncode || endptr != geo_name + 3)
+        {
+            SetLastError( ERROR_INVALID_PARAMETER );
+            return FALSE;
+        }
+        for (i = 0; i < ARRAY_SIZE(geoinfodata); ++i)
+            if (geoinfodata[i].uncode == uncode)
+                break;
+    }
+    else
+    {
+        if (!lstrcmpiW( geo_name, L"XX" ))
+            return SetUserGeoID( 39070 );
+        for (i = 0; i < ARRAY_SIZE(geoinfodata); ++i)
+            if (!lstrcmpiW( geo_name, geoinfodata[i].iso2W ))
+                break;
+    }
+    if (i == ARRAY_SIZE(geoinfodata))
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+    return SetUserGeoID( geoinfodata[i].id );
 }

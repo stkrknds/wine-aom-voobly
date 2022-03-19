@@ -17,7 +17,6 @@
  */
 
 #include <stdarg.h>
-#include <assert.h>
 
 #define COBJMACROS
 
@@ -66,6 +65,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(mshtml);
 /* See jscript.h in jscript.dll. */
 #define SCRIPTLANGUAGEVERSION_HTML 0x400
 #define SCRIPTLANGUAGEVERSION_ES5  0x102
+#define SCRIPTLANGUAGEVERSION_ES6  0x103
 
 struct ScriptHost {
     IActiveScriptSite              IActiveScriptSite_iface;
@@ -99,14 +99,14 @@ static BOOL set_script_prop(ScriptHost *script_host, DWORD property, VARIANT *va
     hres = IActiveScript_QueryInterface(script_host->script, &IID_IActiveScriptProperty,
             (void**)&script_prop);
     if(FAILED(hres)) {
-        WARN("Could not get IActiveScriptProperty iface: %08x\n", hres);
+        WARN("Could not get IActiveScriptProperty iface: %08lx\n", hres);
         return FALSE;
     }
 
     hres = IActiveScriptProperty_SetProperty(script_prop, property, NULL, val);
     IActiveScriptProperty_Release(script_prop);
     if(FAILED(hres)) {
-        WARN("SetProperty(%x) failed: %08x\n", property, hres);
+        WARN("SetProperty(%lx) failed: %08lx\n", property, hres);
         return FALSE;
     }
 
@@ -124,19 +124,19 @@ static BOOL init_script_engine(ScriptHost *script_host)
 
     hres = IActiveScript_QueryInterface(script_host->script, &IID_IActiveScriptParse, (void**)&script_host->parse);
     if(FAILED(hres)) {
-        WARN("Could not get IActiveScriptParse: %08x\n", hres);
+        WARN("Could not get IActiveScriptParse: %08lx\n", hres);
         return FALSE;
     }
 
     hres = IActiveScript_QueryInterface(script_host->script, &IID_IObjectSafety, (void**)&safety);
     if(FAILED(hres)) {
-        FIXME("Could not get IObjectSafety: %08x\n", hres);
+        FIXME("Could not get IObjectSafety: %08lx\n", hres);
         return FALSE;
     }
 
     hres = IObjectSafety_GetInterfaceSafetyOptions(safety, &IID_IActiveScriptParse, &supported_opts, &enabled_opts);
     if(FAILED(hres)) {
-        FIXME("GetInterfaceSafetyOptions failed: %08x\n", hres);
+        FIXME("GetInterfaceSafetyOptions failed: %08lx\n", hres);
     }else if(!(supported_opts & INTERFACE_USES_DISPEX)) {
         FIXME("INTERFACE_USES_DISPEX is not supported\n");
     }else {
@@ -144,7 +144,7 @@ static BOOL init_script_engine(ScriptHost *script_host)
                 INTERFACESAFE_FOR_UNTRUSTED_DATA|INTERFACE_USES_DISPEX|INTERFACE_USES_SECURITY_MANAGER,
                 INTERFACESAFE_FOR_UNTRUSTED_DATA|INTERFACE_USES_DISPEX|INTERFACE_USES_SECURITY_MANAGER);
         if(FAILED(hres))
-            FIXME("SetInterfaceSafetyOptions failed: %08x\n", hres);
+            FIXME("SetInterfaceSafetyOptions failed: %08lx\n", hres);
     }
 
     IObjectSafety_Release(safety);
@@ -154,7 +154,9 @@ static BOOL init_script_engine(ScriptHost *script_host)
     compat_mode = lock_document_mode(script_host->window->doc);
     script_mode = compat_mode < COMPAT_MODE_IE8 ? SCRIPTLANGUAGEVERSION_5_7 : SCRIPTLANGUAGEVERSION_5_8;
     if(IsEqualGUID(&script_host->guid, &CLSID_JScript)) {
-        if(compat_mode >= COMPAT_MODE_IE9)
+        if(compat_mode >= COMPAT_MODE_IE11)
+            script_mode = SCRIPTLANGUAGEVERSION_ES6;
+        else if(compat_mode >= COMPAT_MODE_IE9)
             script_mode = SCRIPTLANGUAGEVERSION_ES5;
         script_mode |= SCRIPTLANGUAGEVERSION_HTML;
     }
@@ -173,26 +175,26 @@ static BOOL init_script_engine(ScriptHost *script_host)
 
     hres = IActiveScriptParse_InitNew(script_host->parse);
     if(FAILED(hres)) {
-        WARN("InitNew failed: %08x\n", hres);
+        WARN("InitNew failed: %08lx\n", hres);
         return FALSE;
     }
 
     hres = IActiveScript_SetScriptSite(script_host->script, &script_host->IActiveScriptSite_iface);
     if(FAILED(hres)) {
-        WARN("SetScriptSite failed: %08x\n", hres);
+        WARN("SetScriptSite failed: %08lx\n", hres);
         IActiveScript_Close(script_host->script);
         return FALSE;
     }
 
     hres = IActiveScript_GetScriptState(script_host->script, &state);
     if(FAILED(hres))
-        WARN("GetScriptState failed: %08x\n", hres);
+        WARN("GetScriptState failed: %08lx\n", hres);
     else if(state != SCRIPTSTATE_INITIALIZED)
         FIXME("state = %x\n", state);
 
     hres = IActiveScript_SetScriptState(script_host->script, SCRIPTSTATE_STARTED);
     if(FAILED(hres)) {
-        WARN("Starting script failed: %08x\n", hres);
+        WARN("Starting script failed: %08lx\n", hres);
         return FALSE;
     }
 
@@ -203,14 +205,14 @@ static BOOL init_script_engine(ScriptHost *script_host)
         V_BOOL(&var) = VARIANT_TRUE;
         set_script_prop(script_host, SCRIPTPROP_ABBREVIATE_GLOBALNAME_RESOLUTION, &var);
     }else {
-       WARN("AddNamedItem failed: %08x\n", hres);
+       WARN("AddNamedItem failed: %08lx\n", hres);
     }
 
     hres = IActiveScript_QueryInterface(script_host->script, &IID_IActiveScriptParseProcedure2,
                                         (void**)&script_host->parse_proc);
     if(FAILED(hres)) {
         /* FIXME: QI for IActiveScriptParseProcedure */
-        WARN("Could not get IActiveScriptParseProcedure iface: %08x\n", hres);
+        WARN("Could not get IActiveScriptParseProcedure iface: %08lx\n", hres);
     }
 
     return TRUE;
@@ -306,7 +308,7 @@ static ULONG WINAPI ActiveScriptSite_AddRef(IActiveScriptSite *iface)
     ScriptHost *This = impl_from_IActiveScriptSite(iface);
     LONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
     return ref;
 }
@@ -316,7 +318,7 @@ static ULONG WINAPI ActiveScriptSite_Release(IActiveScriptSite *iface)
     ScriptHost *This = impl_from_IActiveScriptSite(iface);
     LONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p) ref=%d\n", This, ref);
+    TRACE("(%p) ref=%ld\n", This, ref);
 
     if(!ref) {
         release_script_engine(This);
@@ -343,10 +345,10 @@ static HRESULT WINAPI ActiveScriptSite_GetItemInfo(IActiveScriptSite *iface, LPC
 {
     ScriptHost *This = impl_from_IActiveScriptSite(iface);
 
-    TRACE("(%p)->(%s %x %p %p)\n", This, debugstr_w(pstrName), dwReturnMask, ppiunkItem, ppti);
+    TRACE("(%p)->(%s %lx %p %p)\n", This, debugstr_w(pstrName), dwReturnMask, ppiunkItem, ppti);
 
     if(dwReturnMask != SCRIPTINFO_IUNKNOWN) {
-        FIXME("Unsupported mask %x\n", dwReturnMask);
+        FIXME("Unsupported mask %lx\n", dwReturnMask);
         return E_NOTIMPL;
     }
 
@@ -590,7 +592,7 @@ static HRESULT WINAPI ActiveScriptSiteDebug_GetDocumentContextFromPosition(IActi
             CTXARG_T dwSourceContext, ULONG uCharacterOffset, ULONG uNumChars, IDebugDocumentContext **ppsc)
 {
     ScriptHost *This = impl_from_IActiveScriptSiteDebug(iface);
-    FIXME("(%p)->(%s %u %u %p)\n", This, wine_dbgstr_longlong(dwSourceContext), uCharacterOffset,
+    FIXME("(%p)->(%s %lu %lu %p)\n", This, wine_dbgstr_longlong(dwSourceContext), uCharacterOffset,
           uNumChars, ppsc);
     return E_NOTIMPL;
 }
@@ -711,7 +713,7 @@ static ScriptHost *create_script_host(HTMLInnerWindow *window, const GUID *guid)
     hres = CoCreateInstance(&ret->guid, NULL, CLSCTX_INPROC_SERVER|CLSCTX_INPROC_HANDLER,
             &IID_IActiveScript, (void**)&ret->script);
     if(FAILED(hres))
-        WARN("Could not load script engine: %08x\n", hres);
+        WARN("Could not load script engine: %08lx\n", hres);
     else if(!init_script_engine(ret))
         release_script_engine(ret);
 
@@ -723,12 +725,22 @@ static void dispatch_script_readystatechange_event(HTMLScriptElement *script)
     DOMEvent *event;
     HRESULT hres;
 
-    hres = create_document_event(script->element.node.doc, EVENTID_READYSTATECHANGE, &event);
-    if(FAILED(hres))
-        return;
+    if(script->readystate != READYSTATE_LOADED ||
+       dispex_compat_mode(&script->element.node.event_target.dispex) < COMPAT_MODE_IE10) {
+        hres = create_document_event(script->element.node.doc, EVENTID_READYSTATECHANGE, &event);
+        if(SUCCEEDED(hres)) {
+            dispatch_event(&script->element.node.event_target, event);
+            IDOMEvent_Release(&event->IDOMEvent_iface);
+        }
+    }
 
-    dispatch_event(&script->element.node.event_target, event);
-    IDOMEvent_Release(&event->IDOMEvent_iface);
+    if(script->readystate == READYSTATE_LOADED) {
+        hres = create_document_event(script->element.node.doc, EVENTID_LOAD, &event);
+        if(SUCCEEDED(hres)) {
+            dispatch_event(&script->element.node.event_target, event);
+            IDOMEvent_Release(&event->IDOMEvent_iface);
+        }
+    }
 }
 
 typedef struct {
@@ -757,6 +769,10 @@ static void fire_readystatechange_task_destr(task_t *_task)
 static void set_script_elem_readystate(HTMLScriptElement *script_elem, READYSTATE readystate)
 {
     script_elem->readystate = readystate;
+
+    if(readystate != READYSTATE_LOADED &&
+       dispex_compat_mode(&script_elem->element.node.event_target.dispex) >= COMPAT_MODE_IE11)
+        return;
 
     if(readystate != READYSTATE_INTERACTIVE) {
         if(!script_elem->element.node.doc->window->parser_callback_cnt) {
@@ -801,13 +817,15 @@ static void parse_elem_text(ScriptHost *script_host, HTMLScriptElement *script_e
     if(SUCCEEDED(hres))
         TRACE("<<<\n");
     else
-        WARN("<<< %08x\n", hres);
+        WARN("<<< %08lx\n", hres);
 }
 
 typedef struct {
     BSCallback bsc;
 
     HTMLScriptElement *script_elem;
+    nsILoadGroup *load_group;
+    nsIRequest *request;
     DWORD scheme;
 
     DWORD size;
@@ -931,6 +949,13 @@ static void ScriptBSC_destroy(BSCallback *bsc)
         This->script_elem = NULL;
     }
 
+    if(This->request) {
+        ERR("Unfinished request\n");
+        nsIRequest_Release(This->request);
+    }
+    if(This->load_group)
+        nsILoadGroup_Release(This->load_group);
+
     heap_free(This->buf);
     heap_free(This);
 }
@@ -943,8 +968,18 @@ static HRESULT ScriptBSC_init_bindinfo(BSCallback *bsc)
 static HRESULT ScriptBSC_start_binding(BSCallback *bsc)
 {
     ScriptBSC *This = impl_from_BSCallback(bsc);
+    nsresult nsres;
 
     This->script_elem->binding = &This->bsc;
+
+    if(This->load_group) {
+        nsres = create_onload_blocker_request(&This->request);
+        if(NS_SUCCEEDED(nsres)) {
+            nsres = nsILoadGroup_AddRequest(This->load_group, This->request, NULL);
+            if(NS_FAILED(nsres))
+                ERR("AddRequest failed: %08lx\n", nsres);
+        }
+    }
 
     /* FIXME: We should find a better to decide if 'loading' state is supposed to be used by the protocol. */
     if(This->scheme == URL_SCHEME_HTTPS || This->scheme == URL_SCHEME_HTTP)
@@ -956,6 +991,7 @@ static HRESULT ScriptBSC_start_binding(BSCallback *bsc)
 static HRESULT ScriptBSC_stop_binding(BSCallback *bsc, HRESULT result)
 {
     ScriptBSC *This = impl_from_BSCallback(bsc);
+    nsresult nsres;
 
     if(SUCCEEDED(result) && !This->script_elem)
         result = E_UNEXPECTED;
@@ -969,10 +1005,18 @@ static HRESULT ScriptBSC_stop_binding(BSCallback *bsc, HRESULT result)
     if(SUCCEEDED(result)) {
         script_file_available(This);
     }else {
-        FIXME("binding failed %08x\n", result);
+        FIXME("binding failed %08lx\n", result);
         heap_free(This->buf);
         This->buf = NULL;
         This->size = 0;
+    }
+
+    if(This->request) {
+        nsres = nsILoadGroup_RemoveRequest(This->load_group, This->request, NULL, NS_OK);
+        if(NS_FAILED(nsres))
+            ERR("RemoveRequest failed: %08lx\n", nsres);
+        nsIRequest_Release(This->request);
+        This->request = NULL;
     }
 
     IHTMLScriptElement_Release(&This->script_elem->IHTMLScriptElement_iface);
@@ -1085,6 +1129,20 @@ HRESULT load_script(HTMLScriptElement *script_elem, const WCHAR *src, BOOL async
     IHTMLScriptElement_AddRef(&script_elem->IHTMLScriptElement_iface);
     bsc->script_elem = script_elem;
 
+    if(window->bscallback && window->bscallback->nschannel &&
+       window->bscallback->nschannel->load_group) {
+        cpp_bool contains;
+        nsresult nsres;
+
+        nsres = nsIDOMNode_Contains(script_elem->element.node.doc->node.nsnode,
+                                    script_elem->element.node.nsnode, &contains);
+        if(NS_SUCCEEDED(nsres) && contains) {
+            TRACE("script %p will block load event\n", script_elem);
+            bsc->load_group = window->bscallback->nschannel->load_group;
+            nsILoadGroup_AddRef(bsc->load_group);
+        }
+    }
+
     hres = start_binding(window, &bsc->bsc, NULL);
 
     IBindStatusCallback_Release(&bsc->bsc.IBindStatusCallback_iface);
@@ -1104,7 +1162,7 @@ static void parse_inline_script(ScriptHost *script_host, HTMLScriptElement *scri
     set_script_elem_readystate(script_elem, READYSTATE_INTERACTIVE);
 
     if(NS_FAILED(nsres)) {
-        ERR("GetText failed: %08x\n", nsres);
+        ERR("GetText failed: %08lx\n", nsres);
     }else if(*text) {
         parse_elem_text(script_host, script_elem, text);
     }
@@ -1131,7 +1189,7 @@ static BOOL parse_script_elem(ScriptHost *script_host, HTMLScriptElement *script
             return FALSE;
         }
     }else {
-        ERR("GetEvent failed: %08x\n", nsres);
+        ERR("GetEvent failed: %08lx\n", nsres);
     }
     nsAString_Finish(&event_str);
 
@@ -1140,7 +1198,7 @@ static BOOL parse_script_elem(ScriptHost *script_host, HTMLScriptElement *script
     nsAString_GetData(&src_str, &src);
 
     if(NS_FAILED(nsres)) {
-        ERR("GetSrc failed: %08x\n", nsres);
+        ERR("GetSrc failed: %08lx\n", nsres);
     }else if(*src) {
         load_script(script_elem, src, FALSE);
         is_complete = script_elem->parsed;
@@ -1211,7 +1269,7 @@ static BOOL get_script_guid(HTMLInnerWindow *window, nsIDOMHTMLScriptElement *ns
             return ret;
         }
     }else {
-        ERR("GetType failed: %08x\n", nsres);
+        ERR("GetType failed: %08lx\n", nsres);
     }
 
     nsres = nsIDOMHTMLScriptElement_QueryInterface(nsscript, &IID_nsIDOMElement, (void**)&nselem);
@@ -1337,7 +1395,7 @@ IDispatch *script_parse_event(HTMLInnerWindow *window, LPCWSTR text)
             NULL, NULL, L"\"", 0 /* FIXME */, 0,
             SCRIPTPROC_HOSTMANAGESSOURCE|SCRIPTPROC_IMPLICIT_THIS|SCRIPTPROC_IMPLICIT_PARENTS, &disp);
     if(FAILED(hres)) {
-        WARN("ParseProcedureText failed: %08x\n", hres);
+        WARN("ParseProcedureText failed: %08lx\n", hres);
         return NULL;
     }
 
@@ -1374,7 +1432,7 @@ HRESULT exec_script(HTMLInnerWindow *window, const WCHAR *code, const WCHAR *lan
     if(SUCCEEDED(hres))
         TRACE("<<<\n");
     else
-        WARN("<<< %08x\n", hres);
+        WARN("<<< %08lx\n", hres);
 
     return hres;
 }
@@ -1405,7 +1463,7 @@ static EventTarget *find_event_target(HTMLDocumentNode *doc, HTMLScriptElement *
     nsAString_Init(&target_id_str, NULL);
     nsres = nsIDOMHTMLScriptElement_GetHtmlFor(script_elem->nsscript, &target_id_str);
     if(NS_FAILED(nsres)) {
-        ERR("GetScriptFor failed: %08x\n", nsres);
+        ERR("GetScriptFor failed: %08lx\n", nsres);
         nsAString_Finish(&target_id_str);
         return NULL;
     }
@@ -1508,7 +1566,7 @@ static IDispatch *parse_event_elem(HTMLDocumentNode *doc, HTMLScriptElement *scr
         if(FAILED(hres))
             disp = NULL;
     }else {
-        ERR("GetText failed: %08x\n", nsres);
+        ERR("GetText failed: %08lx\n", nsres);
         disp = NULL;
     }
     nsAString_Finish(&nsstr);
@@ -1545,7 +1603,7 @@ void bind_event_scripts(HTMLDocumentNode *doc)
     nsres = nsIDOMHTMLDocument_QuerySelectorAll(doc->nsdoc, &selector_str, &node_list);
     nsAString_Finish(&selector_str);
     if(NS_FAILED(nsres)) {
-        ERR("QuerySelectorAll failed: %08x\n", nsres);
+        ERR("QuerySelectorAll failed: %08lx\n", nsres);
         return;
     }
 
@@ -1558,7 +1616,7 @@ void bind_event_scripts(HTMLDocumentNode *doc)
     for(i=0; i < length; i++) {
         nsres = nsIDOMNodeList_Item(node_list, i, &script_node);
         if(NS_FAILED(nsres) || !script_node) {
-            ERR("Item(%d) failed: %08x\n", i, nsres);
+            ERR("Item(%d) failed: %08lx\n", i, nsres);
             continue;
         }
 
@@ -1658,13 +1716,14 @@ static BOOL use_gecko_script(IUri *uri)
         return FALSE;
 
     hres = IInternetSecurityManager_MapUrlToZone(get_security_manager(), display_uri, &zone, 0);
-    SysFreeString(display_uri);
     if(FAILED(hres)) {
-        WARN("Could not map %s to zone: %08x\n", debugstr_w(display_uri), hres);
+        WARN("Could not map %s to zone: %08lx\n", debugstr_w(display_uri), hres);
+        SysFreeString(display_uri);
         return TRUE;
     }
 
-    TRACE("zone %d\n", zone);
+    SysFreeString(display_uri);
+    TRACE("zone %ld\n", zone);
     return zone == URLZONE_UNTRUSTED;
 }
 
@@ -1693,7 +1752,7 @@ void update_browser_script_mode(GeckoBrowser *browser, IUri *uri)
     }
 
     if(NS_FAILED(nsres))
-        ERR("JavaScript setup failed: %08x\n", nsres);
+        ERR("JavaScript setup failed: %08lx\n", nsres);
 }
 
 void release_script_hosts(HTMLInnerWindow *window)

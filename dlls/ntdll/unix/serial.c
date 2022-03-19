@@ -25,32 +25,20 @@
 #endif
 
 #include "config.h"
-#include "wine/port.h"
 
 #include <errno.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdarg.h>
 #include <stdio.h>
-#ifdef HAVE_TERMIOS_H
 #include <termios.h>
-#endif
-#ifdef HAVE_UNISTD_H
-# include <unistd.h>
-#endif
+#include <unistd.h>
 #include <fcntl.h>
-#ifdef HAVE_SYS_STAT_H
-# include <sys/stat.h>
-#endif
+#include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/ioctl.h>
 #ifdef HAVE_SYS_FILIO_H
 # include <sys/filio.h>
-#endif
-#ifdef HAVE_SYS_IOCTL_H
-#include <sys/ioctl.h>
-#endif
-#ifdef HAVE_SYS_POLL_H
-# include <sys/poll.h>
 #endif
 #ifdef HAVE_SYS_MODEM_H
 # include <sys/modem.h>
@@ -841,7 +829,7 @@ typedef struct async_commio
 {
     HANDLE              hDevice;
     DWORD*              events;
-    IO_STATUS_BLOCK*    iosb;
+    client_ptr_t        iosb;
     HANDLE              hEvent;
     DWORD               evtmask;
     DWORD               cookie;
@@ -995,23 +983,15 @@ static void CALLBACK wait_for_event(LPVOID arg)
         }
         if (needs_close) close( fd );
     }
-    if (commio->iosb)
-    {
-        if (*commio->events)
-        {
-            commio->iosb->u.Status = STATUS_SUCCESS;
-            commio->iosb->Information = sizeof(DWORD);
-        }
-        else
-            commio->iosb->u.Status = STATUS_CANCELLED;
-    }
+    if (*commio->events) set_async_iosb( commio->iosb, STATUS_SUCCESS, sizeof(DWORD) );
+    else set_async_iosb( commio->iosb, STATUS_CANCELLED, 0 );
     stop_waiting(commio->hDevice);
     if (commio->hEvent) NtSetEvent(commio->hEvent, NULL);
     free( commio );
     NtTerminateThread( GetCurrentThread(), 0 );
 }
 
-static NTSTATUS wait_on(HANDLE hDevice, int fd, HANDLE hEvent, PIO_STATUS_BLOCK piosb, DWORD* events)
+static NTSTATUS wait_on(HANDLE hDevice, int fd, HANDLE hEvent, client_ptr_t iosb_ptr, DWORD* events)
 {
     async_commio*       commio;
     NTSTATUS            status;
@@ -1025,7 +1005,7 @@ static NTSTATUS wait_on(HANDLE hDevice, int fd, HANDLE hEvent, PIO_STATUS_BLOCK 
 
     commio->hDevice = hDevice;
     commio->events  = events;
-    commio->iosb    = piosb;
+    commio->iosb    = iosb_ptr;
     commio->hEvent  = hEvent;
     commio->pending_write = 0;
     status = get_wait_mask(commio->hDevice, &commio->evtmask, &commio->cookie, (commio->evtmask & EV_TXEMPTY) ? &commio->pending_write : NULL, TRUE);
@@ -1315,7 +1295,7 @@ static NTSTATUS io_control( HANDLE device, HANDLE event, PIO_APC_ROUTINE apc, vo
     case IOCTL_SERIAL_WAIT_ON_MASK:
         if (out_buffer && out_size == sizeof(DWORD))
         {
-            if (!(status = wait_on(device, fd, event, io, out_buffer)))
+            if (!(status = wait_on(device, fd, event, iosb_client_ptr(io), out_buffer)))
                 sz = sizeof(DWORD);
         }
         else

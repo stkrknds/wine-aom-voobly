@@ -35,6 +35,7 @@
 #include "wingdi.h"
 #include "winuser.h"
 #include "commctrl.h"
+#include "uxtheme.h"
 
 #include "wine/heap.h"
 #include "wine/debug.h"
@@ -133,7 +134,6 @@ static HICON STATIC_SetIcon( HWND hwnd, HICON hicon, DWORD style )
     SIZE size;
     struct static_extra_info *extra;
 
-    if ((style & SS_TYPEMASK) != SS_ICON) return 0;
     if (hicon && !get_icon_size( hicon, &size ))
     {
         WARN("hicon != 0, but invalid\n");
@@ -203,6 +203,17 @@ static HBITMAP create_alpha_bitmap( HBITMAP hbitmap )
             DeleteObject( alpha );
             alpha = 0;
         }
+        else
+        {
+            /* pre-multiply by alpha */
+            for (i = 0, ptr = bits; i < bm.bmWidth * bm.bmHeight; i++, ptr += 4)
+            {
+                unsigned int alpha = ptr[3];
+                ptr[0] = (ptr[0] * alpha + 127) / 255;
+                ptr[1] = (ptr[1] * alpha + 127) / 255;
+                ptr[2] = (ptr[2] * alpha + 127) / 255;
+            }
+        }
     }
 
     DeleteDC( hdc );
@@ -220,7 +231,6 @@ static HBITMAP STATIC_SetBitmap( HWND hwnd, HBITMAP hBitmap, DWORD style )
     HBITMAP hOldBitmap, alpha;
     struct static_extra_info *extra;
 
-    if ((style & SS_TYPEMASK) != SS_BITMAP) return 0;
     if (hBitmap && GetObjectType(hBitmap) != OBJ_BITMAP)
     {
         WARN("hBitmap != 0, but it's not a bitmap\n");
@@ -277,7 +287,6 @@ static HENHMETAFILE STATIC_SetEnhMetaFile( HWND hwnd, HENHMETAFILE hEnhMetaFile,
     HENHMETAFILE old_hemf;
     struct static_extra_info *extra;
 
-    if ((style & SS_TYPEMASK) != SS_ENHMETAFILE) return 0;
     if (hEnhMetaFile && GetObjectType(hEnhMetaFile) != OBJ_ENHMETAFILE)
     {
         WARN("hEnhMetaFile != 0, but it's not an enhanced metafile\n");
@@ -435,12 +444,20 @@ static LRESULT CALLBACK STATIC_WindowProc( HWND hwnd, UINT uMsg, WPARAM wParam, 
     switch (uMsg)
     {
     case WM_CREATE:
+    {
+        HWND parent;
+
         if (style < 0L || style > SS_TYPEMASK)
         {
-            ERR("Unknown style 0x%02x\n", style );
+            ERR("Unknown style %#lx\n", style );
             return -1;
         }
+
+        parent = GetParent( hwnd );
+        if (parent)
+            EnableThemeDialogTexture( parent, ETDT_ENABLE );
         break;
+    }
 
     case WM_NCDESTROY:
         if (style == SS_ICON)
@@ -503,6 +520,10 @@ static LRESULT CALLBACK STATIC_WindowProc( HWND hwnd, UINT uMsg, WPARAM wParam, 
     case WM_SYSCOLORCHANGE:
         COMCTL32_RefreshSysColors();
         STATIC_TryPaintFcn( hwnd, full_style );
+        break;
+
+    case WM_THEMECHANGED:
+        InvalidateRect( hwnd, 0, TRUE );
         break;
 
     case WM_NCCREATE:
@@ -590,23 +611,27 @@ static LRESULT CALLBACK STATIC_WindowProc( HWND hwnd, UINT uMsg, WPARAM wParam, 
         switch (wParam)
         {
         case IMAGE_BITMAP:
+            if (style != SS_BITMAP) return 0;
             lResult = (LRESULT)STATIC_SetBitmap( hwnd, (HBITMAP)lParam, full_style );
             break;
         case IMAGE_ENHMETAFILE:
+            if (style != SS_ENHMETAFILE) return 0;
             lResult = (LRESULT)STATIC_SetEnhMetaFile( hwnd, (HENHMETAFILE)lParam, full_style );
             break;
         case IMAGE_ICON:
         case IMAGE_CURSOR:
+            if (style != SS_ICON) return 0;
             lResult = (LRESULT)STATIC_SetIcon( hwnd, (HICON)lParam, full_style );
             break;
         default:
-            FIXME("STM_SETIMAGE: Unhandled type %lx\n", wParam);
+            FIXME("STM_SETIMAGE: Unhandled type %Ix\n", wParam);
             break;
         }
         STATIC_TryPaintFcn( hwnd, full_style );
         break;
 
     case STM_SETICON:
+        if (style != SS_ICON) return 0;
         lResult = (LRESULT)STATIC_SetIcon( hwnd, (HICON)wParam, full_style );
         STATIC_TryPaintFcn( hwnd, full_style );
         break;

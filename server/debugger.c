@@ -19,7 +19,6 @@
  */
 
 #include "config.h"
-#include "wine/port.h"
 
 #include <assert.h>
 #include <signal.h>
@@ -134,7 +133,7 @@ static const struct object_ops debug_obj_ops =
 /* get a pointer to TEB->ArbitraryUserPointer in the client address space */
 static client_ptr_t get_teb_user_ptr( struct thread *thread )
 {
-    unsigned int ptr_size = (CPU_FLAG( thread->process->cpu ) & CPU_64BIT_MASK) ? 8 : 4;
+    unsigned int ptr_size = is_machine_64bit( native_machine ) ? 8 : 4;
     return thread->teb + 5 * ptr_size;
 }
 
@@ -160,7 +159,7 @@ static void fill_create_process_event( struct debug_event *event, const void *ar
     const struct memory_view *view = arg;
     const pe_image_info_t *image_info = get_view_image_info( view, &event->data.create_process.base );
 
-    event->data.create_process.start      = image_info->entry_point;
+    event->data.create_process.start      = event->data.create_process.base + image_info->entry_point;
     event->data.create_process.dbg_offset = image_info->dbg_offset;
     event->data.create_process.dbg_size   = image_info->dbg_size;
     /* the doc says write access too, but this doesn't seem a good idea */

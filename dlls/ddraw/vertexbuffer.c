@@ -159,10 +159,14 @@ static HRESULT WINAPI d3d_vertex_buffer7_Lock(IDirect3DVertexBuffer7 *iface,
     if (buffer->version != 7)
         flags &= ~(DDLOCK_NOOVERWRITE | DDLOCK_DISCARDCONTENTS);
 
+    if (buffer->discarded)
+        flags &= ~DDLOCK_DISCARDCONTENTS;
+
     if (!(flags & DDLOCK_WAIT))
         flags |= DDLOCK_DONOTWAIT;
     if (flags & DDLOCK_DISCARDCONTENTS)
     {
+        buffer->discarded = true;
         if (!buffer->dynamic)
         {
             struct wined3d_buffer *new_buffer;
@@ -214,11 +218,7 @@ static HRESULT WINAPI d3d_vertex_buffer7_Unlock(IDirect3DVertexBuffer7 *iface)
     struct d3d_vertex_buffer *buffer = impl_from_IDirect3DVertexBuffer7(iface);
 
     TRACE("iface %p.\n", iface);
-
-    wined3d_mutex_lock();
     wined3d_resource_unmap(wined3d_buffer_get_resource(buffer->wined3d_buffer), 0);
-    wined3d_mutex_unlock();
-
     return D3D_OK;
 }
 

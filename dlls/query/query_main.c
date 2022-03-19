@@ -46,17 +46,6 @@ HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID iid, LPVOID *ppv)
     return CLASS_E_CLASSNOTAVAILABLE;
 }
 
-HRESULT WINAPI DllCanUnloadNow(void)
-{
-    return S_FALSE;
-}
-
-HRESULT WINAPI DllRegisterServer(void)
-{
-    FIXME("\n");
-    return S_OK;
-}
-
 HRESULT WINAPI CIState( WCHAR const *pwcsCat, WCHAR const *pwcsMachine, CI_STATE *pCiState)
 {
     FIXME("%s %s %p\n", debugstr_w(pwcsCat), debugstr_w(pwcsMachine), pCiState);
@@ -68,7 +57,7 @@ HRESULT WINAPI LocateCatalogsA(CHAR const *pwszScope, ULONG iBm,
                                CHAR *pwszCat, ULONG *pcCat)
 {
 
-    FIXME("%s %u %p %p %p %p\n", debugstr_a(pwszScope),
+    FIXME("%s %lu %p %p %p %p\n", debugstr_a(pwszScope),
           iBm, pwszMachine, pcMachine, pwszCat, pcCat);
     return CI_E_NOT_RUNNING;
 }
@@ -78,7 +67,7 @@ HRESULT WINAPI LocateCatalogsW(WCHAR const *pwszScope, ULONG iBm,
                                WCHAR *pwszCat, ULONG *pcCat)
 {
 
-    FIXME("%s %u %p %p %p %p\n", debugstr_w(pwszScope),
+    FIXME("%s %lu %p %p %p %p\n", debugstr_w(pwszScope),
           iBm, pwszMachine, pcMachine, pwszCat, pcCat);
     return CI_E_NOT_RUNNING;
 }

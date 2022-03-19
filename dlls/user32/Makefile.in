@@ -1,11 +1,9 @@
-EXTRADEFS = -D_USER32_ -D_WINABLE_
+EXTRADEFS = -DWINE_NO_LONG_TYPES -D_USER32_ -D_WINABLE_
 MODULE    = user32.dll
 IMPORTLIB = user32
-IMPORTS   = setupapi gdi32 version sechost advapi32 kernelbase
-EXTRAINCL = $(PNG_CFLAGS)
-DELAYIMPORTS = hid imm32
-
-EXTRADLLFLAGS = -mno-cygwin
+IMPORTS   = $(PNG_PE_LIBS) gdi32 version sechost advapi32 kernelbase win32u
+EXTRAINCL = $(PNG_PE_CFLAGS)
+DELAYIMPORTS = hid setupapi imm32
 
 C_SRCS = \
 	button.c \
@@ -37,7 +35,6 @@ C_SRCS = \
 	msgbox.c \
 	nonclient.c \
 	painting.c \
-	png.c \
 	property.c \
 	rawinput.c \
 	resource.c \

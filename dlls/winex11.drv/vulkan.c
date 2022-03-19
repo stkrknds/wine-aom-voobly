@@ -21,10 +21,10 @@
  * the other drivers. */
 
 #include "config.h"
-#include "wine/port.h"
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <dlfcn.h>
 
 #include "windef.h"
 #include "winbase.h"
@@ -57,11 +57,16 @@ static XContext vulkan_hwnd_context;
 
 #define VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR 1000004000
 
+static struct list surface_list = LIST_INIT( surface_list );
+
 struct wine_vk_surface
 {
     LONG ref;
+    struct list entry;
     Window window;
     VkSurfaceKHR surface; /* native surface */
+    HWND hwnd;
+    DWORD hwnd_thread_id;
 };
 
 typedef struct VkXlibSurfaceCreateInfoKHR
@@ -206,6 +211,13 @@ static void wine_vk_surface_release(struct wine_vk_surface *surface)
     if (InterlockedDecrement(&surface->ref))
         return;
 
+    if (surface->entry.next)
+    {
+        EnterCriticalSection(&context_section);
+        list_remove(&surface->entry);
+        LeaveCriticalSection(&context_section);
+    }
+
     if (surface->window)
         XDestroyWindow(gdi_display, surface->window);
 
@@ -218,9 +230,30 @@ void wine_vk_surface_destroy(HWND hwnd)
     EnterCriticalSection(&context_section);
     if (!XFindContext(gdi_display, (XID)hwnd, vulkan_hwnd_context, (char **)&surface))
     {
+        surface->hwnd_thread_id = 0;
+        surface->hwnd = NULL;
         wine_vk_surface_release(surface);
     }
     XDeleteContext(gdi_display, (XID)hwnd, vulkan_hwnd_context);
+    LeaveCriticalSection(&context_section);
+}
+
+void vulkan_thread_detach(void)
+{
+    struct wine_vk_surface *surface, *next;
+    DWORD thread_id = GetCurrentThreadId();
+
+    EnterCriticalSection(&context_section);
+    LIST_FOR_EACH_ENTRY_SAFE(surface, next, &surface_list, struct wine_vk_surface, entry)
+    {
+        if (surface->hwnd_thread_id != thread_id)
+            continue;
+
+        TRACE("Detaching surface %p, hwnd %p.\n", surface, surface->hwnd);
+        XReparentWindow(gdi_display, surface->window, get_dummy_parent(), 0, 0);
+        XSync(gdi_display, False);
+        wine_vk_surface_destroy(surface->hwnd);
+    }
     LeaveCriticalSection(&context_section);
 }
 
@@ -255,14 +288,18 @@ static VkResult X11DRV_vkCreateSwapchainKHR(VkDevice device,
         const VkSwapchainCreateInfoKHR *create_info,
         const VkAllocationCallbacks *allocator, VkSwapchainKHR *swapchain)
 {
+    struct wine_vk_surface *x11_surface = surface_from_handle(create_info->surface);
     VkSwapchainCreateInfoKHR create_info_host;
     TRACE("%p %p %p %p\n", device, create_info, allocator, swapchain);
 
     if (allocator)
         FIXME("Support for allocation callbacks not implemented yet\n");
 
+    if (!x11_surface->hwnd)
+        return VK_ERROR_SURFACE_LOST_KHR;
+
     create_info_host = *create_info;
-    create_info_host.surface = surface_from_handle(create_info->surface)->surface;
+    create_info_host.surface = x11_surface->surface;
 
     return pvkCreateSwapchainKHR(device, &create_info_host, NULL /* allocator */, swapchain);
 }
@@ -273,7 +310,7 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
 {
     VkResult res;
     VkXlibSurfaceCreateInfoKHR create_info_host;
-    struct wine_vk_surface *x11_surface, *prev;
+    struct wine_vk_surface *x11_surface;
 
     TRACE("%p %p %p %p\n", instance, create_info, allocator, surface);
 
@@ -281,7 +318,7 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
         FIXME("Support for allocation callbacks not implemented yet\n");
 
     /* TODO: support child window rendering. */
-    if (GetAncestor(create_info->hwnd, GA_PARENT) != GetDesktopWindow())
+    if (create_info->hwnd && GetAncestor(create_info->hwnd, GA_PARENT) != GetDesktopWindow())
     {
         FIXME("Application requires child window rendering, which is not implemented yet!\n");
         return VK_ERROR_INCOMPATIBLE_DRIVER;
@@ -292,8 +329,17 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
         return VK_ERROR_OUT_OF_HOST_MEMORY;
 
     x11_surface->ref = 1;
+    x11_surface->hwnd = create_info->hwnd;
+    if (x11_surface->hwnd)
+    {
+        x11_surface->window = create_client_window(create_info->hwnd, &default_visual);
+        x11_surface->hwnd_thread_id = GetWindowThreadProcessId(x11_surface->hwnd, NULL);
+    }
+    else
+    {
+        x11_surface->window = create_dummy_client_window();
+    }
 
-    x11_surface->window = create_client_window(create_info->hwnd, &default_visual);
     if (!x11_surface->window)
     {
         ERR("Failed to allocate client window for hwnd=%p\n", create_info->hwnd);
@@ -317,11 +363,12 @@ static VkResult X11DRV_vkCreateWin32SurfaceKHR(VkInstance instance,
     }
 
     EnterCriticalSection(&context_section);
-    if (!XFindContext(gdi_display, (XID)create_info->hwnd, vulkan_hwnd_context, (char **)&prev))
+    if (x11_surface->hwnd)
     {
-        wine_vk_surface_release(prev);
+        wine_vk_surface_destroy( x11_surface->hwnd );
+        XSaveContext(gdi_display, (XID)create_info->hwnd, vulkan_hwnd_context, (char *)wine_vk_surface_grab(x11_surface));
     }
-    XSaveContext(gdi_display, (XID)create_info->hwnd, vulkan_hwnd_context, (char *)wine_vk_surface_grab(x11_surface));
+    list_add_tail(&surface_list, &x11_surface->entry);
     LeaveCriticalSection(&context_section);
 
     *surface = (uintptr_t)x11_surface;
@@ -425,11 +472,24 @@ static VkResult X11DRV_vkGetDeviceGroupSurfacePresentModesKHR(VkDevice device,
     return pvkGetDeviceGroupSurfacePresentModesKHR(device, x11_surface->surface, flags);
 }
 
+static const char *wine_vk_native_fn_name(const char *name)
+{
+    if (!strcmp(name, "vkCreateWin32SurfaceKHR"))
+        return "vkCreateXlibSurfaceKHR";
+    if (!strcmp(name, "vkGetPhysicalDeviceWin32PresentationSupportKHR"))
+        return "vkGetPhysicalDeviceXlibPresentationSupportKHR";
+
+    return name;
+}
+
 static void *X11DRV_vkGetDeviceProcAddr(VkDevice device, const char *name)
 {
     void *proc_addr;
 
     TRACE("%p, %s\n", device, debugstr_a(name));
+
+    if (!pvkGetDeviceProcAddr(device, wine_vk_native_fn_name(name)))
+        return NULL;
 
     if ((proc_addr = X11DRV_get_vk_device_proc_addr(name)))
         return proc_addr;
@@ -443,6 +503,9 @@ static void *X11DRV_vkGetInstanceProcAddr(VkInstance instance, const char *name)
 
     TRACE("%p, %s\n", instance, debugstr_a(name));
 
+    if (!pvkGetInstanceProcAddr(instance, wine_vk_native_fn_name(name)))
+        return NULL;
+
     if ((proc_addr = X11DRV_get_vk_instance_proc_addr(instance, name)))
         return proc_addr;
 
@@ -455,6 +518,15 @@ static VkResult X11DRV_vkGetPhysicalDevicePresentRectanglesKHR(VkPhysicalDevice 
     struct wine_vk_surface *x11_surface = surface_from_handle(surface);
 
     TRACE("%p, 0x%s, %p, %p\n", phys_dev, wine_dbgstr_longlong(surface), count, rects);
+
+    if (!x11_surface->hwnd)
+    {
+        if (rects)
+            return VK_ERROR_SURFACE_LOST_KHR;
+
+        *count = 1;
+        return VK_SUCCESS;
+    }
 
     return pvkGetPhysicalDevicePresentRectanglesKHR(phys_dev, x11_surface->surface, count, rects);
 }
@@ -484,6 +556,9 @@ static VkResult X11DRV_vkGetPhysicalDeviceSurfaceCapabilitiesKHR(VkPhysicalDevic
     struct wine_vk_surface *x11_surface = surface_from_handle(surface);
 
     TRACE("%p, 0x%s, %p\n", phys_dev, wine_dbgstr_longlong(surface), capabilities);
+
+    if (!x11_surface->hwnd)
+        return VK_ERROR_SURFACE_LOST_KHR;
 
     return pvkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys_dev, x11_surface->surface, capabilities);
 }
@@ -672,6 +747,10 @@ const struct vulkan_funcs *get_vulkan_driver(UINT version)
 }
 
 void wine_vk_surface_destroy(HWND hwnd)
+{
+}
+
+void vulkan_thread_detach(void)
 {
 }
 

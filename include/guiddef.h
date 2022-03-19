@@ -30,7 +30,7 @@ typedef struct
 #else
 typedef struct _GUID
 {
-#ifdef WINE_USE_LONG
+#ifndef __LP64__
     unsigned long  Data1;
 #else
     unsigned int   Data1;
@@ -85,6 +85,14 @@ extern "C++" {
 #endif
 
 #undef DEFINE_GUID
+
+#ifndef DECLSPEC_HIDDEN
+# if defined(__GNUC__) && !defined(__MINGW32__) && !defined(__CYGWIN__)
+#  define DECLSPEC_HIDDEN __attribute__((visibility ("hidden")))
+# else
+#  define DECLSPEC_HIDDEN
+# endif
+#endif
 
 #ifdef INITGUID
 #ifdef __cplusplus

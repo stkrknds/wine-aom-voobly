@@ -392,17 +392,17 @@ static HRESULT create_new_shellview(ExplorerBrowserImpl *This, IShellItem *psi)
             }
             else
             {
-                ERR("CreateViewWindow failed (0x%x)\n", hr);
+                ERR("CreateViewWindow failed (0x%lx)\n", hr);
                 IShellView_Release(psv);
             }
         }
         else
-            ERR("CreateViewObject failed (0x%x)\n", hr);
+            ERR("CreateViewObject failed (0x%lx)\n", hr);
 
         IShellFolder_Release(psf);
     }
     else
-        ERR("SI::BindToHandler failed (0x%x)\n", hr);
+        ERR("SI::BindToHandler failed (0x%lx)\n", hr);
 
     return hr;
 }
@@ -595,7 +595,7 @@ static LRESULT navpane_on_wm_create(HWND hwnd, CREATESTRUCTW *crs)
 
             hr = INameSpaceTreeControl2_SetControlStyle2(pnstc2, 0xFF, style2);
             if(FAILED(hr))
-                ERR("SetControlStyle2 failed (0x%08x)\n", hr);
+                ERR("SetControlStyle2 failed (0x%08lx)\n", hr);
 
             hr = INameSpaceTreeControl2_QueryInterface(pnstc2, &IID_IOleWindow, (void**)&pow);
             if(SUCCEEDED(hr))
@@ -604,12 +604,12 @@ static LRESULT navpane_on_wm_create(HWND hwnd, CREATESTRUCTW *crs)
                 IOleWindow_Release(pow);
             }
             else
-                ERR("QueryInterface(IOleWindow) failed (0x%08x)\n", hr);
+                ERR("QueryInterface(IOleWindow) failed (0x%08lx)\n", hr);
 
             pnstce = &This->INameSpaceTreeControlEvents_iface;
             hr = INameSpaceTreeControl2_TreeAdvise(pnstc2, (IUnknown*)pnstce, &cookie);
             if(FAILED(hr))
-                ERR("TreeAdvise failed. (0x%08x).\n", hr);
+                ERR("TreeAdvise failed. (0x%08lx).\n", hr);
 
             /*
              * Add the default roots
@@ -650,7 +650,7 @@ static LRESULT navpane_on_wm_create(HWND hwnd, CREATESTRUCTW *crs)
     }
 
     This->navpane.pnstc2 = NULL;
-    ERR("Failed (0x%08x)\n", hr);
+    ERR("Failed (0x%08lx)\n", hr);
 
     return FALSE;
 }
@@ -704,9 +704,8 @@ static void initialize_navpane(ExplorerBrowserImpl *This, HWND hwnd_parent, RECT
     WNDCLASSW wc;
     HWND splitter;
     int splitter_width = MulDiv(SPLITTER_WIDTH, This->dpix, USER_DEFAULT_SCREEN_DPI);
-    static const WCHAR navpane_classname[] = {'e','b','_','n','a','v','p','a','n','e',0};
 
-    if( !GetClassInfoW(shell32_hInstance, navpane_classname, &wc) )
+    if( !GetClassInfoW(shell32_hInstance, L"eb_navpane", &wc) )
     {
         wc.style            = CS_HREDRAW | CS_VREDRAW;
         wc.lpfnWndProc      = navpane_wndproc;
@@ -717,18 +716,18 @@ static void initialize_navpane(ExplorerBrowserImpl *This, HWND hwnd_parent, RECT
         wc.hCursor          = LoadCursorW(0, (LPWSTR)IDC_SIZEWE);
         wc.hbrBackground    = (HBRUSH)(COLOR_3DFACE + 1);
         wc.lpszMenuName     = NULL;
-        wc.lpszClassName    = navpane_classname;
+        wc.lpszClassName    = L"eb_navpane";
 
         if (!RegisterClassW(&wc)) return;
     }
 
-    splitter = CreateWindowExW(0, navpane_classname, NULL,
+    splitter = CreateWindowExW(0, L"eb_navpane", NULL,
                                WS_CHILD | WS_TABSTOP | WS_VISIBLE,
                                rc->right - splitter_width, rc->top,
                                splitter_width, rc->bottom - rc->top,
                                hwnd_parent, 0, shell32_hInstance, This);
     if(!splitter)
-        ERR("Failed to create navpane : %d.\n", GetLastError());
+        ERR("Failed to create navpane : %ld.\n", GetLastError());
 }
 
 /**************************************************************************
@@ -827,7 +826,7 @@ static ULONG WINAPI IExplorerBrowser_fnAddRef(IExplorerBrowser *iface)
 {
     ExplorerBrowserImpl *This = impl_from_IExplorerBrowser(iface);
     LONG ref = InterlockedIncrement(&This->ref);
-    TRACE("%p - ref %d\n", This, ref);
+    TRACE("%p - ref %ld\n", This, ref);
 
     return ref;
 }
@@ -836,7 +835,7 @@ static ULONG WINAPI IExplorerBrowser_fnRelease(IExplorerBrowser *iface)
 {
     ExplorerBrowserImpl *This = impl_from_IExplorerBrowser(iface);
     LONG ref = InterlockedDecrement(&This->ref);
-    TRACE("%p - ref %d\n", This, ref);
+    TRACE("%p - ref %ld\n", This, ref);
 
     if(!ref)
     {
@@ -861,8 +860,6 @@ static HRESULT WINAPI IExplorerBrowser_fnInitialize(IExplorerBrowser *iface,
     WNDCLASSW wc;
     LONG style;
     HDC parent_dc;
-    static const WCHAR EB_CLASS_NAME[] =
-        {'E','x','p','l','o','r','e','r','B','r','o','w','s','e','r','C','o','n','t','r','o','l',0};
 
     TRACE("%p (%p, %p, %p)\n", This, hwndParent, prc, pfs);
 
@@ -872,7 +869,7 @@ static HRESULT WINAPI IExplorerBrowser_fnInitialize(IExplorerBrowser *iface,
     if(!hwndParent)
         return E_INVALIDARG;
 
-    if( !GetClassInfoW(shell32_hInstance, EB_CLASS_NAME, &wc) )
+    if( !GetClassInfoW(shell32_hInstance, L"ExplorerBrowserControl", &wc) )
     {
         wc.style            = CS_HREDRAW | CS_VREDRAW;
         wc.lpfnWndProc      = main_wndproc;
@@ -883,7 +880,7 @@ static HRESULT WINAPI IExplorerBrowser_fnInitialize(IExplorerBrowser *iface,
         wc.hCursor          = LoadCursorW(0, (LPWSTR)IDC_ARROW);
         wc.hbrBackground    = (HBRUSH)(COLOR_WINDOW + 1);
         wc.lpszMenuName     = NULL;
-        wc.lpszClassName    = EB_CLASS_NAME;
+        wc.lpszClassName    = L"ExplorerBrowserControl";
 
         if (!RegisterClassW(&wc)) return E_FAIL;
     }
@@ -897,7 +894,7 @@ static HRESULT WINAPI IExplorerBrowser_fnInitialize(IExplorerBrowser *iface,
     style = WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS;
     if (!(This->eb_options & EBO_NOBORDER))
         style |= WS_BORDER;
-    This->hwnd_main = CreateWindowExW(WS_EX_CONTROLPARENT, EB_CLASS_NAME, NULL, style,
+    This->hwnd_main = CreateWindowExW(WS_EX_CONTROLPARENT, L"ExplorerBrowserControl", NULL, style,
                                       prc->left, prc->top,
                                       prc->right - prc->left, prc->bottom - prc->top,
                                       hwndParent, 0, shell32_hInstance, This);
@@ -1029,7 +1026,7 @@ static HRESULT WINAPI IExplorerBrowser_fnUnadvise(IExplorerBrowser *iface,
 {
     ExplorerBrowserImpl *This = impl_from_IExplorerBrowser(iface);
     event_client *client;
-    TRACE("%p (0x%x)\n", This, dwCookie);
+    TRACE("%p (0x%lx)\n", This, dwCookie);
 
     LIST_FOR_EACH_ENTRY(client, &This->event_clients, event_client, entry)
     {
@@ -1423,7 +1420,7 @@ static HRESULT WINAPI IShellBrowser_fnGetViewStateStream(IShellBrowser *iface,
                                                          IStream **ppStrm)
 {
     ExplorerBrowserImpl *This = impl_from_IShellBrowser(iface);
-    FIXME("stub, %p (0x%x, %p)\n", This, grfMode, ppStrm);
+    FIXME("stub, %p (0x%lx, %p)\n", This, grfMode, ppStrm);
 
     *ppStrm = NULL;
     return E_FAIL;
@@ -1444,7 +1441,7 @@ static HRESULT WINAPI IShellBrowser_fnSendControlMsg(IShellBrowser *iface,
                                                      LRESULT *pret)
 {
     ExplorerBrowserImpl *This = impl_from_IShellBrowser(iface);
-    FIXME("stub, %p (%d, %d, %lx, %lx, %p)\n", This, id, uMsg, wParam, lParam, pret);
+    FIXME("stub, %p (%d, %d, %Ix, %Ix, %p)\n", This, id, uMsg, wParam, lParam, pret);
 
     return E_NOTIMPL;
 }
@@ -1590,7 +1587,7 @@ static HRESULT WINAPI ICommDlgBrowser3_fnOnStateChange(ICommDlgBrowser3 *iface,
                                                        IShellView *shv, ULONG uChange)
 {
     ExplorerBrowserImpl *This = impl_from_ICommDlgBrowser3(iface);
-    TRACE("%p (%p, %d)\n", This, shv, uChange);
+    TRACE("%p (%p, %ld)\n", This, shv, uChange);
 
     if(This->pcdb_site)
         return ICommDlgBrowser_OnStateChange(This->pcdb_site, shv, uChange);
@@ -1614,7 +1611,7 @@ static HRESULT WINAPI ICommDlgBrowser3_fnNotify(ICommDlgBrowser3 *iface,
                                                 DWORD dwNotifyType)
 {
     ExplorerBrowserImpl *This = impl_from_ICommDlgBrowser3(iface);
-    TRACE("%p (%p, 0x%x)\n", This, pshv, dwNotifyType);
+    TRACE("%p (%p, 0x%lx)\n", This, pshv, dwNotifyType);
 
     if(This->pcdb2_site)
         return ICommDlgBrowser2_Notify(This->pcdb2_site, pshv, dwNotifyType);
@@ -1819,7 +1816,7 @@ static HRESULT WINAPI NSTCEvents_fnOnItemClick(INameSpaceTreeControlEvents *ifac
                                                NSTCECLICKTYPE nstceClickType)
 {
     ExplorerBrowserImpl *This = impl_from_INameSpaceTreeControlEvents(iface);
-    TRACE("%p (%p, 0x%x, 0x%x)\n", This, psi, nstceHitTest, nstceClickType);
+    TRACE("%p (%p, 0x%lx, 0x%lx)\n", This, psi, nstceHitTest, nstceClickType);
     return S_OK;
 }
 
@@ -1837,7 +1834,7 @@ static HRESULT WINAPI NSTCEvents_fnOnItemStateChanging(INameSpaceTreeControlEven
                                                        NSTCITEMSTATE nstcisState)
 {
     ExplorerBrowserImpl *This = impl_from_INameSpaceTreeControlEvents(iface);
-    TRACE("%p (%p, 0x%x, 0x%x)\n", This, psi, nstcisMask, nstcisState);
+    TRACE("%p (%p, 0x%lx, 0x%lx)\n", This, psi, nstcisMask, nstcisState);
     return E_NOTIMPL;
 }
 
@@ -1847,7 +1844,7 @@ static HRESULT WINAPI NSTCEvents_fnOnItemStateChanged(INameSpaceTreeControlEvent
                                                       NSTCITEMSTATE nstcisState)
 {
     ExplorerBrowserImpl *This = impl_from_INameSpaceTreeControlEvents(iface);
-    TRACE("%p (%p, 0x%x, 0x%x)\n", This, psi, nstcisMask, nstcisState);
+    TRACE("%p (%p, 0x%lx, 0x%lx)\n", This, psi, nstcisMask, nstcisState);
     return E_NOTIMPL;
 }
 
@@ -1874,7 +1871,7 @@ static HRESULT WINAPI NSTCEvents_fnOnKeyboardInput(INameSpaceTreeControlEvents *
                                                    UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     ExplorerBrowserImpl *This = impl_from_INameSpaceTreeControlEvents(iface);
-    TRACE("%p (%d, 0x%lx, 0x%lx)\n", This, uMsg, wParam, lParam);
+    TRACE("%p (%d, 0x%Ix, 0x%Ix)\n", This, uMsg, wParam, lParam);
     return S_OK;
 }
 

@@ -23,7 +23,7 @@
 #include "wine/debug.h"
 #include "wine/list.h"
 
-WINE_DEFAULT_DEBUG_CHANNEL(amstream);
+WINE_DEFAULT_DEBUG_CHANNEL(quartz);
 
 struct enum_pins
 {
@@ -61,7 +61,7 @@ static ULONG WINAPI enum_pins_AddRef(IEnumPins *iface)
 {
     struct enum_pins *enum_pins = impl_from_IEnumPins(iface);
     ULONG refcount = InterlockedIncrement(&enum_pins->refcount);
-    TRACE("%p increasing refcount to %u.\n", enum_pins, refcount);
+    TRACE("%p increasing refcount to %lu.\n", enum_pins, refcount);
     return refcount;
 }
 
@@ -71,7 +71,7 @@ static ULONG WINAPI enum_pins_Release(IEnumPins *iface)
     ULONG refcount = InterlockedDecrement(&enum_pins->refcount);
     unsigned int i;
 
-    TRACE("%p decreasing refcount to %u.\n", enum_pins, refcount);
+    TRACE("%p decreasing refcount to %lu.\n", enum_pins, refcount);
     if (!refcount)
     {
         for (i = 0; i < enum_pins->count; ++i)
@@ -87,7 +87,7 @@ static HRESULT WINAPI enum_pins_Next(IEnumPins *iface, ULONG count, IPin **pins,
     struct enum_pins *enum_pins = impl_from_IEnumPins(iface);
     unsigned int i;
 
-    TRACE("iface %p, count %u, pins %p, ret_count %p.\n", iface, count, pins, ret_count);
+    TRACE("iface %p, count %lu, pins %p, ret_count %p.\n", iface, count, pins, ret_count);
 
     if (!pins || (count > 1 && !ret_count))
         return E_POINTER;
@@ -106,7 +106,7 @@ static HRESULT WINAPI enum_pins_Skip(IEnumPins *iface, ULONG count)
 {
     struct enum_pins *enum_pins = impl_from_IEnumPins(iface);
 
-    TRACE("iface %p, count %u.\n", iface, count);
+    TRACE("iface %p, count %lu.\n", iface, count);
 
     enum_pins->index += count;
 
@@ -178,6 +178,7 @@ struct filter
     REFERENCE_TIME start_time;
     struct list free_events;
     struct list used_events;
+    LONG eos_count;
 };
 
 struct event
@@ -221,7 +222,7 @@ static ULONG WINAPI filter_AddRef(IMediaStreamFilter *iface)
     struct filter *filter = impl_from_IMediaStreamFilter(iface);
     ULONG refcount = InterlockedIncrement(&filter->refcount);
 
-    TRACE("%p increasing refcount to %u.\n", iface, refcount);
+    TRACE("%p increasing refcount to %lu.\n", iface, refcount);
 
     return refcount;
 }
@@ -232,7 +233,7 @@ static ULONG WINAPI filter_Release(IMediaStreamFilter *iface)
     ULONG refcount = InterlockedDecrement(&filter->refcount);
     unsigned int i;
 
-    TRACE("%p decreasing refcount to %u.\n", iface, refcount);
+    TRACE("%p decreasing refcount to %lu.\n", iface, refcount);
 
     if (!refcount)
     {
@@ -266,6 +267,22 @@ static HRESULT WINAPI filter_GetClassID(IMediaStreamFilter *iface, CLSID *clsid)
     return S_OK;
 }
 
+static void send_ec_complete(struct filter *filter)
+{
+    IMediaEventSink *event_sink;
+
+    if (!filter->graph)
+        return;
+
+    if (FAILED(IFilterGraph_QueryInterface(filter->graph, &IID_IMediaEventSink, (void **)&event_sink)))
+        return;
+
+    IMediaEventSink_Notify(event_sink, EC_COMPLETE, S_OK,
+            (LONG_PTR)&filter->IMediaStreamFilter_iface);
+
+    IMediaEventSink_Release(event_sink);
+}
+
 static void set_state(struct filter *filter, FILTER_STATE state)
 {
     if (filter->state != state)
@@ -286,6 +303,9 @@ static HRESULT WINAPI filter_Stop(IMediaStreamFilter *iface)
     TRACE("iface %p.\n", iface);
 
     EnterCriticalSection(&filter->cs);
+
+    if (filter->state != State_Stopped)
+        filter->eos_count = 0;
 
     set_state(filter, State_Stopped);
 
@@ -327,6 +347,10 @@ static HRESULT WINAPI filter_Run(IMediaStreamFilter *iface, REFERENCE_TIME start
 
     EnterCriticalSection(&filter->cs);
 
+    if (filter->state != State_Running && filter->seekable_stream
+            && filter->eos_count == (LONG)filter->nb_streams)
+        send_ec_complete(filter);
+
     filter->start_time = start;
     set_state(filter, State_Running);
 
@@ -339,7 +363,7 @@ static HRESULT WINAPI filter_GetState(IMediaStreamFilter *iface, DWORD timeout, 
 {
     struct filter *filter = impl_from_IMediaStreamFilter(iface);
 
-    TRACE("iface %p, timeout %u, state %p.\n", iface, timeout, state);
+    TRACE("iface %p, timeout %lu, state %p.\n", iface, timeout, state);
 
     if (!state)
         return E_POINTER;
@@ -493,7 +517,7 @@ static HRESULT WINAPI filter_JoinFilterGraph(IMediaStreamFilter *iface,
     EnterCriticalSection(&filter->cs);
 
     if (name)
-        wcsncpy(filter->name, name, ARRAY_SIZE(filter->name));
+        lstrcpynW(filter->name, name, ARRAY_SIZE(filter->name));
     else
         filter->name[0] = 0;
     filter->graph = graph;
@@ -569,7 +593,7 @@ static HRESULT WINAPI filter_EnumMediaStreams(IMediaStreamFilter *iface, LONG in
 {
     struct filter *filter = impl_from_IMediaStreamFilter(iface);
 
-    TRACE("filter %p, index %d, stream %p.\n", filter, index, stream);
+    TRACE("filter %p, index %ld, stream %p.\n", filter, index, stream);
 
     if (index >= filter->nb_streams)
         return S_FALSE;
@@ -769,6 +793,9 @@ static HRESULT WINAPI filter_Flush(IMediaStreamFilter *iface, BOOL cancel_eos)
         }
     }
 
+    if (cancel_eos)
+        --filter->eos_count;
+
     LeaveCriticalSection(&filter->cs);
 
     return S_OK;
@@ -776,9 +803,20 @@ static HRESULT WINAPI filter_Flush(IMediaStreamFilter *iface, BOOL cancel_eos)
 
 static HRESULT WINAPI filter_EndOfStream(IMediaStreamFilter *iface)
 {
-    FIXME("(%p)->(): Stub!\n",  iface);
+    struct filter *filter = impl_from_IMediaStreamFilter(iface);
 
-    return E_NOTIMPL;
+    TRACE("filter %p.\n", filter);
+
+    EnterCriticalSection(&filter->cs);
+
+    ++filter->eos_count;
+    if (filter->state == State_Running && filter->seekable_stream &&
+            filter->eos_count == (LONG)filter->nb_streams)
+        send_ec_complete(filter);
+
+    LeaveCriticalSection(&filter->cs);
+
+    return S_OK;
 }
 
 static const IMediaStreamFilterVtbl filter_vtbl =
@@ -966,7 +1004,7 @@ static HRESULT WINAPI filter_seeking_SetPositions(IMediaSeeking *iface, LONGLONG
     IMediaSeeking *seeking;
     HRESULT hr;
 
-    TRACE("iface %p, current %s, current_flags %#x, stop %s, stop_flags %#x.\n", iface,
+    TRACE("iface %p, current %s, current_flags %#lx, stop %s, stop_flags %#lx.\n", iface,
             current_ptr ? wine_dbgstr_longlong(*current_ptr) : "<null>", current_flags,
             stop_ptr ? wine_dbgstr_longlong(*stop_ptr): "<null>", stop_flags);
 

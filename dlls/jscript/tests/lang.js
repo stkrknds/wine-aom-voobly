@@ -1565,6 +1565,13 @@ ok(arr["test1"] === true, "arr[test1] !== true");
 ok(arr["test2"] === true, "arr[test2] !== true");
 ok(arr["test3"] === true, "arr[test3] !== true");
 
+ok((delete inobj.test1) === true, "delete inobj.test1 returned false");
+ok(!("test1" in inobj), "test1 is still in inobj after delete");
+ok((delete inobj.test3) === true, "delete inobj.test3 returned false");
+ok("test3" in inobj, "test3 is not in inobj after delete");
+ok((delete forinTestObj.prototype.test3) === true, "delete forinTestObj.prototype.test3 returned false");
+ok(!("test3" in inobj), "test3 is still in inobj after delete on prototype");
+
 tmp = new Object();
 tmp.test = false;
 ok((delete tmp.test) === true, "delete returned false");
@@ -1582,9 +1589,32 @@ ok((delete tmp["test"]) === true, "delete returned false");
 ok(typeof(tmp.test) === "undefined", "tmp.test type = " + typeof(tmp.test));
 ok(!("test" in tmp), "test is still in tmp after delete?");
 
+arr = [1, 2, 3];
+ok(arr.length === 3, "arr.length = " + arr.length);
+ok((delete arr.length) === false, "delete arr.length returned true");
+ok("reverse" in arr, "reverse not in arr");
+ok((delete Array.prototype.reverse) === true, "delete Array.prototype.reverse returned false");
+ok(!("reverse" in arr), "reverse is still in arr after delete from prototype");
+
 tmp.testWith = true;
 with(tmp)
     ok(testWith === true, "testWith !== true");
+
+function withScopeTest()
+{
+    var a = 3;
+    with({a : 2})
+    {
+        ok(a == 2, "withScopeTest: a != 2");
+        function func()
+        {
+            ok(a == 3, "withScopeTest: func: a != 3");
+        }
+        func();
+        eval('ok(a == 2, "withScopeTest: eval: a != 2");');
+    }
+}
+withScopeTest();
 
 if(false) {
     var varTest1 = true;
@@ -1663,14 +1693,28 @@ tmp = new instanceOfTest();
 ok((tmp instanceof instanceOfTest) === true, "tmp is not instance of instanceOfTest");
 ok((tmp instanceof Object) === true, "tmp is not instance of Object");
 ok((tmp instanceof String) === false, "tmp is instance of String");
+ok(instanceOfTest.isPrototypeOf(tmp) === false, "instanceOfTest is prototype of tmp");
+ok(instanceOfTest.prototype.isPrototypeOf(tmp) === true, "instanceOfTest.prototype is not prototype of tmp");
+ok(Object.prototype.isPrototypeOf(tmp) === true, "Object.prototype is not prototype of tmp");
 
 instanceOfTest.prototype = new Object();
 ok((tmp instanceof instanceOfTest) === false, "tmp is instance of instanceOfTest");
 ok((tmp instanceof Object) === true, "tmp is not instance of Object");
+ok(instanceOfTest.prototype.isPrototypeOf(tmp) === false, "instanceOfTest.prototype is prototype of tmp");
 
 ok((1 instanceof Object) === false, "1 is instance of Object");
 ok((false instanceof Boolean) === false, "false is instance of Boolean");
 ok(("" instanceof Object) === false, "'' is instance of Object");
+ok(Number.prototype.isPrototypeOf(1) === false, "Number.prototype is prototype of 1");
+ok(String.prototype.isPrototypeOf("") === false, "String.prototype is prototype of ''");
+
+ok(tmp.isPrototypeOf(null) === false, "tmp is prototype of null");
+ok(tmp.isPrototypeOf(undefined) === false, "tmp is prototype of undefined");
+ok(Object.prototype.isPrototypeOf.call(tmp) === false, "tmp is prototype of no argument");
+ok(Object.prototype.isPrototypeOf.call(test, Object) === false, "test is prototype of Object");
+ok(Object.prototype.isPrototypeOf.call(testObj, Object) === false, "testObj is prototype of Object");
+ok(Object.prototype.isPrototypeOf(test) === false, "Object.prototype is prototype of test");
+ok(Object.prototype.isPrototypeOf(testObj) === false, "Object.prototype is prototype of testObj");
 
 (function () {
     ok((arguments instanceof Object) === true, "argument is not instance of Object");
@@ -1834,6 +1878,12 @@ ok(""+str === "test", "''+str = " + str);
 
 ok((function (){return 1;})() === 1, "(function (){return 1;})() = " + (function (){return 1;})());
 
+(function() {
+    var order = "", o = {};
+    o[order += "1,", { toString: function() { order += "2,"; } }] = (order += "3");
+    ok(order === "1,2,3", "array expression order = " + order);
+})();
+
 var re = /=(\?|%3F)/g;
 ok(re.source === "=(\\?|%3F)", "re.source = " + re.source);
 
@@ -1863,6 +1913,47 @@ tmp = getVT(Object(nullDisp));
 ok(tmp === "VT_DISPATCH", "getVT(Object(nullDisp) = " + tmp);
 tmp = Object(nullDisp).toString();
 ok(tmp === "[object Object]", "Object(nullDisp).toString() = " + tmp);
+
+function testNullPrototype() {
+    this.x = 13;
+}
+tmp = new testNullPrototype();
+ok(tmp.x === 13, "tmp.x !== 13");
+ok(!("y" in tmp), "tmp has 'y' property");
+testNullPrototype.prototype.y = 10;
+ok("y" in tmp, "tmp does not have 'y' property");
+tmp = new testNullPrototype();
+ok(tmp.y === 10, "tmp.y !== 10");
+testNullPrototype.prototype = nullDisp;
+tmp = new testNullPrototype();
+ok(tmp.x === 13, "tmp.x !== 13");
+ok(!("y" in tmp), "tmp has 'y' property");
+ok(!tmp.hasOwnProperty("y"), "tmp has 'y' property");
+ok(!tmp.propertyIsEnumerable("y"), "tmp has 'y' property enumerable");
+ok(tmp.toString() == "[object Object]", "tmp.toString returned " + tmp.toString());
+testNullPrototype.prototype = null;
+tmp = new testNullPrototype();
+ok(!tmp.hasOwnProperty("y"), "tmp has 'y' property");
+ok(!tmp.propertyIsEnumerable("y"), "tmp has 'y' property enumerable");
+ok(tmp.toString() == "[object Object]", "tmp.toString returned " + tmp.toString());
+
+testNullPrototype.prototype = 42;
+tmp = new testNullPrototype();
+ok(tmp.hasOwnProperty("x"), "tmp does not have 'x' property");
+ok(!tmp.hasOwnProperty("y"), "tmp has 'y' property");
+ok(tmp.toString() == "[object Object]", "tmp.toString returned " + tmp.toString());
+
+testNullPrototype.prototype = true;
+tmp = new testNullPrototype();
+ok(tmp.hasOwnProperty("x"), "tmp does not have 'x' property");
+ok(!tmp.hasOwnProperty("y"), "tmp has 'y' property");
+ok(tmp.toString() == "[object Object]", "tmp.toString returned " + tmp.toString());
+
+testNullPrototype.prototype = "foobar";
+tmp = new testNullPrototype();
+ok(tmp.hasOwnProperty("x"), "tmp does not have 'x' property");
+ok(!tmp.hasOwnProperty("y"), "tmp has 'y' property");
+ok(tmp.toString() == "[object Object]", "tmp.toString returned " + tmp.toString());
 
 function do_test() {}
 function nosemicolon() {} nosemicolon();
@@ -1983,3 +2074,37 @@ Math = 6;
 ok(Math === 6, "NaN !== 6");
 
 reportSuccess();
+
+function test_es5_keywords() {
+    var let = 1
+    var tmp
+    ok(let == 1, "let != 1");
+
+    tmp = false
+    try {
+        eval('var var = 1;');
+    }
+    catch(e) {
+        tmp = true
+    }
+    ok(tmp === true, "Expected exception for 'var var = 1;'");
+
+    tmp = false
+    try {
+        eval('var const = 1;');
+    }
+    catch(e) {
+        tmp = true
+    }
+    ok(tmp === true, "Expected exception for 'var const = 1;'");
+
+    tmp = false
+    try {
+        eval('const c1 = 1;');
+    }
+    catch(e) {
+        tmp = true
+    }
+    ok(tmp === true, "Expected exception for 'const c1 = 1;'");
+}
+test_es5_keywords();

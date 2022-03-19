@@ -19,13 +19,9 @@
  */
 
 #include "config.h"
-#include "wine/port.h"
 
 #include <stdio.h>
 #include <stdlib.h>
-#ifdef HAVE_UNISTD_H
-# include <unistd.h>
-#endif
 #include <string.h>
 #include <ctype.h>
 
@@ -441,7 +437,7 @@ static void write_stubdescriptor(type_t *iface, int expr_eval_routines)
 static void write_clientinterfacedecl(type_t *iface)
 {
     unsigned int ver = get_attrv(iface->attrs, ATTR_VERSION);
-    const UUID *uuid = get_attrp(iface->attrs, ATTR_UUID);
+    const struct uuid *uuid = get_attrp(iface->attrs, ATTR_UUID);
     const str_list_t *endpoints = get_attrp(iface->attrs, ATTR_ENDPOINT);
 
     if (endpoints) write_endpoints( client, iface->name, endpoints );

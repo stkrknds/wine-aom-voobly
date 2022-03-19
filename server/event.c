@@ -19,12 +19,12 @@
  */
 
 #include "config.h"
-#include "wine/port.h"
 
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <sys/types.h>
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -160,7 +160,7 @@ struct event *get_event_obj( struct process *process, obj_handle_t handle, unsig
     return (struct event *)get_handle_obj( process, handle, access, &event_ops );
 }
 
-void pulse_event( struct event *event )
+static void pulse_event( struct event *event )
 {
     event->signaled = 1;
     /* wake up all waiters if manual reset, a single one otherwise */

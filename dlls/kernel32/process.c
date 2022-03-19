@@ -35,7 +35,6 @@
 #include "kernel_private.h"
 #include "psapi.h"
 #include "ddk/wdm.h"
-#include "wine/exception.h"
 #include "wine/asm.h"
 #include "wine/debug.h"
 
@@ -105,7 +104,7 @@ UINT WINAPI DECLSPEC_HOTPATCH WinExec( LPCSTR lpCmdLine, UINT nCmdShow )
     {
         /* Give 30 seconds to the app to come up */
         if (wait_input_idle( info.hProcess, 30000 ) == WAIT_FAILED)
-            WARN("WaitForInputIdle failed: Error %d\n", GetLastError() );
+            WARN("WaitForInputIdle failed: Error %ld\n", GetLastError() );
         ret = 33;
         /* Close off the handles */
         CloseHandle( info.hThread );
@@ -163,7 +162,7 @@ DWORD WINAPI LoadModule( LPCSTR name, LPVOID paramBlock )
     {
         /* Give 30 seconds to the app to come up */
         if (wait_input_idle( info.hProcess, 30000 ) == WAIT_FAILED)
-            WARN("WaitForInputIdle failed: Error %d\n", GetLastError() );
+            WARN("WaitForInputIdle failed: Error %ld\n", GetLastError() );
         ret = 33;
         /* Close off the handles */
         CloseHandle( info.hThread );
@@ -171,7 +170,7 @@ DWORD WINAPI LoadModule( LPCSTR name, LPVOID paramBlock )
     }
     else if ((ret = GetLastError()) >= 32)
     {
-        FIXME("Strange error set by CreateProcess: %u\n", ret );
+        FIXME("Strange error set by CreateProcess: %lu\n", ret );
         ret = 11;
     }
 
@@ -282,7 +281,7 @@ HANDLE WINAPI ConvertToGlobalHandle(HANDLE hSrc)
  */
 BOOL WINAPI SetHandleContext(HANDLE hnd,DWORD context)
 {
-    FIXME("(%p,%d), stub. In case this got called by WSOCK32/WS2_32: "
+    FIXME("(%p,%ld), stub. In case this got called by WSOCK32/WS2_32: "
           "the external WINSOCK DLLs won't work with WINE, don't use them.\n",hnd,context);
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return FALSE;
@@ -421,7 +420,7 @@ HANDLE WINAPI DECLSPEC_HOTPATCH CreateActCtxA( const ACTCTXA *actctx )
     HANDLE ret = INVALID_HANDLE_VALUE;
     LPWSTR src = NULL, assdir = NULL, resname = NULL, appname = NULL;
 
-    TRACE("%p %08x\n", actctx, actctx ? actctx->dwFlags : 0);
+    TRACE("%p %08lx\n", actctx, actctx ? actctx->dwFlags : 0);
 
     if (!actctx || actctx->cbSize != sizeof(*actctx))
     {
@@ -495,7 +494,7 @@ BOOL WINAPI FindActCtxSectionStringA( DWORD flags, const GUID *guid, ULONG id, c
     DWORD len;
     BOOL ret;
 
-    TRACE("%08x %s %u %s %p\n", flags, debugstr_guid(guid), id, debugstr_a(search), info);
+    TRACE("%08lx %s %lu %s %p\n", flags, debugstr_guid(guid), id, debugstr_a(search), info);
 
     if (!search || !info)
     {
@@ -534,7 +533,7 @@ BOOL WINAPI CmdBatNotification( BOOL bBatchRunning )
  */
 HRESULT WINAPI RegisterApplicationRestart(PCWSTR pwzCommandLine, DWORD dwFlags)
 {
-    FIXME("(%s,%d)\n", debugstr_w(pwzCommandLine), dwFlags);
+    FIXME("(%s,%ld)\n", debugstr_w(pwzCommandLine), dwFlags);
 
     return S_OK;
 }
@@ -565,7 +564,7 @@ BOOL WINAPI SetProcessDEPPolicy( DWORD flags )
 {
     ULONG dep_flags = 0;
 
-    TRACE("%#x\n", flags);
+    TRACE("%#lx\n", flags);
 
     if (flags & PROCESS_DEP_ENABLE)
         dep_flags |= MEM_EXECUTE_OPTION_DISABLE | MEM_EXECUTE_OPTION_PERMANENT;
@@ -600,17 +599,43 @@ HRESULT WINAPI ApplicationRecoveryInProgress(PBOOL canceled)
  */
 HRESULT WINAPI RegisterApplicationRecoveryCallback(APPLICATION_RECOVERY_CALLBACK callback, PVOID param, DWORD pingint, DWORD flags)
 {
-    FIXME("%p, %p, %d, %d: stub, faking success\n", callback, param, pingint, flags);
+    FIXME("%p, %p, %ld, %ld: stub, faking success\n", callback, param, pingint, flags);
     return S_OK;
 }
+
+static SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *get_logical_processor_info(void)
+{
+    DWORD size = 0;
+    SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *info;
+
+    GetLogicalProcessorInformationEx( RelationGroup, NULL, &size );
+    if (GetLastError() != ERROR_INSUFFICIENT_BUFFER) return NULL;
+    if (!(info = HeapAlloc( GetProcessHeap(), 0, size ))) return NULL;
+    if (!GetLogicalProcessorInformationEx( RelationGroup, info, &size ))
+    {
+        HeapFree( GetProcessHeap(), 0, info );
+        return NULL;
+    }
+    return info;
+}
+
 
 /***********************************************************************
  *           GetActiveProcessorGroupCount (KERNEL32.@)
  */
 WORD WINAPI GetActiveProcessorGroupCount(void)
 {
-    FIXME("semi-stub, always returning 1\n");
-    return 1;
+    WORD groups;
+    SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *info;
+
+    TRACE("()\n");
+
+    if (!(info = get_logical_processor_info())) return 0;
+
+    groups = info->Group.ActiveGroupCount;
+
+    HeapFree(GetProcessHeap(), 0, info);
+    return groups;
 }
 
 /***********************************************************************
@@ -618,9 +643,25 @@ WORD WINAPI GetActiveProcessorGroupCount(void)
  */
 DWORD WINAPI GetActiveProcessorCount(WORD group)
 {
-    DWORD cpus = system_info.NumberOfProcessors;
+    DWORD cpus = 0;
+    SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *info;
 
-    FIXME("semi-stub, returning %u\n", cpus);
+    TRACE("(0x%x)\n", group);
+
+    if (!(info = get_logical_processor_info())) return 0;
+
+    if (group == ALL_PROCESSOR_GROUPS)
+    {
+        for (group = 0; group < info->Group.ActiveGroupCount; group++)
+            cpus += info->Group.GroupInfo[group].ActiveProcessorCount;
+    }
+    else
+    {
+        if (group < info->Group.ActiveGroupCount)
+            cpus = info->Group.GroupInfo[group].ActiveProcessorCount;
+    }
+
+    HeapFree(GetProcessHeap(), 0, info);
     return cpus;
 }
 
@@ -629,10 +670,44 @@ DWORD WINAPI GetActiveProcessorCount(WORD group)
  */
 DWORD WINAPI GetMaximumProcessorCount(WORD group)
 {
-    DWORD cpus = system_info.NumberOfProcessors;
+    DWORD cpus = 0;
+    SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *info;
 
-    FIXME("semi-stub, returning %u\n", cpus);
+    TRACE("(0x%x)\n", group);
+
+    if (!(info = get_logical_processor_info())) return 0;
+
+    if (group == ALL_PROCESSOR_GROUPS)
+    {
+        for (group = 0; group < info->Group.MaximumGroupCount; group++)
+            cpus += info->Group.GroupInfo[group].MaximumProcessorCount;
+    }
+    else
+    {
+        if (group < info->Group.MaximumGroupCount)
+            cpus = info->Group.GroupInfo[group].MaximumProcessorCount;
+    }
+
+    HeapFree(GetProcessHeap(), 0, info);
     return cpus;
+}
+
+/***********************************************************************
+ *           GetMaximumProcessorGroupCount (KERNEL32.@)
+ */
+WORD WINAPI GetMaximumProcessorGroupCount(void)
+{
+    WORD groups;
+    SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *info;
+
+    TRACE("()\n");
+
+    if (!(info = get_logical_processor_info())) return 0;
+
+    groups = info->Group.MaximumGroupCount;
+
+    HeapFree(GetProcessHeap(), 0, info);
+    return groups;
 }
 
 /***********************************************************************
@@ -640,7 +715,7 @@ DWORD WINAPI GetMaximumProcessorCount(WORD group)
  */
 DWORD WINAPI GetFirmwareEnvironmentVariableA(LPCSTR name, LPCSTR guid, PVOID buffer, DWORD size)
 {
-    FIXME("stub: %s %s %p %u\n", debugstr_a(name), debugstr_a(guid), buffer, size);
+    FIXME("stub: %s %s %p %lu\n", debugstr_a(name), debugstr_a(guid), buffer, size);
     SetLastError(ERROR_INVALID_FUNCTION);
     return 0;
 }
@@ -650,7 +725,7 @@ DWORD WINAPI GetFirmwareEnvironmentVariableA(LPCSTR name, LPCSTR guid, PVOID buf
  */
 DWORD WINAPI GetFirmwareEnvironmentVariableW(LPCWSTR name, LPCWSTR guid, PVOID buffer, DWORD size)
 {
-    FIXME("stub: %s %s %p %u\n", debugstr_w(name), debugstr_w(guid), buffer, size);
+    FIXME("stub: %s %s %p %lu\n", debugstr_w(name), debugstr_w(guid), buffer, size);
     SetLastError(ERROR_INVALID_FUNCTION);
     return 0;
 }
@@ -660,7 +735,7 @@ DWORD WINAPI GetFirmwareEnvironmentVariableW(LPCWSTR name, LPCWSTR guid, PVOID b
  */
 BOOL WINAPI SetFirmwareEnvironmentVariableW(const WCHAR *name, const WCHAR *guid, void *buffer, DWORD size)
 {
-    FIXME("stub: %s %s %p %u\n", debugstr_w(name), debugstr_w(guid), buffer, size);
+    FIXME("stub: %s %s %p %lu\n", debugstr_w(name), debugstr_w(guid), buffer, size);
     SetLastError(ERROR_INVALID_FUNCTION);
     return FALSE;
 }
@@ -812,7 +887,7 @@ BOOL WINAPI DeleteUmsThreadContext(PUMS_CONTEXT ctx)
  */
 BOOL WINAPI DequeueUmsCompletionListItems(void *list, DWORD timeout, PUMS_CONTEXT *ctx)
 {
-    FIXME( "%p,%08x,%p: stub\n", list, timeout, ctx );
+    FIXME( "%p,%08lx,%p: stub\n", list, timeout, ctx );
     SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
     return FALSE;
 }
@@ -873,7 +948,7 @@ BOOL WINAPI GetUmsCompletionListEvent(PUMS_COMPLETION_LIST list, HANDLE *event)
 BOOL WINAPI QueryUmsThreadInformation(PUMS_CONTEXT ctx, UMS_THREAD_INFO_CLASS class,
                                        void *buf, ULONG length, ULONG *ret_length)
 {
-    FIXME( "%p,%08x,%p,%08x,%p: stub\n", ctx, class, buf, length, ret_length );
+    FIXME( "%p,%08x,%p,%08lx,%p: stub\n", ctx, class, buf, length, ret_length );
     SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
     return FALSE;
 }
@@ -884,7 +959,7 @@ BOOL WINAPI QueryUmsThreadInformation(PUMS_CONTEXT ctx, UMS_THREAD_INFO_CLASS cl
 BOOL WINAPI SetUmsThreadInformation(PUMS_CONTEXT ctx, UMS_THREAD_INFO_CLASS class,
                                      void *buf, ULONG length)
 {
-    FIXME( "%p,%08x,%p,%08x: stub\n", ctx, class, buf, length );
+    FIXME( "%p,%08x,%p,%08lx: stub\n", ctx, class, buf, length );
     SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
     return FALSE;
 }

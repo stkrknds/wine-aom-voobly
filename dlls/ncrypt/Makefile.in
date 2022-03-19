@@ -1,6 +1,8 @@
+IMPORTLIB = ncrypt
 MODULE    = ncrypt.dll
+IMPORTS   = bcrypt
 
-EXTRADLLFLAGS = -mno-cygwin -Wb,--prefer-native
+EXTRADLLFLAGS = -Wb,--prefer-native
 
 C_SRCS = \
 	main.c

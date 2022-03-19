@@ -25,7 +25,6 @@
 #include "initguid.h"
 #include "dxva2api.h"
 
-#include "wine/debug.h"
 #include "wine/list.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(mfplat);
@@ -74,6 +73,7 @@ struct sample_allocator
         DXGI_FORMAT dxgi_format;
         unsigned int usage;
         unsigned int bindflags;
+        unsigned int miscflags;
         unsigned int buffer_count;
     } frame_desc;
 
@@ -150,7 +150,7 @@ static ULONG WINAPI sample_AddRef(IMFSample *iface)
     struct sample *sample = impl_from_IMFSample(iface);
     ULONG refcount = InterlockedIncrement(&sample->attributes.ref);
 
-    TRACE("%p, refcount %u.\n", iface, refcount);
+    TRACE("%p, refcount %lu.\n", iface, refcount);
 
     return refcount;
 }
@@ -162,8 +162,8 @@ static void release_sample_object(struct sample *sample)
     for (i = 0; i < sample->buffer_count; ++i)
         IMFMediaBuffer_Release(sample->buffers[i]);
     clear_attributes_object(&sample->attributes);
-    heap_free(sample->buffers);
-    heap_free(sample);
+    free(sample->buffers);
+    free(sample);
 }
 
 static ULONG WINAPI sample_Release(IMFSample *iface)
@@ -171,7 +171,7 @@ static ULONG WINAPI sample_Release(IMFSample *iface)
     struct sample *sample = impl_from_IMFSample(iface);
     ULONG refcount = InterlockedDecrement(&sample->attributes.ref);
 
-    TRACE("%p, refcount %u.\n", iface, refcount);
+    TRACE("%p, refcount %lu.\n", iface, refcount);
 
     if (!refcount)
         release_sample_object(sample);
@@ -194,14 +194,14 @@ static ULONG WINAPI sample_tracked_Release(IMFSample *iface)
 
         /* Call could fail if queue system is not initialized, it's not critical. */
         if (FAILED(hr = RtwqInvokeCallback(tracked_result)))
-            WARN("Failed to invoke tracking callback, hr %#x.\n", hr);
+            WARN("Failed to invoke tracking callback, hr %#lx.\n", hr);
         IRtwqAsyncResult_Release(tracked_result);
     }
     LeaveCriticalSection(&sample->attributes.cs);
 
     refcount = InterlockedDecrement(&sample->attributes.ref);
 
-    TRACE("%p, refcount %u.\n", iface, refcount);
+    TRACE("%p, refcount %lu.\n", iface, refcount);
 
     if (!refcount)
         release_sample_object(sample);
@@ -497,7 +497,7 @@ static HRESULT WINAPI sample_SetSampleFlags(IMFSample *iface, DWORD flags)
 {
     struct sample *sample = impl_from_IMFSample(iface);
 
-    TRACE("%p, %#x.\n", iface, flags);
+    TRACE("%p, %#lx.\n", iface, flags);
 
     EnterCriticalSection(&sample->attributes.cs);
     sample->flags = flags;
@@ -589,7 +589,7 @@ static HRESULT WINAPI sample_GetBufferByIndex(IMFSample *iface, DWORD index, IMF
     struct sample *sample = impl_from_IMFSample(iface);
     HRESULT hr = S_OK;
 
-    TRACE("%p, %u, %p.\n", iface, index, buffer);
+    TRACE("%p, %lu, %p.\n", iface, index, buffer);
 
     EnterCriticalSection(&sample->attributes.cs);
     if (index < sample->buffer_count)
@@ -741,7 +741,7 @@ static HRESULT WINAPI sample_RemoveBufferByIndex(IMFSample *iface, DWORD index)
     struct sample *sample = impl_from_IMFSample(iface);
     HRESULT hr = S_OK;
 
-    TRACE("%p, %u.\n", iface, index);
+    TRACE("%p, %lu.\n", iface, index);
 
     EnterCriticalSection(&sample->attributes.cs);
     if (index < sample->buffer_count)
@@ -1020,13 +1020,12 @@ HRESULT WINAPI MFCreateSample(IMFSample **sample)
 
     TRACE("%p.\n", sample);
 
-    object = heap_alloc_zero(sizeof(*object));
-    if (!object)
+    if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;
 
     if (FAILED(hr = init_attributes_object(&object->attributes, 0)))
     {
-        heap_free(object);
+        free(object);
         return hr;
     }
 
@@ -1049,13 +1048,12 @@ HRESULT WINAPI MFCreateTrackedSample(IMFTrackedSample **sample)
 
     TRACE("%p.\n", sample);
 
-    object = heap_alloc_zero(sizeof(*object));
-    if (!object)
+    if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;
 
     if (FAILED(hr = init_attributes_object(&object->attributes, 0)))
     {
-        heap_free(object);
+        free(object);
         return hr;
     }
 
@@ -1099,7 +1097,7 @@ static ULONG WINAPI sample_allocator_AddRef(IMFVideoSampleAllocatorEx *iface)
     struct sample_allocator *allocator = impl_from_IMFVideoSampleAllocatorEx(iface);
     ULONG refcount = InterlockedIncrement(&allocator->refcount);
 
-    TRACE("%p, refcount %u.\n", iface, refcount);
+    TRACE("%p, refcount %lu.\n", iface, refcount);
 
     return refcount;
 }
@@ -1112,13 +1110,13 @@ static void sample_allocator_release_samples(struct sample_allocator *allocator)
     {
         list_remove(&iter->entry);
         IMFSample_Release(iter->sample);
-        heap_free(iter);
+        free(iter);
     }
 
     LIST_FOR_EACH_ENTRY_SAFE(iter, iter2, &allocator->used_samples, struct queued_sample, entry)
     {
         list_remove(&iter->entry);
-        heap_free(iter);
+        free(iter);
     }
 
     allocator->free_sample_count = 0;
@@ -1169,7 +1167,7 @@ static ULONG WINAPI sample_allocator_Release(IMFVideoSampleAllocatorEx *iface)
     struct sample_allocator *allocator = impl_from_IMFVideoSampleAllocatorEx(iface);
     ULONG refcount = InterlockedDecrement(&allocator->refcount);
 
-    TRACE("%p, refcount %u.\n", iface, refcount);
+    TRACE("%p, refcount %lu.\n", iface, refcount);
 
     if (!refcount)
     {
@@ -1183,7 +1181,7 @@ static ULONG WINAPI sample_allocator_Release(IMFVideoSampleAllocatorEx *iface)
         sample_allocator_set_attributes(allocator, NULL);
         sample_allocator_release_samples(allocator);
         DeleteCriticalSection(&allocator->cs);
-        heap_free(allocator);
+        free(allocator);
     }
 
     return refcount;
@@ -1267,7 +1265,7 @@ static HRESULT sample_allocator_get_surface_service(struct sample_allocator *all
             if (FAILED(hr = IDirect3DDeviceManager9_GetVideoService(allocator->d3d9_device_manager, service->hdevice,
                     &IID_IDirectXVideoProcessorService, (void **)&service->dxva_service)))
             {
-                WARN("Failed to get DXVA processor service, hr %#x.\n", hr);
+                WARN("Failed to get DXVA processor service, hr %#lx.\n", hr);
                 IDirect3DDeviceManager9_CloseDeviceHandle(allocator->d3d9_device_manager, service->hdevice);
             }
         }
@@ -1279,7 +1277,7 @@ static HRESULT sample_allocator_get_surface_service(struct sample_allocator *all
             if (FAILED(hr = IMFDXGIDeviceManager_GetVideoService(allocator->dxgi_device_manager, service->hdevice,
                     &IID_ID3D11Device, (void **)&service->d3d11_device)))
             {
-                WARN("Failed to get D3D11 device, hr %#x.\n", hr);
+                WARN("Failed to get D3D11 device, hr %#lx.\n", hr);
                 IMFDXGIDeviceManager_CloseDeviceHandle(allocator->dxgi_device_manager, service->hdevice);
             }
         }
@@ -1306,20 +1304,18 @@ static void sample_allocator_release_surface_service(struct sample_allocator *al
 }
 
 static HRESULT sample_allocator_allocate_sample(struct sample_allocator *allocator, const struct surface_service *service,
-        IMFSample **sample)
+        struct queued_sample **queued_sample)
 {
-    struct queued_sample *queued_sample = heap_alloc(sizeof(*queued_sample));
     IMFTrackedSample *tracked_sample;
     IMFMediaBuffer *buffer;
+    IMFSample *sample;
     unsigned int i;
     HRESULT hr;
 
     if (FAILED(hr = MFCreateTrackedSample(&tracked_sample)))
-    {
         return hr;
-    }
 
-    IMFTrackedSample_QueryInterface(tracked_sample, &IID_IMFSample, (void **)sample);
+    IMFTrackedSample_QueryInterface(tracked_sample, &IID_IMFSample, (void **)&sample);
     IMFTrackedSample_Release(tracked_sample);
 
     for (i = 0; i < allocator->frame_desc.buffer_count; ++i)
@@ -1354,6 +1350,7 @@ static HRESULT sample_allocator_allocate_sample(struct sample_allocator *allocat
                 desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
             else if (desc.Usage == D3D11_USAGE_STAGING)
                 desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE | D3D11_CPU_ACCESS_READ;
+            desc.MiscFlags = allocator->frame_desc.miscflags;
 
             if (SUCCEEDED(hr = ID3D11Device_CreateTexture2D(service->d3d11_device, &desc, NULL, &texture)))
             {
@@ -1369,10 +1366,23 @@ static HRESULT sample_allocator_allocate_sample(struct sample_allocator *allocat
 
         if (SUCCEEDED(hr))
         {
-            hr = IMFSample_AddBuffer(*sample, buffer);
+            hr = IMFSample_AddBuffer(sample, buffer);
             IMFMediaBuffer_Release(buffer);
         }
     }
+
+    if (FAILED(hr))
+    {
+        IMFSample_Release(sample);
+        return hr;
+    }
+
+    if (!(*queued_sample = malloc(sizeof(**queued_sample))))
+    {
+        IMFSample_Release(sample);
+        return E_OUTOFMEMORY;
+    }
+    (*queued_sample)->sample = sample;
 
     return hr;
 }
@@ -1381,10 +1391,12 @@ static HRESULT sample_allocator_initialize(struct sample_allocator *allocator, u
         unsigned int max_sample_count, IMFAttributes *attributes, IMFMediaType *media_type)
 {
     struct surface_service service;
-    unsigned int i;
+    struct queued_sample *sample;
+    DXGI_FORMAT dxgi_format;
+    unsigned int i, value;
     GUID major, subtype;
     UINT64 frame_size;
-    IMFSample *sample;
+    D3D11_USAGE usage;
     HRESULT hr;
 
     if (FAILED(hr = IMFMediaType_GetMajorType(media_type, &major)))
@@ -1402,25 +1414,40 @@ static HRESULT sample_allocator_initialize(struct sample_allocator *allocator, u
     if (sample_count > max_sample_count)
         return E_INVALIDARG;
 
-    allocator->frame_desc.usage = D3D11_USAGE_DEFAULT;
+    usage = D3D11_USAGE_DEFAULT;
     if (attributes)
     {
         IMFAttributes_GetUINT32(attributes, &MF_SA_BUFFERS_PER_SAMPLE, &allocator->frame_desc.buffer_count);
-        IMFAttributes_GetUINT32(attributes, &MF_SA_D3D11_USAGE, &allocator->frame_desc.usage);
+        IMFAttributes_GetUINT32(attributes, &MF_SA_D3D11_USAGE, &usage);
     }
 
-    if (allocator->frame_desc.usage == D3D11_USAGE_IMMUTABLE || allocator->frame_desc.usage > D3D11_USAGE_STAGING)
+    if (usage == D3D11_USAGE_IMMUTABLE || usage > D3D11_USAGE_STAGING)
         return E_INVALIDARG;
 
-    if (allocator->frame_desc.usage == D3D11_USAGE_DEFAULT)
-        allocator->frame_desc.bindflags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
-    else if (allocator->frame_desc.usage == D3D11_USAGE_DYNAMIC)
-        allocator->frame_desc.bindflags = D3D11_BIND_SHADER_RESOURCE;
-    else
-        allocator->frame_desc.bindflags = 0;
+    dxgi_format = MFMapDX9FormatToDXGIFormat(subtype.Data1);
+
+    allocator->frame_desc.bindflags = 0;
+    allocator->frame_desc.miscflags = 0;
+    allocator->frame_desc.usage = D3D11_USAGE_DEFAULT;
+
+    if (dxgi_format == DXGI_FORMAT_B8G8R8A8_UNORM ||
+            dxgi_format == DXGI_FORMAT_B8G8R8X8_UNORM)
+    {
+        allocator->frame_desc.usage = usage;
+        if (allocator->frame_desc.usage == D3D11_USAGE_DEFAULT)
+            allocator->frame_desc.bindflags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+        else if (allocator->frame_desc.usage == D3D11_USAGE_DYNAMIC)
+            allocator->frame_desc.bindflags = D3D11_BIND_SHADER_RESOURCE;
+    }
 
     if (attributes)
+    {
         IMFAttributes_GetUINT32(attributes, &MF_SA_D3D11_BINDFLAGS, &allocator->frame_desc.bindflags);
+        if (SUCCEEDED(IMFAttributes_GetUINT32(attributes, &MF_SA_D3D11_SHARED, &value)) && value)
+            allocator->frame_desc.miscflags |= D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
+        if (SUCCEEDED(IMFAttributes_GetUINT32(attributes, &MF_SA_D3D11_SHARED_WITHOUT_MUTEX, &value)) && value)
+            allocator->frame_desc.miscflags |= D3D11_RESOURCE_MISC_SHARED;
+    }
 
     sample_allocator_set_media_type(allocator, media_type);
     sample_allocator_set_attributes(allocator, attributes);
@@ -1429,7 +1456,7 @@ static HRESULT sample_allocator_initialize(struct sample_allocator *allocator, u
     max_sample_count = max(1, max_sample_count);
 
     allocator->frame_desc.d3d9_format = subtype.Data1;
-    allocator->frame_desc.dxgi_format = MFMapDX9FormatToDXGIFormat(allocator->frame_desc.d3d9_format);
+    allocator->frame_desc.dxgi_format = dxgi_format;
     allocator->frame_desc.width = frame_size >> 32;
     allocator->frame_desc.height = frame_size;
     allocator->frame_desc.buffer_count = max(1, allocator->frame_desc.buffer_count);
@@ -1441,13 +1468,9 @@ static HRESULT sample_allocator_initialize(struct sample_allocator *allocator, u
 
     for (i = 0; i < sample_count; ++i)
     {
-        struct queued_sample *queued_sample;
-
         if (SUCCEEDED(hr = sample_allocator_allocate_sample(allocator, &service, &sample)))
         {
-            queued_sample = heap_alloc(sizeof(*queued_sample));
-            queued_sample->sample = sample;
-            list_add_tail(&allocator->free_samples, &queued_sample->entry);
+            list_add_tail(&allocator->free_samples, &sample->entry);
             allocator->free_sample_count++;
         }
     }
@@ -1464,7 +1487,7 @@ static HRESULT WINAPI sample_allocator_InitializeSampleAllocator(IMFVideoSampleA
     struct sample_allocator *allocator = impl_from_IMFVideoSampleAllocatorEx(iface);
     HRESULT hr;
 
-    TRACE("%p, %u, %p.\n", iface, sample_count, media_type);
+    TRACE("%p, %lu, %p.\n", iface, sample_count, media_type);
 
     if (!sample_count)
         return E_INVALIDARG;
@@ -1495,7 +1518,7 @@ static HRESULT sample_allocator_track_sample(struct sample_allocator *allocator,
 static HRESULT WINAPI sample_allocator_AllocateSample(IMFVideoSampleAllocatorEx *iface, IMFSample **out)
 {
     struct sample_allocator *allocator = impl_from_IMFVideoSampleAllocatorEx(iface);
-    IMFSample *sample;
+    struct queued_sample *sample;
     HRESULT hr;
 
     TRACE("%p, %p.\n", iface, out);
@@ -1510,9 +1533,9 @@ static HRESULT WINAPI sample_allocator_AllocateSample(IMFVideoSampleAllocatorEx 
     {
         struct list *head = list_head(&allocator->free_samples);
 
-        sample = LIST_ENTRY(head, struct queued_sample, entry)->sample;
+        sample = LIST_ENTRY(head, struct queued_sample, entry);
 
-        if (SUCCEEDED(hr = sample_allocator_track_sample(allocator, sample)))
+        if (SUCCEEDED(hr = sample_allocator_track_sample(allocator, sample->sample)))
         {
             list_remove(head);
             list_add_tail(&allocator->used_samples, head);
@@ -1521,7 +1544,7 @@ static HRESULT WINAPI sample_allocator_AllocateSample(IMFVideoSampleAllocatorEx 
             /* Reference counter is not increased when sample is returned, so next release could trigger
                tracking condition. This is balanced by incremented reference counter when sample is returned
                back to the free list. */
-            *out = sample;
+            *out = sample->sample;
         }
     }
     else /* allocator->cold_sample_count != 0 */
@@ -1532,15 +1555,17 @@ static HRESULT WINAPI sample_allocator_AllocateSample(IMFVideoSampleAllocatorEx 
         {
             if (SUCCEEDED(hr = sample_allocator_allocate_sample(allocator, &service, &sample)))
             {
-                if (SUCCEEDED(hr = sample_allocator_track_sample(allocator, sample)))
+                if (SUCCEEDED(hr = sample_allocator_track_sample(allocator, sample->sample)))
                 {
-                    struct queued_sample *queued_sample = heap_alloc(sizeof(*queued_sample));
-
-                    queued_sample->sample = sample;
-                    list_add_tail(&allocator->used_samples, &queued_sample->entry);
+                    list_add_tail(&allocator->used_samples, &sample->entry);
                     allocator->cold_sample_count--;
 
-                    *out = queued_sample->sample;
+                    *out = sample->sample;
+                }
+                else
+                {
+                    IMFSample_Release(sample->sample);
+                    free(sample);
                 }
             }
 
@@ -1559,7 +1584,7 @@ static HRESULT WINAPI sample_allocator_InitializeSampleAllocatorEx(IMFVideoSampl
     struct sample_allocator *allocator = impl_from_IMFVideoSampleAllocatorEx(iface);
     HRESULT hr;
 
-    TRACE("%p, %u, %u, %p, %p.\n", iface, initial_sample_count, max_sample_count, attributes, media_type);
+    TRACE("%p, %lu, %lu, %p, %p.\n", iface, initial_sample_count, max_sample_count, attributes, media_type);
 
     EnterCriticalSection(&allocator->cs);
 
@@ -1738,7 +1763,7 @@ HRESULT WINAPI MFCreateVideoSampleAllocatorEx(REFIID riid, void **obj)
 
     TRACE("%s, %p.\n", debugstr_guid(riid), obj);
 
-    if (!(object = heap_alloc_zero(sizeof(*object))))
+    if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;
 
     object->IMFVideoSampleAllocatorEx_iface.lpVtbl = &sample_allocator_vtbl;

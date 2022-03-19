@@ -109,6 +109,7 @@ DEFINE_MEDIATYPE_GUID(MFVideoFormat_MSS1,          MAKEFOURCC('M','S','S','1'));
 DEFINE_MEDIATYPE_GUID(MFVideoFormat_MSS2,          MAKEFOURCC('M','S','S','2'));
 DEFINE_MEDIATYPE_GUID(MFVideoFormat_NV11,          MAKEFOURCC('N','V','1','1'));
 DEFINE_MEDIATYPE_GUID(MFVideoFormat_NV12,          MAKEFOURCC('N','V','1','2'));
+DEFINE_MEDIATYPE_GUID(MFVideoFormat_NV21,          MAKEFOURCC('N','V','2','1'));
 DEFINE_MEDIATYPE_GUID(MFVideoFormat_ORAW,          MAKEFOURCC('O','R','A','W'));
 DEFINE_MEDIATYPE_GUID(MFVideoFormat_P010,          MAKEFOURCC('P','0','1','0'));
 DEFINE_MEDIATYPE_GUID(MFVideoFormat_P016,          MAKEFOURCC('P','0','1','6'));
@@ -449,6 +450,14 @@ typedef enum _MFWaveFormatExConvertFlags
     MFWaveFormatExConvertFlag_ForceExtensible = 1,
 } MFWaveFormatExConvertFlags;
 
+typedef enum _MFVideoRotationFormat
+{
+    MFVideoRotationFormat_0 = 0,
+    MFVideoRotationFormat_90 = 90,
+    MFVideoRotationFormat_180 = 180,
+    MFVideoRotationFormat_270 = 270
+} MFVideoRotationFormat;
+
 enum _MFT_ENUM_FLAG
 {
     MFT_ENUM_FLAG_SYNCMFT                         = 0x00000001,
@@ -491,6 +500,7 @@ HRESULT WINAPI MFAddPeriodicCallback(MFPERIODICCALLBACK callback, IUnknown *cont
 HRESULT WINAPI MFAllocateSerialWorkQueue(DWORD target_queue, DWORD *queue);
 HRESULT WINAPI MFAllocateWorkQueue(DWORD *queue);
 HRESULT WINAPI MFAllocateWorkQueueEx(MFASYNC_WORKQUEUE_TYPE queue_type, DWORD *queue);
+HRESULT WINAPI MFAverageTimePerFrameToFrameRate(UINT64 avgtime, UINT32 *numerator, UINT32 *denominator);
 HRESULT WINAPI MFBeginCreateFile(MF_FILE_ACCESSMODE access_mode, MF_FILE_OPENMODE open_mode, MF_FILE_FLAGS flags,
         const WCHAR *path, IMFAsyncCallback *callback, IUnknown *state, IUnknown **cancel_cookie);
 HRESULT WINAPI MFBeginRegisterWorkQueueWithMMCSS(DWORD queue, const WCHAR *usage_class, DWORD taskid,
@@ -508,6 +518,7 @@ HRESULT WINAPI MFCreate2DMediaBuffer(DWORD width, DWORD height, DWORD fourcc, BO
 HRESULT WINAPI MFCreateAlignedMemoryBuffer(DWORD max_length, DWORD alignment, IMFMediaBuffer **buffer);
 HRESULT WINAPI MFCreateAttributes(IMFAttributes **attributes, UINT32 size);
 HRESULT WINAPI MFCreateAsyncResult(IUnknown *object, IMFAsyncCallback *callback, IUnknown *state, IMFAsyncResult **result);
+HRESULT WINAPI MFCreateAudioMediaType(const WAVEFORMATEX *audioformat, IMFAudioMediaType **mediatype);
 HRESULT WINAPI MFCreateCollection(IMFCollection **collection);
 HRESULT WINAPI MFCreateDXGIDeviceManager(UINT *token, IMFDXGIDeviceManager **manager);
 HRESULT WINAPI MFCreateDXGISurfaceBuffer(REFIID riid, IUnknown *surface, UINT subresource, BOOL bottomup,
@@ -523,6 +534,8 @@ HRESULT WINAPI MFCreateMediaEvent(MediaEventType type, REFGUID extended_type, HR
 HRESULT WINAPI MFCreateMediaType(IMFMediaType **type);
 HRESULT WINAPI MFCreateMFVideoFormatFromMFMediaType(IMFMediaType *media_type, MFVIDEOFORMAT **video_format, UINT32 *size);
 HRESULT WINAPI MFCreateSample(IMFSample **sample);
+HRESULT WINAPI MFCreateTempFile(MF_FILE_ACCESSMODE accessmode, MF_FILE_OPENMODE openmode, MF_FILE_FLAGS flags,
+        IMFByteStream **bytestream);
 HRESULT WINAPI MFCreateVideoMediaTypeFromSubtype(const GUID *subtype, IMFVideoMediaType **media_type);
 HRESULT WINAPI MFCreateVideoSampleAllocatorEx(REFIID riid, void **allocator);
 HRESULT WINAPI MFCreateMemoryBuffer(DWORD max_length, IMFMediaBuffer **buffer);
@@ -549,10 +562,17 @@ HRESULT WINAPI MFTEnum2(GUID category, UINT32 flags, const MFT_REGISTER_TYPE_INF
 HRESULT WINAPI MFTEnumEx(GUID category, UINT32 flags, const MFT_REGISTER_TYPE_INFO *input_type,
                          const MFT_REGISTER_TYPE_INFO *output_type, IMFActivate ***activate,
                          UINT32 *pcount);
+HRESULT WINAPI MFTGetInfo(CLSID clsid, WCHAR **name, MFT_REGISTER_TYPE_INFO **input_types, UINT32 *input_types_count,
+        MFT_REGISTER_TYPE_INFO **output_types, UINT32 *output_types_count, IMFAttributes **attributes);
+BOOL WINAPI MFIsFormatYUV(DWORD format);
 HRESULT WINAPI MFInitAttributesFromBlob(IMFAttributes *attributes, const UINT8 *buffer, UINT size);
 HRESULT WINAPI MFInitMediaTypeFromWaveFormatEx(IMFMediaType *mediatype, const WAVEFORMATEX *format, UINT32 size);
+HRESULT WINAPI MFInitVideoFormat_RGB(MFVIDEOFORMAT *format, DWORD width, DWORD height, DWORD d3dformat);
 HRESULT WINAPI MFInvokeCallback(IMFAsyncResult *result);
+LONGLONG WINAPI MFllMulDiv(LONGLONG val, LONGLONG num, LONGLONG denom, LONGLONG factor);
+HRESULT WINAPI MFLockDXGIDeviceManager(UINT *token, IMFDXGIDeviceManager **manager);
 HRESULT WINAPI MFLockPlatform(void);
+HRESULT WINAPI MFLockSharedWorkQueue(const WCHAR *name, LONG base_priority, DWORD *taskid, DWORD *queue);
 DXGI_FORMAT WINAPI MFMapDX9FormatToDXGIFormat(DWORD format);
 DWORD WINAPI MFMapDXGIFormatToDX9Format(DXGI_FORMAT dxgi_format);
 HRESULT WINAPI MFPutWaitingWorkItem(HANDLE event, LONG priority, IMFAsyncResult *result, MFWORKITEM_KEY *key);
@@ -577,6 +597,7 @@ HRESULT WINAPI MFTRegisterLocalByCLSID(REFCLSID clsid, REFGUID category, LPCWSTR
 HRESULT WINAPI MFRemovePeriodicCallback(DWORD key);
 HRESULT WINAPI MFShutdown(void);
 HRESULT WINAPI MFStartup(ULONG version, DWORD flags);
+HRESULT WINAPI MFUnlockDXGIDeviceManager(void);
 HRESULT WINAPI MFUnlockPlatform(void);
 HRESULT WINAPI MFUnlockWorkQueue(DWORD queue);
 HRESULT WINAPI MFUnregisterPlatformFromMMCSS(void);

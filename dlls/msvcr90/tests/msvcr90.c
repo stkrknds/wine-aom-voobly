@@ -110,8 +110,8 @@ static int* (__cdecl *p_fpecode)(void);
 static int (__cdecl *p_configthreadlocale)(int);
 static void* (__cdecl *p_get_terminate)(void);
 static void* (__cdecl *p_get_unexpected)(void);
-static int (__cdecl *p__vswprintf_l)(wchar_t*, const wchar_t*, _locale_t, __ms_va_list);
-static int (__cdecl *p_vswprintf_l)(wchar_t*, const wchar_t*, _locale_t, __ms_va_list);
+static int (__cdecl *p__vswprintf_l)(wchar_t*, const wchar_t*, _locale_t, va_list);
+static int (__cdecl *p_vswprintf_l)(wchar_t*, const wchar_t*, _locale_t, va_list);
 static FILE* (__cdecl *p_fopen)(const char*, const char*);
 static int (__cdecl *p_fclose)(FILE*);
 static int (__cdecl *p_unlink)(const char*);
@@ -134,7 +134,7 @@ static int (__cdecl *p__setmbcp)(int);
 static int (__cdecl *p__fpieee_flt)(ULONG, EXCEPTION_POINTERS*, int (__cdecl *handler)(_FPIEEE_RECORD*));
 static int (__cdecl *p__memicmp)(const char*, const char*, size_t);
 static int (__cdecl *p__memicmp_l)(const char*, const char*, size_t, _locale_t);
-static int (__cdecl *p__vsnwprintf)(wchar_t *buffer,size_t count, const wchar_t *format, __ms_va_list valist);
+static int (__cdecl *p__vsnwprintf)(wchar_t *buffer,size_t count, const wchar_t *format, va_list valist);
 static size_t (__cdecl *p___strncnt)(const char *str, size_t count);
 static int (WINAPIV *p_swscanf)(const wchar_t *str, const wchar_t* format, ...);
 static int (__cdecl *p____mb_cur_max_l_func)(_locale_t locale);
@@ -339,7 +339,7 @@ static void __cdecl test_invalid_parameter_handler(const wchar_t *expression,
     ok(function == NULL, "function is not NULL\n");
     ok(file == NULL, "file is not NULL\n");
     ok(line == 0, "line = %u\n", line);
-    ok(arg == 0, "arg = %lx\n", (UINT_PTR)arg);
+    ok(arg == 0, "arg = %Ix\n", arg);
     ok(errno != 0xdeadbeef, "errno not set\n");
 }
 
@@ -353,7 +353,7 @@ static BOOL init(void)
     SetLastError(0xdeadbeef);
     hcrt = LoadLibraryA("msvcr90.dll");
     if (!hcrt) {
-        win_skip("msvcr90.dll not installed (got %d)\n", GetLastError());
+        win_skip("msvcr90.dll not installed (got %ld)\n", GetLastError());
         return FALSE;
     }
 
@@ -1181,7 +1181,7 @@ static void test_getptd(void)
     int dec, sign;
     void *mbcinfo, *locinfo;
 
-    ok(ptd->tid == tid, "ptd->tid = %x, expected %x\n", ptd->tid, tid);
+    ok(ptd->tid == tid, "ptd->tid = %lx, expected %lx\n", ptd->tid, tid);
     ok(ptd->handle == INVALID_HANDLE_VALUE, "ptd->handle = %p\n", ptd->handle);
     ok(p_errno() == &ptd->thread_errno, "ptd->thread_errno is different then _errno()\n");
     ok(p_doserrno() == &ptd->thread_doserrno, "ptd->thread_doserrno is different then __doserrno()\n");
@@ -1220,10 +1220,10 @@ static int WINAPIV __vswprintf_l_wrapper(wchar_t *buf,
         const wchar_t *format, _locale_t locale, ...)
 {
     int ret;
-    __ms_va_list valist;
-    __ms_va_start(valist, locale);
+    va_list valist;
+    va_start(valist, locale);
     ret = p__vswprintf_l(buf, format, locale, valist);
-    __ms_va_end(valist);
+    va_end(valist);
     return ret;
 }
 
@@ -1231,10 +1231,10 @@ static int WINAPIV _vswprintf_l_wrapper(wchar_t *buf,
         const wchar_t *format, _locale_t locale, ...)
 {
     int ret;
-    __ms_va_list valist;
-    __ms_va_start(valist, locale);
+    va_list valist;
+    va_start(valist, locale);
     ret = p_vswprintf_l(buf, format, locale, valist);
-    __ms_va_end(valist);
+    va_end(valist);
     return ret;
 }
 
@@ -1258,7 +1258,7 @@ struct block_file_arg
     FILE *write;
     HANDLE init;
     HANDLE finish;
-    int deadlock_test;
+    LONG deadlock_test;
 };
 
 static DWORD WINAPI block_file(void *arg)
@@ -1898,10 +1898,10 @@ static void test__memicmp_l(void)
 static int WINAPIV _vsnwprintf_wrapper(wchar_t *str, size_t len, const wchar_t *format, ...)
 {
     int ret;
-    __ms_va_list valist;
-    __ms_va_start(valist, format);
+    va_list valist;
+    va_start(valist, format);
     ret = p__vsnwprintf(str, len, format, valist);
-    __ms_va_end(valist);
+    va_end(valist);
     return ret;
 }
 

@@ -1,7 +1,6 @@
+EXTRADEFS = -DWINE_NO_LONG_TYPES
 MODULE    = ddrawex.dll
 IMPORTS   = dxguid uuid ddraw ole32 advapi32
-
-EXTRADLLFLAGS = -mno-cygwin
 
 C_SRCS = \
 	ddraw.c \

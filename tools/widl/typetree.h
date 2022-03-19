@@ -20,6 +20,9 @@
 
 #include "widltypes.h"
 #include <assert.h>
+#include <stdio.h>
+
+#include "utils.h"
 
 #ifndef WIDL_TYPE_TREE_H
 #define WIDL_TYPE_TREE_H
@@ -74,8 +77,8 @@ type_t *type_parameterized_type_specialize_partial(type_t *type, typeref_list_t 
 type_t *type_parameterized_type_specialize_declare(type_t *type, typeref_list_t *params);
 type_t *type_parameterized_type_specialize_define(type_t *type);
 int type_is_equal(const type_t *type1, const type_t *type2);
+const char *type_get_decl_name(const type_t *type, enum name_type name_type);
 const char *type_get_name(const type_t *type, enum name_type name_type);
-const char *type_get_qualified_name(const type_t *type, enum name_type name_type);
 char *gen_name(void);
 extern int is_attr(const attr_list_t *list, enum attr_type t);
 
@@ -379,17 +382,17 @@ static inline typeref_list_t *type_runtimeclass_get_ifaces(const type_t *type)
     return type->details.runtimeclass.ifaces;
 }
 
-static inline type_t *type_runtimeclass_get_default_iface(const type_t *type)
+static inline type_t *type_runtimeclass_get_default_iface(const type_t *type, int check)
 {
     typeref_list_t *ifaces = type_runtimeclass_get_ifaces(type);
     typeref_t *ref;
 
-    if (!ifaces) return NULL;
-    LIST_FOR_EACH_ENTRY(ref, ifaces, typeref_t, entry)
+    if (ifaces) LIST_FOR_EACH_ENTRY(ref, ifaces, typeref_t, entry)
         if (is_attr(ref->attrs, ATTR_DEFAULT))
             return ref->type;
 
-    return NULL;
+    if (!check) return NULL;
+    error_loc_info(&type->loc_info, "runtimeclass %s needs a default interface\n", type->name);
 }
 
 static inline type_t *type_delegate_get_iface(const type_t *type)

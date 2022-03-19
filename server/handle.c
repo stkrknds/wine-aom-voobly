@@ -19,7 +19,6 @@
  */
 
 #include "config.h"
-#include "wine/port.h"
 
 #include <assert.h>
 #include <limits.h>
@@ -27,6 +26,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/types.h>
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -174,21 +174,16 @@ static void handle_table_destroy( struct object *obj )
 
     assert( obj->ops == &handle_table_ops );
 
-    /* first notify all objects that handles are being closed */
-    if (table->process)
-    {
-        for (i = 0, entry = table->entries; i <= table->last; i++, entry++)
-        {
-            struct object *obj = entry->ptr;
-            if (obj) obj->ops->close_handle( obj, table->process, index_to_handle(i) );
-        }
-    }
-
     for (i = 0, entry = table->entries; i <= table->last; i++, entry++)
     {
         struct object *obj = entry->ptr;
         entry->ptr = NULL;
-        if (obj) release_object_from_handle( obj );
+        if (obj)
+        {
+            if (table->process)
+                obj->ops->close_handle( obj, table->process, index_to_handle(i) );
+            release_object_from_handle( obj );
+        }
     }
     free( table->entries );
 }
@@ -678,8 +673,7 @@ DECL_HANDLER(dup_handle)
         }
         /* close the handle no matter what happened */
         if ((req->options & DUPLICATE_CLOSE_SOURCE) && (src != dst || req->src_handle != reply->handle))
-            reply->closed = !close_handle( src, req->src_handle );
-        reply->self = (src == current->process);
+            close_handle( src, req->src_handle );
         release_object( src );
     }
 }
@@ -687,13 +681,22 @@ DECL_HANDLER(dup_handle)
 DECL_HANDLER(get_object_info)
 {
     struct object *obj;
-    WCHAR *name;
 
     if (!(obj = get_handle_obj( current->process, req->handle, 0, NULL ))) return;
 
     reply->access = get_handle_access( current->process, req->handle );
     reply->ref_count = obj->refcount;
     reply->handle_count = obj->handle_count;
+    release_object( obj );
+}
+
+DECL_HANDLER(get_object_name)
+{
+    struct object *obj;
+    WCHAR *name;
+
+    if (!(obj = get_handle_obj( current->process, req->handle, 0, NULL ))) return;
+
     if ((name = obj->ops->get_full_name( obj, &reply->total )))
         set_reply_data_ptr( name, min( reply->total, get_reply_max_size() ));
     release_object( obj );
@@ -734,9 +737,9 @@ DECL_HANDLER(get_security_object)
     unsigned int access = READ_CONTROL;
     struct security_descriptor req_sd;
     int present;
-    const SID *owner, *group;
-    const ACL *sacl, *dacl;
-    ACL *label_acl = NULL;
+    const struct sid *owner, *group;
+    const struct acl *sacl, *dacl;
+    struct acl *label_acl = NULL;
 
     if (req->security_info & SACL_SECURITY_INFORMATION)
         access |= ACCESS_SYSTEM_SECURITY;
@@ -766,7 +769,7 @@ DECL_HANDLER(get_security_object)
         else if (req->security_info & LABEL_SECURITY_INFORMATION && present && sacl)
         {
             if (!(label_acl = extract_security_labels( sacl ))) goto done;
-            req_sd.sacl_len = label_acl->AclSize;
+            req_sd.sacl_len = label_acl->size;
             sacl = label_acl;
         }
         else
@@ -875,4 +878,21 @@ DECL_HANDLER(make_temporary)
         release_object( obj );
     }
     release_object( obj );
+}
+
+DECL_HANDLER(compare_objects)
+{
+    struct object *obj1, *obj2;
+
+    if (!(obj1 = get_handle_obj( current->process, req->first, 0, NULL ))) return;
+    if (!(obj2 = get_handle_obj( current->process, req->second, 0, NULL )))
+    {
+        release_object( obj1 );
+        return;
+    }
+
+    if (obj1 != obj2) set_error( STATUS_NOT_SAME_OBJECT );
+
+    release_object( obj2 );
+    release_object( obj1 );
 }

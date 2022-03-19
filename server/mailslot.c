@@ -21,9 +21,6 @@
  */
 
 #include "config.h"
-#include "wine/port.h"
-#include "ntstatus.h"
-#define WIN32_NO_STATUS
 
 #include <assert.h>
 #include <fcntl.h>
@@ -33,16 +30,15 @@
 #include <stdlib.h>
 #include <sys/time.h>
 #include <sys/types.h>
-
-#ifdef HAVE_SYS_IOCTL_H
+#include <unistd.h>
 #include <sys/ioctl.h>
-#endif
-#ifdef HAVE_SYS_SOCKET_H
 #include <sys/socket.h>
-#endif
 #ifdef HAVE_SYS_FILIO_H
 #include <sys/filio.h>
 #endif
+
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winternl.h"
 
@@ -90,7 +86,7 @@ static const struct object_ops mailslot_ops =
     default_unlink_name,       /* unlink_name */
     mailslot_open_file,        /* open_file */
     no_kernel_obj_list,        /* get_kernel_obj_list */
-    fd_close_handle,           /* close_handle */
+    no_close_handle,           /* close_handle */
     mailslot_destroy           /* destroy */
 };
 
@@ -108,6 +104,7 @@ static const struct fd_ops mailslot_fd_ops =
     default_fd_get_file_info,   /* get_file_info */
     no_fd_get_volume_info,      /* get_volume_info */
     default_fd_ioctl,           /* ioctl */
+    default_fd_cancel_async,    /* cancel_async */
     mailslot_queue_async,       /* queue_async */
     default_fd_reselect_async   /* reselect_async */
 };
@@ -148,7 +145,7 @@ static const struct object_ops mail_writer_ops =
     NULL,                       /* unlink_name */
     no_open_file,               /* open_file */
     no_kernel_obj_list,         /* get_kernel_obj_list */
-    fd_close_handle,            /* close_handle */
+    no_close_handle,            /* close_handle */
     mail_writer_destroy         /* destroy */
 };
 
@@ -165,6 +162,7 @@ static const struct fd_ops mail_writer_fd_ops =
     default_fd_get_file_info,    /* get_file_info */
     no_fd_get_volume_info,       /* get_volume_info */
     default_fd_ioctl,            /* ioctl */
+    default_fd_cancel_async,     /* cancel_async */
     default_fd_queue_async,      /* queue_async */
     default_fd_reselect_async    /* reselect_async */
 };
@@ -240,7 +238,7 @@ static const struct object_ops mailslot_device_file_ops =
     NULL,                                   /* unlink_name */
     no_open_file,                           /* open_file */
     no_kernel_obj_list,                     /* get_kernel_obj_list */
-    fd_close_handle,                        /* close_handle */
+    no_close_handle,                        /* close_handle */
     mailslot_device_file_destroy            /* destroy */
 };
 
@@ -255,6 +253,7 @@ static const struct fd_ops mailslot_device_fd_ops =
     default_fd_get_file_info,           /* get_file_info */
     no_fd_get_volume_info,              /* get_volume_info */
     default_fd_ioctl,                   /* ioctl */
+    default_fd_cancel_async,            /* cancel_async */
     default_fd_queue_async,             /* queue_async */
     default_fd_reselect_async           /* reselect_async */
 };

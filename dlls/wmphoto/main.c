@@ -31,6 +31,8 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(wincodecs);
 
+extern HRESULT CDECL wmp_decoder_create(struct decoder_info *info, struct decoder **result);
+
 HRESULT create_instance(const CLSID *clsid, const IID *iid, void **ppv)
 {
     return CoCreateInstance(clsid, NULL, CLSCTX_INPROC_SERVER, iid, ppv);
@@ -98,7 +100,7 @@ static HRESULT WINAPI wmp_class_factory_CreateInstance(IClassFactory *iface, IUn
     *out = NULL;
     if (outer) return CLASS_E_NOAGGREGATION;
 
-    hr = get_unix_decoder(&CLSID_WICWmpDecoder, &decoder_info, &decoder);
+    hr = wmp_decoder_create(&decoder_info, &decoder);
 
     if (SUCCEEDED(hr))
         hr = CommonDecoder_CreateInstance(decoder, &decoder_info, iid, out);
@@ -127,7 +129,7 @@ HMODULE windowscodecs_module = 0;
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 {
-    TRACE("instance %p, reason %d, reserved %p\n", instance, reason, reserved);
+    TRACE("instance %p, reason %ld, reserved %p\n", instance, reason, reserved);
 
     switch (reason)
     {
@@ -138,11 +140,6 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
     }
 
     return TRUE;
-}
-
-HRESULT WINAPI DllCanUnloadNow(void)
-{
-    return S_FALSE;
 }
 
 HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID iid, LPVOID *out)
@@ -159,14 +156,4 @@ HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID iid, LPVOID *out)
     }
 
     return IClassFactory_QueryInterface(&factory->IClassFactory_iface, iid, out);
-}
-
-HRESULT WINAPI DllRegisterServer(void)
-{
-    return __wine_register_resources( windowscodecs_module );
-}
-
-HRESULT WINAPI DllUnregisterServer(void)
-{
-    return __wine_unregister_resources( windowscodecs_module );
 }

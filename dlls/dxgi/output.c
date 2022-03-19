@@ -16,9 +16,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-#include "wine/port.h"
-
 #include "dxgi_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dxgi);
@@ -26,6 +23,11 @@ WINE_DEFAULT_DEBUG_CHANNEL(dxgi);
 static inline DXGI_MODE_SCANLINE_ORDER dxgi_mode_scanline_order_from_wined3d(enum wined3d_scanline_ordering ordering)
 {
     return (DXGI_MODE_SCANLINE_ORDER)ordering;
+}
+
+static inline DXGI_MODE_ROTATION dxgi_mode_rotation_from_wined3d(enum wined3d_display_rotation rotation)
+{
+    return (DXGI_MODE_ROTATION)rotation;
 }
 
 static void dxgi_mode_from_wined3d(DXGI_MODE_DESC *mode, const struct wined3d_display_mode *wined3d_mode)
@@ -144,7 +146,7 @@ static HRESULT dxgi_output_get_display_mode_list(struct dxgi_output *output,
         if (FAILED(hr = wined3d_output_get_mode(output->wined3d_output, wined3d_format,
                 WINED3D_SCANLINE_ORDERING_UNKNOWN, i, &mode)))
         {
-            WARN("Failed to get output mode %u, hr %#x.\n", i, hr);
+            WARN("Failed to get output mode %u, hr %#lx.\n", i, hr);
             wined3d_mutex_unlock();
             return hr;
         }
@@ -218,7 +220,7 @@ static ULONG STDMETHODCALLTYPE dxgi_output_AddRef(IDXGIOutput6 *iface)
     struct dxgi_output *output = impl_from_IDXGIOutput6(iface);
     ULONG refcount = InterlockedIncrement(&output->refcount);
 
-    TRACE("%p increasing refcount to %u.\n", output, refcount);
+    TRACE("%p increasing refcount to %lu.\n", output, refcount);
 
     return refcount;
 }
@@ -228,7 +230,7 @@ static ULONG STDMETHODCALLTYPE dxgi_output_Release(IDXGIOutput6 *iface)
     struct dxgi_output *output = impl_from_IDXGIOutput6(iface);
     ULONG refcount = InterlockedDecrement(&output->refcount);
 
-    TRACE("%p decreasing refcount to %u.\n", output, refcount);
+    TRACE("%p decreasing refcount to %lu.\n", output, refcount);
 
     if (!refcount)
     {
@@ -301,7 +303,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_GetDesc(IDXGIOutput6 *iface, DXGI_O
     hr = wined3d_output_get_desc(output->wined3d_output, &wined3d_desc);
     if (FAILED(hr))
     {
-        WARN("Failed to get output desc, hr %#x.\n", hr);
+        WARN("Failed to get output desc, hr %#lx.\n", hr);
         wined3d_mutex_unlock();
         return hr;
     }
@@ -309,7 +311,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_GetDesc(IDXGIOutput6 *iface, DXGI_O
     hr = wined3d_output_get_display_mode(output->wined3d_output, &mode, &rotation);
     if (FAILED(hr))
     {
-        WARN("Failed to get output display mode, hr %#x.\n", hr);
+        WARN("Failed to get output display mode, hr %#lx.\n", hr);
         wined3d_mutex_unlock();
         return hr;
     }
@@ -318,7 +320,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_GetDesc(IDXGIOutput6 *iface, DXGI_O
     memcpy(desc->DeviceName, wined3d_desc.device_name, sizeof(desc->DeviceName));
     desc->DesktopCoordinates = wined3d_desc.desktop_rect;
     desc->AttachedToDesktop = wined3d_desc.attached_to_desktop;
-    desc->Rotation = rotation;
+    desc->Rotation = dxgi_mode_rotation_from_wined3d(rotation);
     desc->Monitor = wined3d_desc.monitor;
 
     return S_OK;
@@ -420,10 +422,45 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_GetGammaControlCapabilities(IDXGIOu
     return S_OK;
 }
 
+static WORD uint16_from_float(float f)
+{
+    f *= 65535.0f;
+    if (f < 0.0f)
+        f = 0.0f;
+    else if (f > 65535.0f)
+        f = 65535.0f;
+
+    return f + 0.5f;
+}
+
 static HRESULT STDMETHODCALLTYPE dxgi_output_SetGammaControl(IDXGIOutput6 *iface,
         const DXGI_GAMMA_CONTROL *gamma_control)
 {
-    FIXME("iface %p, gamma_control %p stub!\n", iface, gamma_control);
+    struct dxgi_output *output = impl_from_IDXGIOutput6(iface);
+    struct wined3d_gamma_ramp ramp;
+    const DXGI_RGB *p;
+    unsigned int i;
+
+    TRACE("iface %p, gamma_control %p.\n", iface, gamma_control);
+
+    if (gamma_control->Scale.Red != 1.0f || gamma_control->Scale.Green != 1.0f || gamma_control->Scale.Blue != 1.0f)
+        FIXME("Ignoring unhandled scale {%.8e, %.8e, %.8e}.\n", gamma_control->Scale.Red,
+                gamma_control->Scale.Green, gamma_control->Scale.Blue);
+    if (gamma_control->Offset.Red != 0.0f || gamma_control->Offset.Green != 0.0f || gamma_control->Offset.Blue != 0.0f)
+        FIXME("Ignoring unhandled offset {%.8e, %.8e, %.8e}.\n", gamma_control->Offset.Red,
+                gamma_control->Offset.Green, gamma_control->Offset.Blue);
+
+    for (i = 0; i < 256; ++i)
+    {
+        p = &gamma_control->GammaCurve[i];
+        ramp.red[i] = uint16_from_float(p->Red);
+        ramp.green[i] = uint16_from_float(p->Green);
+        ramp.blue[i] = uint16_from_float(p->Blue);
+    }
+
+    wined3d_mutex_lock();
+    wined3d_output_set_gamma_ramp(output->wined3d_output, &ramp);
+    wined3d_mutex_unlock();
 
     return S_OK;
 }
@@ -573,7 +610,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_GetDesc1(IDXGIOutput6 *iface,
     hr = wined3d_output_get_desc(output->wined3d_output, &wined3d_desc);
     if (FAILED(hr))
     {
-        WARN("Failed to get output desc, hr %#x.\n", hr);
+        WARN("Failed to get output desc, hr %#lx.\n", hr);
         wined3d_mutex_unlock();
         return hr;
     }
@@ -581,7 +618,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_GetDesc1(IDXGIOutput6 *iface,
     hr = wined3d_output_get_display_mode(output->wined3d_output, &mode, &rotation);
     if (FAILED(hr))
     {
-        WARN("Failed to get output display mode, hr %#x.\n", hr);
+        WARN("Failed to get output display mode, hr %#lx.\n", hr);
         wined3d_mutex_unlock();
         return hr;
     }
@@ -589,14 +626,14 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_GetDesc1(IDXGIOutput6 *iface,
 
     if (FAILED(hr))
     {
-        WARN("Failed to get output desc, hr %#x.\n", hr);
+        WARN("Failed to get output desc, hr %#lx.\n", hr);
         return hr;
     }
 
     memcpy(desc->DeviceName, wined3d_desc.device_name, sizeof(desc->DeviceName));
     desc->DesktopCoordinates = wined3d_desc.desktop_rect;
     desc->AttachedToDesktop = wined3d_desc.attached_to_desktop;
-    desc->Rotation = rotation;
+    desc->Rotation = dxgi_mode_rotation_from_wined3d(rotation);
     desc->Monitor = wined3d_desc.monitor;
 
     /* FIXME: fill this from monitor EDID */

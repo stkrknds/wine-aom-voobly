@@ -25,7 +25,6 @@
 #endif
 
 #include "config.h"
-#include "wine/port.h"
 
 #include <assert.h>
 #include <sys/types.h>
@@ -37,27 +36,21 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <limits.h>
+#include <unistd.h>
 #ifdef HAVE_MNTENT_H
 #include <mntent.h>
 #endif
-#ifdef HAVE_POLL_H
 #include <poll.h>
-#endif
-#ifdef HAVE_SYS_STAT_H
-# include <sys/stat.h>
-#endif
+#include <sys/stat.h>
 #ifdef HAVE_SYS_STATVFS_H
 # include <sys/statvfs.h>
 #endif
 #ifdef HAVE_SYS_SYSCALL_H
 # include <sys/syscall.h>
 #endif
-#ifdef HAVE_SYS_SOCKET_H
 #include <sys/socket.h>
-#endif
-#ifdef HAVE_SYS_TIME_H
-# include <sys/time.h>
-#endif
+#include <sys/time.h>
+#include <sys/ioctl.h>
 #ifdef HAVE_SYS_ATTR_H
 #include <sys/attr.h>
 #endif
@@ -87,9 +80,6 @@
 #undef list_move_tail
 #undef list_remove
 #endif
-#ifdef HAVE_SYS_IOCTL_H
-#include <sys/ioctl.h>
-#endif
 #ifdef HAVE_LINUX_IOCTL_H
 #include <linux/ioctl.h>
 #endif
@@ -109,9 +99,7 @@
 #include <sys/statfs.h>
 #endif
 #include <time.h>
-#ifdef HAVE_UNISTD_H
-# include <unistd.h>
-#endif
+#include <unistd.h>
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -134,9 +122,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(file);
 WINE_DECLARE_DEBUG_CHANNEL(winediag);
 
 #define MAX_DOS_DRIVES 26
-
-#define FILE_WRITE_TO_END_OF_FILE      ((LONGLONG)-1)
-#define FILE_USE_FILE_POINTER_POSITION ((LONGLONG)-2)
 
 /* just in case... */
 #undef VFAT_IOCTL_READDIR_BOTH
@@ -240,8 +225,6 @@ static mode_t start_umask;
 
 /* at some point we may want to allow Winelib apps to set this */
 static const BOOL is_case_sensitive = FALSE;
-
-static struct file_identity windir;
 
 static pthread_mutex_t dir_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t mnt_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -953,7 +936,7 @@ static char *get_device_mount_point( dev_t dev )
         fclose( f );
     }
     mutex_unlock( &mnt_mutex );
-#elif defined(__APPLE__)
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
     struct statfs *entry;
     struct stat st;
     int i, size;
@@ -1177,7 +1160,7 @@ static BOOLEAN get_dir_case_sensitivity_stat( const char *dir )
     struct stat st;
     int fd, flags;
 
-    if ((fd = open( dir, O_RDONLY | O_NONBLOCK | O_LARGEFILE )) == -1)
+    if ((fd = open( dir, O_RDONLY | O_NONBLOCK )) == -1)
         return TRUE;
 
     if (ioctl( fd, EXT2_IOC_GETFLAGS, &flags ) != -1 && (flags & EXT4_CASEFOLD_FL))
@@ -1228,13 +1211,9 @@ static BOOL is_hidden_file( const UNICODE_STRING *name )
     if (show_dot_files) return FALSE;
 
     end = p = name->Buffer + name->Length/sizeof(WCHAR);
-    while (p > name->Buffer && IS_SEPARATOR(p[-1])) p--;
-    while (p > name->Buffer && !IS_SEPARATOR(p[-1])) p--;
-    if (p == end || *p != '.') return FALSE;
-    /* make sure it isn't '.' or '..' */
-    if (p + 1 == end) return FALSE;
-    if (p[1] == '.' && p + 2 == end) return FALSE;
-    return TRUE;
+    while (p > name->Buffer && p[-1] == '\\') p--;
+    while (p > name->Buffer && p[-1] != '\\') p--;
+    return (p < end && *p == '.');
 }
 
 
@@ -1850,6 +1829,27 @@ static NTSTATUS server_get_file_info( HANDLE handle, IO_STATUS_BLOCK *io, void *
 }
 
 
+static NTSTATUS server_open_file_object( HANDLE *handle, ACCESS_MASK access, OBJECT_ATTRIBUTES *attr,
+                                         ULONG sharing, ULONG options )
+{
+    NTSTATUS status;
+
+    SERVER_START_REQ( open_file_object )
+    {
+        req->access     = access;
+        req->attributes = attr->Attributes;
+        req->rootdir    = wine_server_obj_handle( attr->RootDirectory );
+        req->sharing    = sharing;
+        req->options    = options;
+        wine_server_add_data( req, attr->ObjectName->Buffer, attr->ObjectName->Length );
+        status = wine_server_call( req );
+        *handle = wine_server_ptr_handle( reply->handle );
+    }
+    SERVER_END_REQ;
+    return status;
+}
+
+
 /* retrieve device/inode number for all the drives */
 static unsigned int get_drives_info( struct file_identity info[MAX_DOS_DRIVES] )
 {
@@ -1954,7 +1954,7 @@ static NTSTATUS get_mountmgr_fs_info( HANDLE handle, int fd, struct mountmgr_uni
     OBJECT_ATTRIBUTES attr;
     UNICODE_STRING string;
     char *unix_name;
-    IO_STATUS_BLOCK io;
+    IO_STATUS_BLOCK io = {0};
     HANDLE mountmgr;
     NTSTATUS status;
     int letter;
@@ -1963,22 +1963,21 @@ static NTSTATUS get_mountmgr_fs_info( HANDLE handle, int fd, struct mountmgr_uni
     letter = find_dos_device( unix_name );
     free( unix_name );
 
+    memset( drive, 0, sizeof(*drive) );
     if (letter == -1)
     {
         struct stat st;
 
         fstat( fd, &st );
         drive->unix_dev = st.st_rdev ? st.st_rdev : st.st_dev;
-        drive->letter = 0;
     }
     else
         drive->letter = 'a' + letter;
 
-    string.Buffer = (WCHAR *)MOUNTMGR_DEVICE_NAME;
-    string.Length = sizeof(MOUNTMGR_DEVICE_NAME) - sizeof(WCHAR);
+    init_unicode_string( &string, MOUNTMGR_DEVICE_NAME );
     InitializeObjectAttributes( &attr, &string, 0, NULL, NULL );
-    status = NtOpenFile( &mountmgr, GENERIC_READ | SYNCHRONIZE, &attr, &io,
-                         FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_NONALERT );
+    status = server_open_file_object( &mountmgr, GENERIC_READ | SYNCHRONIZE, &attr,
+                                      FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_NONALERT );
     if (status) return status;
 
     status = NtDeviceIoControlFile( mountmgr, NULL, NULL, NULL, &io, IOCTL_MOUNTMGR_QUERY_UNIX_DRIVE,
@@ -2482,7 +2481,7 @@ NTSTATUS WINAPI NtQueryDirectoryFile( HANDLE handle, HANDLE event, PIO_APC_ROUTI
  * There must be at least MAX_DIR_ENTRY_LEN+2 chars available at pos.
  */
 static NTSTATUS find_file_in_dir( char *unix_name, int pos, const WCHAR *name, int length,
-                                  BOOLEAN check_case, BOOLEAN *is_win_dir )
+                                  BOOLEAN check_case )
 {
     WCHAR buffer[MAX_DIR_ENTRY_LEN];
     BOOLEAN is_name_8_dot_3;
@@ -2498,11 +2497,7 @@ static NTSTATUS find_file_in_dir( char *unix_name, int pos, const WCHAR *name, i
     if (ret >= 0 && ret <= MAX_DIR_ENTRY_LEN)
     {
         unix_name[pos + ret] = 0;
-        if (!stat( unix_name, &st ))
-        {
-            if (is_win_dir) *is_win_dir = is_same_file( &windir, &st );
-            return STATUS_SUCCESS;
-        }
+        if (!stat( unix_name, &st )) return STATUS_SUCCESS;
     }
     if (check_case) goto not_found;  /* we want an exact match */
 
@@ -2541,7 +2536,7 @@ static NTSTATUS find_file_in_dir( char *unix_name, int pos, const WCHAR *name, i
                         {
                             strcpy( unix_name + pos, kde[1].d_name );
                             close( fd );
-                            goto success;
+                            return STATUS_SUCCESS;
                         }
                     }
                     ret = ntdll_umbstowcs( kde[0].d_name, strlen(kde[0].d_name),
@@ -2551,7 +2546,7 @@ static NTSTATUS find_file_in_dir( char *unix_name, int pos, const WCHAR *name, i
                         strcpy( unix_name + pos,
                                 kde[1].d_name[0] ? kde[1].d_name : kde[0].d_name );
                         close( fd );
-                        goto success;
+                        return STATUS_SUCCESS;
                     }
                     if (ioctl( fd, VFAT_IOCTL_READDIR_BOTH, (long)kde ) == -1)
                     {
@@ -2578,7 +2573,7 @@ static NTSTATUS find_file_in_dir( char *unix_name, int pos, const WCHAR *name, i
         {
             strcpy( unix_name + pos, de->d_name );
             closedir( dir );
-            goto success;
+            return STATUS_SUCCESS;
         }
 
         if (!is_name_8_dot_3) continue;
@@ -2591,7 +2586,7 @@ static NTSTATUS find_file_in_dir( char *unix_name, int pos, const WCHAR *name, i
             {
                 strcpy( unix_name + pos, de->d_name );
                 closedir( dir );
-                goto success;
+                return STATUS_SUCCESS;
             }
         }
     }
@@ -2600,10 +2595,6 @@ static NTSTATUS find_file_in_dir( char *unix_name, int pos, const WCHAR *name, i
 not_found:
     unix_name[pos - 1] = 0;
     return STATUS_OBJECT_PATH_NOT_FOUND;
-
-success:
-    if (is_win_dir && !stat( unix_name, &st )) *is_win_dir = is_same_file( &windir, &st );
-    return STATUS_SUCCESS;
 }
 
 
@@ -2616,148 +2607,165 @@ static const WCHAR driversetcW[] = {'s','y','s','t','e','m','3','2','\\','d','r'
 static const WCHAR logfilesW[] = {'s','y','s','t','e','m','3','2','\\','l','o','g','f','i','l','e','s',0};
 static const WCHAR spoolW[] = {'s','y','s','t','e','m','3','2','\\','s','p','o','o','l',0};
 static const WCHAR system32W[] = {'s','y','s','t','e','m','3','2',0};
+static const WCHAR syswow64W[] = {'s','y','s','w','o','w','6','4',0};
 static const WCHAR sysnativeW[] = {'s','y','s','n','a','t','i','v','e',0};
 static const WCHAR regeditW[] = {'r','e','g','e','d','i','t','.','e','x','e',0};
+static const WCHAR syswow64_regeditW[] = {'s','y','s','w','o','w','6','4','\\','r','e','g','e','d','i','t','.','e','x','e',0};
+static const WCHAR windirW[] = {'\\','?','?','\\','C',':','\\','w','i','n','d','o','w','s','\\',0};
+static const WCHAR syswow64dirW[] = {'\\','?','?','\\','C',':','\\','w','i','n','d','o','w','s','\\','s','y','s','w','o','w','6','4','\\'};
 
-static struct
+static const WCHAR * const no_redirect[] =
 {
-    const WCHAR *source;
-    const char *unix_target;
-} redirects[] =
-{
-    { catrootW, NULL },
-    { catroot2W, NULL },
-    { driversstoreW, NULL },
-    { driversetcW, NULL },
-    { logfilesW, NULL },
-    { spoolW, NULL },
-    { system32W, "syswow64" },
-    { sysnativeW, "system32" },
-    { regeditW, "syswow64/regedit.exe" }
+    catrootW,
+    catroot2W,
+    driversstoreW,
+    driversetcW,
+    logfilesW,
+    spoolW
 };
 
-static unsigned int nb_redirects;
+static struct file_identity windir, sysdir;
 
+static inline ULONG starts_with_path( const WCHAR *name, ULONG name_len, const WCHAR *prefix )
+{
+    ULONG len = wcslen( prefix );
+
+    if (name_len < len) return 0;
+    if (wcsnicmp( name, prefix, len )) return 0;
+    if (name_len > len && name[len] != '\\') return 0;
+    return len;
+}
+
+static BOOL replace_path( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *str, ULONG prefix_len,
+                          const WCHAR *match, const WCHAR *replace )
+{
+    const WCHAR *name = attr->ObjectName->Buffer;
+    ULONG match_len, replace_len, len = attr->ObjectName->Length / sizeof(WCHAR);
+    WCHAR *p;
+
+    if (!starts_with_path( name + prefix_len, len - prefix_len, match )) return FALSE;
+
+    match_len = wcslen( match );
+    replace_len = wcslen( replace );
+    str->Length = (len + replace_len - match_len) * sizeof(WCHAR);
+    str->MaximumLength = str->Length + sizeof(WCHAR);
+    if (!(p = str->Buffer = malloc( str->MaximumLength ))) return FALSE;
+
+    memcpy( p, name, prefix_len * sizeof(WCHAR) );
+    p += prefix_len;
+    memcpy( p, replace, replace_len * sizeof(WCHAR) );
+    p += replace_len;
+    name += prefix_len + match_len;
+    len -= prefix_len + match_len;
+    memcpy( p, name, len * sizeof(WCHAR) );
+    p[len] = 0;
+    attr->ObjectName = str;
+    return TRUE;
+}
 
 /***********************************************************************
  *           init_redirects
  */
 static void init_redirects(void)
 {
-    static const char windows_dir[] = "/dosdevices/c:/windows";
+    static const char system_dir[] = "/dosdevices/c:/windows/system32";
     char *dir;
     struct stat st;
 
-    if (!(dir = malloc( strlen(config_dir) + sizeof(windows_dir) ))) return;
+    if (!(dir = malloc( strlen(config_dir) + sizeof(system_dir) ))) return;
     strcpy( dir, config_dir );
-    strcat( dir, windows_dir );
+    strcat( dir, system_dir );
+    if (!stat( dir, &st ))
+    {
+        sysdir.dev = st.st_dev;
+        sysdir.ino = st.st_ino;
+    }
+    *strrchr( dir, '/' ) = 0;
     if (!stat( dir, &st ))
     {
         windir.dev = st.st_dev;
         windir.ino = st.st_ino;
-        nb_redirects = ARRAY_SIZE( redirects );
     }
     else ERR( "%s: %s\n", dir, strerror(errno) );
     free( dir );
 
 }
 
-
 /***********************************************************************
- *           match_redirect
- *
- * Check if path matches a redirect name. If yes, return matched length.
+ *           get_redirect
  */
-static int match_redirect( const WCHAR *path, int len, const WCHAR *redir, BOOLEAN check_case )
+BOOL get_redirect( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *redir )
 {
-    int i = 0;
+    const WCHAR *name = attr->ObjectName->Buffer;
+    unsigned int i, prefix_len = 0, len = attr->ObjectName->Length / sizeof(WCHAR);
 
-    while (i < len)
+    redir->Buffer = NULL;
+    if (!NtCurrentTeb64()) return FALSE;
+    if (!len) return FALSE;
+
+    if (!attr->RootDirectory)
     {
-        int start = i;
-        while (i < len && !IS_SEPARATOR(path[i])) i++;
-        if (check_case)
-        {
-            if (wcsncmp( path + start, redir, i - start )) return 0;
-        }
-        else
-        {
-            if (wcsnicmp( path + start, redir, i - start )) return 0;
-        }
-        redir += i - start;
-        while (i < len && IS_SEPARATOR(path[i])) i++;
-        if (!*redir) return i;
-        if (*redir++ != '\\') return 0;
+        prefix_len = wcslen( windirW );
+        if (len < prefix_len || wcsnicmp( name, windirW, prefix_len )) return FALSE;
     }
-    return 0;
-}
-
-
-/***********************************************************************
- *           get_redirect_path
- *
- * Retrieve the Unix path corresponding to a redirected path if any.
- */
-static int get_redirect_path( char *unix_name, int pos, const WCHAR *name, int length, BOOLEAN check_case )
-{
-    unsigned int i;
-    int len;
-
-    for (i = 0; i < nb_redirects; i++)
+    else
     {
-        if ((len = match_redirect( name, length, redirects[i].source, check_case )))
+        int fd, needs_close;
+        struct stat st;
+
+        if (server_get_unix_fd( attr->RootDirectory, 0, &fd, &needs_close, NULL, NULL )) return FALSE;
+        fstat( fd, &st );
+        if (needs_close) close( fd );
+        if (!is_same_file( &windir, &st ))
         {
-            if (!redirects[i].unix_target) break;
-            unix_name[pos++] = '/';
-            strcpy( unix_name + pos, redirects[i].unix_target );
-            return len;
+            if (!is_same_file( &sysdir, &st )) return FALSE;
+            if (NtCurrentTeb64()->TlsSlots[WOW64_TLS_FILESYSREDIR]) return FALSE;
+            if (name[0] == '\\') return FALSE;
+
+            /* only check for paths that should NOT be redirected */
+            for (i = 0; i < ARRAY_SIZE( no_redirect ); i++)
+                if (starts_with_path( name, len, no_redirect[i] + 9 /* "system32\\" */)) return FALSE;
+
+            /* redirect everything else */
+            redir->Length = sizeof(syswow64dirW) + len * sizeof(WCHAR);
+            redir->MaximumLength = redir->Length + sizeof(WCHAR);
+            if (!(redir->Buffer = malloc( redir->MaximumLength ))) return FALSE;
+            memcpy( redir->Buffer, syswow64dirW, sizeof(syswow64dirW) );
+            memcpy( redir->Buffer + ARRAY_SIZE(syswow64dirW), name, len * sizeof(WCHAR) );
+            redir->Buffer[redir->Length / sizeof(WCHAR)] = 0;
+            attr->RootDirectory = 0;
+            attr->ObjectName = redir;
+            return TRUE;
         }
     }
-    return 0;
+
+    /* sysnative is redirected even when redirection is disabled */
+
+    if (replace_path( attr, redir, prefix_len, sysnativeW, system32W )) return TRUE;
+
+    if (NtCurrentTeb64()->TlsSlots[WOW64_TLS_FILESYSREDIR]) return FALSE;
+
+    for (i = 0; i < ARRAY_SIZE( no_redirect ); i++)
+        if (starts_with_path( name + prefix_len, len - prefix_len, no_redirect[i] )) return FALSE;
+
+    if (replace_path( attr, redir, prefix_len, system32W, syswow64W )) return TRUE;
+    if (replace_path( attr, redir, prefix_len, regeditW, syswow64_regeditW )) return TRUE;
+    return FALSE;
 }
 
 #else  /* _WIN64 */
 
 /* there are no redirects on 64-bit */
-static int get_redirect_path( char *unix_name, int pos, const WCHAR *name, int length, BOOLEAN check_case )
+BOOL get_redirect( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *redir )
 {
-    return 0;
+    redir->Buffer = NULL;
+    return FALSE;
 }
 
 #endif
 
+
 #define IS_OPTION_TRUE(ch) ((ch) == 'y' || (ch) == 'Y' || (ch) == 't' || (ch) == 'T' || (ch) == '1')
-
-static NTSTATUS open_hkcu_key( const char *path, HANDLE *key )
-{
-    NTSTATUS status;
-    char buffer[256];
-    WCHAR bufferW[256];
-    DWORD_PTR sid_data[(sizeof(TOKEN_USER) + SECURITY_MAX_SID_SIZE) / sizeof(DWORD_PTR)];
-    DWORD i, len = sizeof(sid_data);
-    SID *sid;
-    UNICODE_STRING name;
-    OBJECT_ATTRIBUTES attr;
-
-    status = NtQueryInformationToken( GetCurrentThreadEffectiveToken(), TokenUser, sid_data, len, &len );
-    if (status) return status;
-
-    sid = ((TOKEN_USER *)sid_data)->User.Sid;
-    len = sprintf( buffer, "\\Registry\\User\\S-%u-%u", sid->Revision,
-                 MAKELONG( MAKEWORD( sid->IdentifierAuthority.Value[5], sid->IdentifierAuthority.Value[4] ),
-                           MAKEWORD( sid->IdentifierAuthority.Value[3], sid->IdentifierAuthority.Value[2] )));
-    for (i = 0; i < sid->SubAuthorityCount; i++)
-        len += sprintf( buffer + len, "-%u", sid->SubAuthority[i] );
-    len += sprintf( buffer + len, "\\%s", path );
-
-    name.Buffer = bufferW;
-    name.Length = len * sizeof(WCHAR);
-    name.MaximumLength = name.Length + sizeof(WCHAR);
-    ascii_to_unicode( bufferW, buffer, len + 1 );
-    InitializeObjectAttributes( &attr, &name, OBJ_CASE_INSENSITIVE, 0, NULL );
-    return NtCreateKey( key, KEY_ALL_ACCESS, &attr, 0, NULL, 0, NULL );
-}
-
 
 /***********************************************************************
  *           init_files
@@ -2787,9 +2795,7 @@ void init_files(void)
         DWORD dummy;
         UNICODE_STRING nameW;
 
-        nameW.MaximumLength = sizeof(showdotfilesW);
-        nameW.Length = nameW.MaximumLength - sizeof(WCHAR);
-        nameW.Buffer = showdotfilesW;
+        init_unicode_string( &nameW, showdotfilesW );
         if (!NtQueryValueKey( key, &nameW, KeyValuePartialInformation, tmp, sizeof(tmp), &dummy ))
         {
             WCHAR *str = (WCHAR *)((KEY_VALUE_PARTIAL_INFORMATION *)tmp)->Data;
@@ -2805,41 +2811,21 @@ void init_files(void)
  *
  * Get the Unix path of a DOS device.
  */
-static NTSTATUS get_dos_device( const WCHAR *name, UINT name_len, char **unix_name_ret )
+static NTSTATUS get_dos_device( char **unix_name, int start_pos )
 {
     struct stat st;
-    char *unix_name, *new_name, *dev;
-    unsigned int i;
-    int unix_len;
-
-    /* make sure the device name is ASCII */
-    for (i = 0; i < name_len; i++)
-        if (name[i] <= 32 || name[i] >= 127) return STATUS_BAD_DEVICE_TYPE;
-
-    unix_len = strlen(config_dir) + sizeof("/dosdevices/") + name_len + 1;
-
-    if (!(unix_name = malloc( unix_len ))) return STATUS_NO_MEMORY;
-
-    strcpy( unix_name, config_dir );
-    strcat( unix_name, "/dosdevices/" );
-    dev = unix_name + strlen(unix_name);
-
-    for (i = 0; i < name_len; i++) dev[i] = (name[i] >= 'A' && name[i] <= 'Z' ? name[i] + 32 : name[i]);
-    dev[i] = 0;
+    char *new_name, *dev = *unix_name + start_pos;
 
     /* special case for drive devices */
-    if (name_len == 2 && dev[1] == ':')
-    {
-        dev[i++] = ':';
-        dev[i] = 0;
-    }
+    if (dev[0] && dev[1] == ':' && !dev[2]) strcpy( dev + 1, "::" );
+
+    if (strchr( dev, '/' )) goto failed;
 
     for (;;)
     {
-        if (!stat( unix_name, &st ))
+        if (!stat( *unix_name, &st ))
         {
-            TRACE( "%s -> %s\n", debugstr_wn(name,name_len), debugstr_a(unix_name) );
-            *unix_name_ret = unix_name;
+            TRACE( "-> %s\n", debugstr_a(*unix_name));
             return STATUS_SUCCESS;
         }
         if (!dev) break;
@@ -2860,15 +2846,16 @@ static NTSTATUS get_dos_device( const WCHAR *name, UINT name_len, char **unix_na
         if (dev[1] == ':' && dev[2] == ':')  /* drive device */
         {
             dev[2] = 0;  /* remove last ':' to get the drive mount point symlink */
-            new_name = get_default_drive_device( unix_name );
+            new_name = get_default_drive_device( *unix_name );
         }
-
-        if (!new_name) break;
-        free( unix_name );
-        unix_name = new_name;
+        free( *unix_name );
+        *unix_name = new_name;
+        if (!new_name) return STATUS_BAD_DEVICE_TYPE;
         dev = NULL; /* last try */
     }
-    free( unix_name );
+failed:
+    free( *unix_name );
+    *unix_name = NULL;
     return STATUS_BAD_DEVICE_TYPE;
 }
 
@@ -2983,29 +2970,6 @@ static NTSTATUS find_drive_rootA( LPCSTR *ppath, unsigned int len, int *drive_re
 
 
 /******************************************************************************
- *           rebuild_nt_name
- */
-static void rebuild_nt_name( const UNICODE_STRING *nameW, DWORD prefix_len,
-                             const char *unix_name, UNICODE_STRING *nt_name )
-{
-    WCHAR *buf;
-    DWORD len;
-
-    while (*unix_name == '/') unix_name++;
-    nt_name->MaximumLength = (prefix_len + strlen(unix_name) + 2) * sizeof(WCHAR);
-    if (!(buf = malloc( nt_name->MaximumLength ))) return;
-    nt_name->Buffer = buf;
-    memcpy( buf, nameW->Buffer, prefix_len * sizeof(WCHAR) );
-    if (prefix_len && buf[prefix_len - 1] != '\\') buf[prefix_len++] = '\\';
-    buf += prefix_len;
-    len = ntdll_umbstowcs( unix_name, strlen(unix_name), buf, strlen(unix_name) );
-    for (; len; len--, buf++) if (*buf == '/') *buf = '\\';
-    *buf = 0;
-    nt_name->Length = (buf - nt_name->Buffer) * sizeof(WCHAR);
-}
-
-
-/******************************************************************************
  *           find_file_id
  *
  * Recursively search directories from the dir queue for a given inode.
@@ -3075,6 +3039,7 @@ static NTSTATUS file_id_to_unix_file_name( const OBJECT_ATTRIBUTES *attr, char *
     ULONGLONG file_id;
     struct stat st, root_st;
 
+    nt_name->Buffer = NULL;
     if (attr->ObjectName->Length != sizeof(ULONGLONG)) return STATUS_OBJECT_PATH_SYNTAX_BAD;
     if (!attr->RootDirectory) return STATUS_INVALID_PARAMETER;
     memcpy( &file_id, attr->ObjectName->Buffer, sizeof(file_id) );
@@ -3128,7 +3093,15 @@ done:
     {
         TRACE( "%s -> %s\n", wine_dbgstr_longlong(file_id), debugstr_a(unix_name) );
         *unix_name_ret = unix_name;
-        if (nt_name) rebuild_nt_name( attr->ObjectName, 0, unix_name, nt_name );
+
+        nt_name->MaximumLength = (strlen(unix_name) + 1) * sizeof(WCHAR);
+        if ((nt_name->Buffer = malloc( nt_name->MaximumLength )))
+        {
+            DWORD i, len = ntdll_umbstowcs( unix_name, strlen(unix_name), nt_name->Buffer, strlen(unix_name) );
+            nt_name->Buffer[len] = 0;
+            nt_name->Length = len * sizeof(WCHAR);
+            for (i = 0; i < len; i++) if (nt_name->Buffer[i] == '/') nt_name->Buffer[i] = '\\';
+        }
     }
     else
     {
@@ -3146,25 +3119,40 @@ done:
  * Helper for nt_to_unix_file_name
  */
 static NTSTATUS lookup_unix_name( const WCHAR *name, int name_len, char **buffer, int unix_len, int pos,
-                                  UINT disposition, BOOLEAN check_case )
+                                  UINT disposition, BOOL is_unix )
 {
+    static const WCHAR invalid_charsW[] = { INVALID_NT_CHARS, '/', 0 };
     NTSTATUS status;
-    int ret, len;
+    int ret;
     struct stat st;
     char *unix_name = *buffer;
-#ifdef _WIN64
-    const BOOL redirect = FALSE;
-#else
-    const BOOL redirect = NtCurrentTeb64() && !NtCurrentTeb64()->TlsSlots[WOW64_TLS_FILESYSREDIR];
-#endif
+    const WCHAR *ptr, *end;
+
+    /* check syntax of individual components */
+
+    for (ptr = name, end = name + name_len; ptr < end; ptr++)
+    {
+        if (*ptr == '\\') return STATUS_OBJECT_NAME_INVALID;  /* duplicate backslash */
+        if (*ptr == '.')
+        {
+            if (ptr + 1 == end) return STATUS_OBJECT_NAME_INVALID;  /* "." element */
+            if (ptr[1] == '\\') return STATUS_OBJECT_NAME_INVALID;  /* "." element */
+            if (ptr[1] == '.')
+            {
+                if (ptr + 2 == end) return STATUS_OBJECT_NAME_INVALID;  /* ".." element */
+                if (ptr[2] == '\\') return STATUS_OBJECT_NAME_INVALID;  /* ".." element */
+            }
+        }
+        /* check for invalid characters (all chars except 0 are valid for unix) */
+        for ( ; ptr < end && *ptr != '\\'; ptr++)
+        {
+            if (!*ptr) return STATUS_OBJECT_NAME_INVALID;
+            if (is_unix) continue;
+            if (*ptr < 32 || wcschr( invalid_charsW, *ptr )) return STATUS_OBJECT_NAME_INVALID;
+        }
+    }
 
     /* try a shortcut first */
-
-    while (name_len && IS_SEPARATOR(*name))
-    {
-        name++;
-        name_len--;
-    }
 
     unix_name[pos] = '/';
     ret = ntdll_wcstoumbs( name, name_len, unix_name + pos + 1, unix_len - pos - 1, TRUE );
@@ -3173,20 +3161,16 @@ static NTSTATUS lookup_unix_name( const WCHAR *name, int name_len, char **buffer
         char *p;
         unix_name[pos + 1 + ret] = 0;
         for (p = unix_name + pos ; *p; p++) if (*p == '\\') *p = '/';
-        if (!name_len || !redirect || (!strstr( unix_name, "/windows/") && strncmp( unix_name, "windows/", 8 )))
+        if (!stat( unix_name, &st ))
         {
-            if (!stat( unix_name, &st ))
-            {
-                if (disposition == FILE_CREATE)
-                    return STATUS_OBJECT_NAME_COLLISION;
-                return STATUS_SUCCESS;
-            }
+            if (disposition == FILE_CREATE) return STATUS_OBJECT_NAME_COLLISION;
+            return STATUS_SUCCESS;
         }
     }
 
     if (!name_len)  /* empty name -> drive root doesn't exist */
         return STATUS_OBJECT_PATH_NOT_FOUND;
-    if (check_case && !redirect && (disposition == FILE_OPEN || disposition == FILE_OVERWRITE))
+    if (is_unix && (disposition == FILE_OPEN || disposition == FILE_OVERWRITE))
         return STATUS_OBJECT_NAME_NOT_FOUND;
 
     /* now do it component by component */
@@ -3194,12 +3178,11 @@ static NTSTATUS lookup_unix_name( const WCHAR *name, int name_len, char **buffer
     while (name_len)
     {
         const WCHAR *end, *next;
-        BOOLEAN is_win_dir = FALSE;
 
         end = name;
-        while (end < name + name_len && !IS_SEPARATOR(*end)) end++;
+        while (end < name + name_len && *end != '\\') end++;
         next = end;
-        while (next < name + name_len && IS_SEPARATOR(*next)) next++;
+        if (next < name + name_len) next++;
         name_len -= next - name;
 
         /* grow the buffer if needed */
@@ -3212,8 +3195,7 @@ static NTSTATUS lookup_unix_name( const WCHAR *name, int name_len, char **buffer
             unix_name = *buffer = new_name;
         }
 
-        status = find_file_in_dir( unix_name, pos, name, end - name,
-                                   check_case, redirect ? &is_win_dir : NULL );
+        status = find_file_in_dir( unix_name, pos, name, end - name, is_unix );
 
         /* if this is the last element, not finding it is not necessarily fatal */
         if (!name_len)
@@ -3243,14 +3225,6 @@ static NTSTATUS lookup_unix_name( const WCHAR *name, int name_len, char **buffer
 
         pos += strlen( unix_name + pos );
         name = next;
-
-        if (is_win_dir && (len = get_redirect_path( unix_name, pos, name, name_len, check_case )))
-        {
-            name += len;
-            name_len -= len;
-            pos += strlen( unix_name + pos );
-            TRACE( "redirecting -> %s + %s\n", debugstr_a(unix_name), debugstr_w(name) );
-        }
     }
 
     return status;
@@ -3258,64 +3232,108 @@ static NTSTATUS lookup_unix_name( const WCHAR *name, int name_len, char **buffer
 
 
 /******************************************************************************
- *           nt_to_unix_file_name_attr
+ *           nt_to_unix_file_name_no_root
  */
-static NTSTATUS nt_to_unix_file_name_attr( const OBJECT_ATTRIBUTES *attr, char **name_ret,
-                                           UNICODE_STRING *nt_name, UINT disposition )
+static NTSTATUS nt_to_unix_file_name_no_root( const UNICODE_STRING *nameW, char **unix_name_ret,
+                                              UINT disposition )
 {
+    static const WCHAR unixW[] = {'u','n','i','x'};
     static const WCHAR invalid_charsW[] = { INVALID_NT_CHARS, 0 };
-    enum server_fd_type type;
-    int old_cwd, root_fd, needs_close;
-    const WCHAR *name, *p;
+
+    NTSTATUS status = STATUS_SUCCESS;
+    const WCHAR *name;
+    struct stat st;
     char *unix_name;
-    int name_len, unix_len;
-    NTSTATUS status;
+    int pos, ret, name_len, unix_len, prefix_len;
+    WCHAR prefix[MAX_DIR_ENTRY_LEN + 1];
+    BOOLEAN is_unix = FALSE;
 
-    if (!attr->RootDirectory)  /* without root dir fall back to normal lookup */
-        return nt_to_unix_file_name( attr->ObjectName, name_ret, nt_name, disposition );
+    name     = nameW->Buffer;
+    name_len = nameW->Length / sizeof(WCHAR);
 
-    name     = attr->ObjectName->Buffer;
-    name_len = attr->ObjectName->Length / sizeof(WCHAR);
+    if (!name_len || name[0] != '\\') return STATUS_OBJECT_PATH_SYNTAX_BAD;
 
-    if (name_len && IS_SEPARATOR(name[0])) return STATUS_INVALID_PARAMETER;
+    if (!(pos = get_dos_prefix_len( nameW )))
+        return STATUS_BAD_DEVICE_TYPE;  /* no DOS prefix, assume NT native name */
 
-    /* check for invalid characters */
-    for (p = name; p < name + name_len; p++)
-        if (*p < 32 || wcschr( invalid_charsW, *p )) return STATUS_OBJECT_NAME_INVALID;
+    name += pos;
+    name_len -= pos;
+
+    if (!name_len) return STATUS_OBJECT_NAME_INVALID;
+
+    /* check for sub-directory */
+    for (pos = 0; pos < name_len && pos <= MAX_DIR_ENTRY_LEN; pos++)
+    {
+        if (name[pos] == '\\') break;
+        if (name[pos] < 32 || wcschr( invalid_charsW, name[pos] ))
+            return STATUS_OBJECT_NAME_INVALID;
+        prefix[pos] = (name[pos] >= 'A' && name[pos] <= 'Z') ? name[pos] + 'a' - 'A' : name[pos];
+    }
+    if (pos > MAX_DIR_ENTRY_LEN) return STATUS_OBJECT_NAME_INVALID;
+
+    if (pos >= 4 && !memcmp( prefix, unixW, sizeof(unixW) ))
+    {
+        /* allow slash for unix namespace */
+        if (pos > 4 && prefix[4] == '/') pos = 4;
+        is_unix = pos == 4;
+    }
+    prefix_len = pos;
+    prefix[prefix_len] = 0;
 
     unix_len = name_len * 3 + MAX_DIR_ENTRY_LEN + 3;
+    unix_len += strlen(config_dir) + sizeof("/dosdevices/");
     if (!(unix_name = malloc( unix_len ))) return STATUS_NO_MEMORY;
-    unix_name[0] = '.';
+    strcpy( unix_name, config_dir );
+    strcat( unix_name, "/dosdevices/" );
+    pos = strlen(unix_name);
 
-    if (!(status = server_get_unix_fd( attr->RootDirectory, 0, &root_fd, &needs_close, &type, NULL )))
+    ret = ntdll_wcstoumbs( prefix, prefix_len, unix_name + pos, unix_len - pos - 1, TRUE );
+    if (ret <= 0)
     {
-        if (type != FD_TYPE_DIR)
+        free( unix_name );
+        return STATUS_OBJECT_NAME_INVALID;
+    }
+
+    if (prefix_len == name_len)  /* no subdir, plain DOS device */
+    {
+        unix_name[pos + ret] = 0;
+        *unix_name_ret = unix_name;
+        return get_dos_device( unix_name_ret, pos );
+    }
+    pos += ret;
+
+    /* check if prefix exists (except for DOS drives to avoid extra stat calls) */
+
+    if (wcschr( prefix, '/' ))
+    {
+        free( unix_name );
+        return STATUS_OBJECT_PATH_NOT_FOUND;
+    }
+
+    if (prefix_len != 2 || prefix[1] != ':')
+    {
+        unix_name[pos] = 0;
+        if (lstat( unix_name, &st ) == -1 && errno == ENOENT)
         {
-            if (needs_close) close( root_fd );
-            status = STATUS_BAD_DEVICE_TYPE;
-        }
-        else
-        {
-            mutex_lock( &dir_mutex );
-            if ((old_cwd = open( ".", O_RDONLY )) != -1 && fchdir( root_fd ) != -1)
+            if (!is_unix)
             {
-                status = lookup_unix_name( name, name_len, &unix_name, unix_len, 1,
-                                           disposition, FALSE );
-                if (fchdir( old_cwd ) == -1) chdir( "/" );
+                free( unix_name );
+                return STATUS_BAD_DEVICE_TYPE;
             }
-            else status = errno_to_status( errno );
-            mutex_unlock( &dir_mutex );
-            if (old_cwd != -1) close( old_cwd );
-            if (needs_close) close( root_fd );
+            pos = 0;  /* fall back to unix root */
         }
     }
-    else if (status == STATUS_OBJECT_TYPE_MISMATCH) status = STATUS_BAD_DEVICE_TYPE;
 
+    prefix_len++;  /* skip initial backslash */
+    if (name_len > prefix_len && name[prefix_len] == '\\') prefix_len++;  /* allow a second backslash */
+    name += prefix_len;
+    name_len -= prefix_len;
+
+    status = lookup_unix_name( name, name_len, &unix_name, unix_len, pos, disposition, is_unix );
     if (status == STATUS_SUCCESS || status == STATUS_NO_SUCH_FILE)
     {
-        TRACE( "%s -> %s\n", debugstr_us(attr->ObjectName), debugstr_a(unix_name) );
-        *name_ret = unix_name;
-        if (nt_name) rebuild_nt_name( attr->ObjectName, 0, unix_name, nt_name );
+        TRACE( "%s -> %s\n", debugstr_us(nameW), debugstr_a(unix_name) );
+        *unix_name_ret = unix_name;
     }
     else
     {
@@ -3335,104 +3353,54 @@ static NTSTATUS nt_to_unix_file_name_attr( const OBJECT_ATTRIBUTES *attr, char *
  * element doesn't have to exist; in that case STATUS_NO_SUCH_FILE is
  * returned, but the unix name is still filled in properly.
  */
-NTSTATUS nt_to_unix_file_name( const UNICODE_STRING *nameW, char **unix_name_ret,
-                               UNICODE_STRING *nt_name, UINT disposition )
+NTSTATUS nt_to_unix_file_name( const OBJECT_ATTRIBUTES *attr, char **name_ret, UINT disposition )
 {
-    static const WCHAR unixW[] = {'u','n','i','x'};
-    static const WCHAR invalid_charsW[] = { INVALID_NT_CHARS, 0 };
-
-    NTSTATUS status = STATUS_SUCCESS;
-    const WCHAR *name, *p;
-    struct stat st;
+    enum server_fd_type type;
+    int old_cwd, root_fd, needs_close;
+    const WCHAR *name;
     char *unix_name;
-    int pos, ret, name_len, unix_len, prefix_len;
-    WCHAR prefix[MAX_DIR_ENTRY_LEN + 1];
-    BOOLEAN check_case = FALSE;
-    BOOLEAN is_unix = FALSE;
+    int name_len, unix_len;
+    NTSTATUS status;
 
-    name     = nameW->Buffer;
-    name_len = nameW->Length / sizeof(WCHAR);
+    if (!attr->RootDirectory)  /* without root dir fall back to normal lookup */
+        return nt_to_unix_file_name_no_root( attr->ObjectName, name_ret, disposition );
 
-    if (!name_len || !IS_SEPARATOR(name[0])) return STATUS_OBJECT_PATH_SYNTAX_BAD;
+    name     = attr->ObjectName->Buffer;
+    name_len = attr->ObjectName->Length / sizeof(WCHAR);
 
-    if (!(pos = get_dos_prefix_len( nameW )))
-        return STATUS_BAD_DEVICE_TYPE;  /* no DOS prefix, assume NT native name */
+    if (name_len && name[0] == '\\') return STATUS_INVALID_PARAMETER;
 
-    name += pos;
-    name_len -= pos;
-
-    if (!name_len) return STATUS_OBJECT_NAME_INVALID;
-
-    /* check for sub-directory */
-    for (pos = 0; pos < name_len && pos <= MAX_DIR_ENTRY_LEN; pos++)
-    {
-        if (IS_SEPARATOR(name[pos])) break;
-        if (name[pos] < 32 || wcschr( invalid_charsW, name[pos] ))
-            return STATUS_OBJECT_NAME_INVALID;
-        prefix[pos] = (name[pos] >= 'A' && name[pos] <= 'Z') ? name[pos] + 'a' - 'A' : name[pos];
-    }
-    if (pos > MAX_DIR_ENTRY_LEN) return STATUS_OBJECT_NAME_INVALID;
-
-    if (pos == name_len)  /* no subdir, plain DOS device */
-        return get_dos_device( name, name_len, unix_name_ret );
-
-    prefix_len = pos;
-    prefix[prefix_len] = 0;
-
-    name += prefix_len;
-    name_len -= prefix_len;
-
-    /* check for invalid characters (all chars except 0 are valid for unix) */
-    is_unix = (prefix_len == 4 && !memcmp( prefix, unixW, sizeof(unixW) ));
-    if (is_unix)
-    {
-        for (p = name; p < name + name_len; p++)
-            if (!*p) return STATUS_OBJECT_NAME_INVALID;
-        check_case = TRUE;
-    }
-    else
-    {
-        for (p = name; p < name + name_len; p++)
-            if (*p < 32 || wcschr( invalid_charsW, *p )) return STATUS_OBJECT_NAME_INVALID;
-    }
-
-    unix_len = (prefix_len + name_len) * 3 + MAX_DIR_ENTRY_LEN + 3;
-    unix_len += strlen(config_dir) + sizeof("/dosdevices/");
+    unix_len = name_len * 3 + MAX_DIR_ENTRY_LEN + 3;
     if (!(unix_name = malloc( unix_len ))) return STATUS_NO_MEMORY;
-    strcpy( unix_name, config_dir );
-    strcat( unix_name, "/dosdevices/" );
-    pos = strlen(unix_name);
+    unix_name[0] = '.';
 
-    ret = ntdll_wcstoumbs( prefix, prefix_len, unix_name + pos, unix_len - pos - 1, TRUE );
-    if (ret <= 0)
+    if (!(status = server_get_unix_fd( attr->RootDirectory, 0, &root_fd, &needs_close, &type, NULL )))
     {
-        free( unix_name );
-        return STATUS_OBJECT_NAME_INVALID;
-    }
-    pos += ret;
-
-    /* check if prefix exists (except for DOS drives to avoid extra stat calls) */
-
-    if (prefix_len != 2 || prefix[1] != ':')
-    {
-        unix_name[pos] = 0;
-        if (lstat( unix_name, &st ) == -1 && errno == ENOENT)
+        if (type != FD_TYPE_DIR)
         {
-            if (!is_unix)
+            if (needs_close) close( root_fd );
+            status = STATUS_BAD_DEVICE_TYPE;
+        }
+        else
+        {
+            mutex_lock( &dir_mutex );
+            if ((old_cwd = open( ".", O_RDONLY )) != -1 && fchdir( root_fd ) != -1)
             {
-                free( unix_name );
-                return STATUS_BAD_DEVICE_TYPE;
+                status = lookup_unix_name( name, name_len, &unix_name, unix_len, 1, disposition, FALSE );
+                if (fchdir( old_cwd ) == -1) chdir( "/" );
             }
-            pos = 0;  /* fall back to unix root */
+            else status = errno_to_status( errno );
+            mutex_unlock( &dir_mutex );
+            if (old_cwd != -1) close( old_cwd );
+            if (needs_close) close( root_fd );
         }
     }
+    else if (status == STATUS_OBJECT_TYPE_MISMATCH) status = STATUS_BAD_DEVICE_TYPE;
 
-    status = lookup_unix_name( name, name_len, &unix_name, unix_len, pos, disposition, check_case );
     if (status == STATUS_SUCCESS || status == STATUS_NO_SUCH_FILE)
     {
-        TRACE( "%s -> %s\n", debugstr_us(nameW), debugstr_a(unix_name) );
-        *unix_name_ret = unix_name;
-        if (nt_name) rebuild_nt_name( nameW, name - nameW->Buffer, unix_name + pos, nt_name );
+        TRACE( "%s -> %s\n", debugstr_us(attr->ObjectName), debugstr_a(unix_name) );
+        *name_ret = unix_name;
     }
     else
     {
@@ -3452,20 +3420,119 @@ NTSTATUS nt_to_unix_file_name( const UNICODE_STRING *nameW, char **unix_name_ret
  * element doesn't have to exist; in that case STATUS_NO_SUCH_FILE is
  * returned, but the unix name is still filled in properly.
  */
-NTSTATUS CDECL wine_nt_to_unix_file_name( const UNICODE_STRING *nameW, char *nameA, SIZE_T *size,
+NTSTATUS WINAPI wine_nt_to_unix_file_name( const OBJECT_ATTRIBUTES *attr, char *nameA, ULONG *size,
                                           UINT disposition )
 {
     char *buffer = NULL;
-    NTSTATUS status = nt_to_unix_file_name( nameW, &buffer, NULL, disposition );
+    NTSTATUS status;
+    UNICODE_STRING redir;
+    OBJECT_ATTRIBUTES new_attr = *attr;
+
+    get_redirect( &new_attr, &redir );
+    status = nt_to_unix_file_name( &new_attr, &buffer, disposition );
 
     if (buffer)
     {
-        if (*size > strlen(buffer)) strcpy( nameA, buffer );
+        struct stat st1, st2;
+        char *name = buffer;
+
+        /* remove dosdevices prefix for z: drive if it points to the Unix root */
+        if (!strncmp( buffer, config_dir, strlen(config_dir) ) &&
+            !strncmp( buffer + strlen(config_dir), "/dosdevices/z:/", 15 ))
+        {
+            char *p = buffer + strlen(config_dir) + 14;
+            *p = 0;
+            if (!stat( buffer, &st1 ) && !stat( "/", &st2 ) &&
+                st1.st_dev == st2.st_dev && st1.st_ino == st2.st_ino)
+                name = p;
+            *p = '/';
+        }
+
+        if (*size > strlen(name)) strcpy( nameA, name );
         else status = STATUS_BUFFER_TOO_SMALL;
-        *size = strlen(buffer) + 1;
+        *size = strlen(name) + 1;
         free( buffer );
     }
+    free( redir.Buffer );
     return status;
+}
+
+
+/******************************************************************
+ *		collapse_path
+ *
+ * Get rid of . and .. components in the path.
+ */
+static void collapse_path( WCHAR *path )
+{
+    WCHAR *p, *start, *next;
+
+    /* convert every / into a \ */
+    for (p = path; *p; p++) if (*p == '/') *p = '\\';
+
+    p = path + 4;
+    while (*p && *p != '\\') p++;
+    start = p + 1;
+
+    /* collapse duplicate backslashes */
+    next = start;
+    for (p = next; *p; p++) if (*p != '\\' || next[-1] != '\\') *next++ = *p;
+    *next = 0;
+
+    p = start;
+    while (*p)
+    {
+        if (*p == '.')
+        {
+            switch(p[1])
+            {
+            case '\\': /* .\ component */
+                next = p + 2;
+                memmove( p, next, (wcslen(next) + 1) * sizeof(WCHAR) );
+                continue;
+            case 0:  /* final . */
+                if (p > start) p--;
+                *p = 0;
+                continue;
+            case '.':
+                if (p[2] == '\\')  /* ..\ component */
+                {
+                    next = p + 3;
+                    if (p > start)
+                    {
+                        p--;
+                        while (p > start && p[-1] != '\\') p--;
+                    }
+                    memmove( p, next, (wcslen(next) + 1) * sizeof(WCHAR) );
+                    continue;
+                }
+                else if (!p[2])  /* final .. */
+                {
+                    if (p > start)
+                    {
+                        p--;
+                        while (p > start && p[-1] != '\\') p--;
+                        if (p > start) p--;
+                    }
+                    *p = 0;
+                    continue;
+                }
+                break;
+            }
+        }
+        /* skip to the next component */
+        while (*p && *p != '\\') p++;
+        if (*p == '\\')
+        {
+            /* remove last dot in previous dir name */
+            if (p > start && p[-1] == '.') memmove( p-1, p, (wcslen(p) + 1) * sizeof(WCHAR) );
+            else p++;
+        }
+    }
+
+    /* remove trailing spaces and dots (yes, Windows really does that, don't ask) */
+    while (p > start && (p[-1] == ' ' || p[-1] == '.')) p--;
+    *p = 0;
 }
 
 
@@ -3480,7 +3547,7 @@ NTSTATUS unix_to_nt_file_name( const char *name, WCHAR **nt )
     unsigned int lenW, lenA = strlen(name);
     const char *path = name;
     NTSTATUS status;
-    WCHAR *p, *buffer;
+    WCHAR *buffer;
     int drive;
 
     status = find_drive_rootA( &path, lenA, &drive );
@@ -3499,7 +3566,7 @@ NTSTATUS unix_to_nt_file_name( const char *name, WCHAR **nt )
     memcpy( buffer, prefix, lenW * sizeof(WCHAR) );
     lenW += ntdll_umbstowcs( path, lenA, buffer + lenW, lenA );
     buffer[lenW] = 0;
-    for (p = buffer; *p; p++) if (*p == '/') *p = '\\';
+    collapse_path( buffer );
     *nt = buffer;
     return STATUS_SUCCESS;
 }
@@ -3508,7 +3575,7 @@ NTSTATUS unix_to_nt_file_name( const char *name, WCHAR **nt )
 /******************************************************************
  *           wine_unix_to_nt_file_name
  */
-NTSTATUS CDECL wine_unix_to_nt_file_name( const char *name, WCHAR *buffer, SIZE_T *size )
+NTSTATUS WINAPI wine_unix_to_nt_file_name( const char *name, WCHAR *buffer, ULONG *size )
 {
     WCHAR *nt_name = NULL;
     NTSTATUS status;
@@ -3524,6 +3591,61 @@ NTSTATUS CDECL wine_unix_to_nt_file_name( const char *name, WCHAR *buffer, SIZE_
         free( nt_name );
     }
     return status;
+}
+
+
+/***********************************************************************
+ *           get_full_path
+ *
+ * Simplified version of RtlGetFullPathName_U.
+ */
+NTSTATUS get_full_path( const WCHAR *name, const WCHAR *curdir, WCHAR **path )
+{
+    static const WCHAR uncW[] = {'\\','?','?','\\','U','N','C','\\',0};
+    static const WCHAR devW[] = {'\\','?','?','\\',0};
+    static const WCHAR unixW[] = {'u','n','i','x'};
+    WCHAR *ret, root[] = {'\\','?','?','\\','C',':','\\',0};
+    NTSTATUS status = STATUS_SUCCESS;
+    const WCHAR *prefix;
+
+    if (IS_SEPARATOR(name[0]) && IS_SEPARATOR(name[1]))  /* \\ prefix */
+    {
+        if ((name[2] == '.' || name[2] == '?') && IS_SEPARATOR(name[3])) /* \\?\ device */
+        {
+            name += 4;
+            if (!wcsnicmp( name, unixW, 4 ) && IS_SEPARATOR(name[4]))  /* \\?\unix special name */
+            {
+                char *unix_name;
+                name += 4;
+                unix_name = malloc( wcslen(name) * 3 + 1 );
+                ntdll_wcstoumbs( name, wcslen(name) + 1, unix_name, wcslen(name) * 3 + 1, FALSE );
+                status = unix_to_nt_file_name( unix_name, path );
+                free( unix_name );
+                return status;
+            }
+            prefix = devW;
+        }
+        else prefix = uncW;  /* UNC path */
+    }
+    else if (IS_SEPARATOR(name[0]))  /* absolute path */
+    {
+        root[4] = curdir[4];
+        prefix = root;
+    }
+    else if (name[0] && name[1] == ':')  /* drive letter */
+    {
+        root[4] = towupper(name[0]);
+        name += 2;
+        prefix = root;
+    }
+    else prefix = curdir;  /* relative path */
+
+    ret = malloc( (wcslen(prefix) + wcslen(name) + 1) * sizeof(WCHAR) );
+    wcscpy( ret, prefix );
+    wcscat( ret, name );
+    collapse_path( ret );
+    *path = ret;
+    return STATUS_SUCCESS;
 }
 
 
@@ -3616,9 +3738,11 @@ NTSTATUS WINAPI NtCreateFile( HANDLE *handle, ACCESS_MASK access, OBJECT_ATTRIBU
                               ULONG attributes, ULONG sharing, ULONG disposition,
                               ULONG options, void *ea_buffer, ULONG ea_length )
 {
-    UNICODE_STRING nt_name = { 0 };
+    OBJECT_ATTRIBUTES new_attr;
+    UNICODE_STRING nt_name;
     char *unix_name;
     BOOL created = FALSE;
+    NTSTATUS status;
 
     TRACE( "handle=%p access=%08x name=%s objattr=%08x root=%p sec=%p io=%p alloc_size=%p "
            "attr=%08x sharing=%08x disp=%d options=%08x ea=%p.0x%08x\n",
@@ -3626,52 +3750,46 @@ NTSTATUS WINAPI NtCreateFile( HANDLE *handle, ACCESS_MASK access, OBJECT_ATTRIBU
            attr->RootDirectory, attr->SecurityDescriptor, io, alloc_size,
            attributes, sharing, disposition, options, ea_buffer, ea_length );
 
+    *handle = 0;
     if (!attr || !attr->ObjectName) return STATUS_INVALID_PARAMETER;
 
     if (alloc_size) FIXME( "alloc_size not supported\n" );
 
+    new_attr = *attr;
     if (options & FILE_OPEN_BY_FILE_ID)
-        io->u.Status = file_id_to_unix_file_name( attr, &unix_name, &nt_name );
-    else
-        io->u.Status = nt_to_unix_file_name_attr( attr, &unix_name, &nt_name, disposition );
-
-    if (io->u.Status == STATUS_BAD_DEVICE_TYPE)
     {
-        SERVER_START_REQ( open_file_object )
-        {
-            req->access     = access;
-            req->attributes = attr->Attributes;
-            req->rootdir    = wine_server_obj_handle( attr->RootDirectory );
-            req->sharing    = sharing;
-            req->options    = options;
-            wine_server_add_data( req, attr->ObjectName->Buffer, attr->ObjectName->Length );
-            io->u.Status = wine_server_call( req );
-            *handle = wine_server_ptr_handle( reply->handle );
-        }
-        SERVER_END_REQ;
-        if (io->u.Status == STATUS_SUCCESS) io->Information = FILE_OPENED;
-        return io->u.Status;
+        status = file_id_to_unix_file_name( &new_attr, &unix_name, &nt_name );
+        if (!status) new_attr.ObjectName = &nt_name;
+    }
+    else
+    {
+        get_redirect( &new_attr, &nt_name );
+        status = nt_to_unix_file_name( &new_attr, &unix_name, disposition );
     }
 
-    if (io->u.Status == STATUS_NO_SUCH_FILE && disposition != FILE_OPEN && disposition != FILE_OVERWRITE)
+    if (status == STATUS_BAD_DEVICE_TYPE)
+    {
+        status = server_open_file_object( handle, access, &new_attr, sharing, options );
+        if (status == STATUS_SUCCESS) io->Information = FILE_OPENED;
+        free( nt_name.Buffer );
+        return io->u.Status = status;
+    }
+
+    if (status == STATUS_NO_SUCH_FILE && disposition != FILE_OPEN && disposition != FILE_OVERWRITE)
     {
         created = TRUE;
-        io->u.Status = STATUS_SUCCESS;
+        status = STATUS_SUCCESS;
     }
 
-    if (io->u.Status == STATUS_SUCCESS)
+    if (status == STATUS_SUCCESS)
     {
-        OBJECT_ATTRIBUTES nt_attr = *attr;
-
-        if (nt_name.Buffer) nt_attr.ObjectName = &nt_name;
-        io->u.Status = open_unix_file( handle, unix_name, access, &nt_attr, attributes,
-                                       sharing, disposition, options, ea_buffer, ea_length );
-        free( nt_name.Buffer );
+        status = open_unix_file( handle, unix_name, access, &new_attr, attributes,
+                                 sharing, disposition, options, ea_buffer, ea_length );
         free( unix_name );
     }
-    else WARN( "%s not found (%x)\n", debugstr_us(attr->ObjectName), io->u.Status );
+    else WARN( "%s not found (%x)\n", debugstr_us(attr->ObjectName), status );
 
-    if (io->u.Status == STATUS_SUCCESS)
+    if (status == STATUS_SUCCESS)
     {
         if (created) io->Information = FILE_CREATED;
         else switch(disposition)
@@ -3692,13 +3810,14 @@ NTSTATUS WINAPI NtCreateFile( HANDLE *handle, ACCESS_MASK access, OBJECT_ATTRIBU
             break;
         }
     }
-    else if (io->u.Status == STATUS_TOO_MANY_OPENED_FILES)
+    else if (status == STATUS_TOO_MANY_OPENED_FILES)
     {
         static int once;
         if (!once++) ERR_(winediag)( "Too many open files, ulimit -n probably needs to be increased\n" );
     }
 
-    return io->u.Status;
+    free( nt_name.Buffer );
+    return io->u.Status = status;
 }
 
 
@@ -3726,9 +3845,8 @@ NTSTATUS WINAPI NtCreateMailslotFile( HANDLE *handle, ULONG access, OBJECT_ATTRI
     TRACE( "%p %08x %p %p %08x %08x %08x %p\n",
            handle, access, attr, io, options, quota, msg_size, timeout );
 
-    if (!handle) return STATUS_ACCESS_VIOLATION;
+    *handle = 0;
     if (!attr) return STATUS_INVALID_PARAMETER;
-
     if ((status = alloc_object_attributes( attr, &objattr, &len ))) return status;
 
     SERVER_START_REQ( create_mailslot )
@@ -3759,6 +3877,7 @@ NTSTATUS WINAPI NtCreateNamedPipeFile( HANDLE *handle, ULONG access, OBJECT_ATTR
     data_size_t len;
     struct object_attributes *objattr;
 
+    *handle = 0;
     if (!attr) return STATUS_INVALID_PARAMETER;
 
     TRACE( "(%p %x %s %p %x %d %x %d %d %d %d %d %d %p)\n",
@@ -3801,12 +3920,20 @@ NTSTATUS WINAPI NtDeleteFile( OBJECT_ATTRIBUTES *attr )
 {
     HANDLE handle;
     NTSTATUS status;
-    IO_STATUS_BLOCK io;
+    char *unix_name;
+    UNICODE_STRING nt_name;
+    OBJECT_ATTRIBUTES new_attr = *attr;
 
-    status = NtCreateFile( &handle, GENERIC_READ | GENERIC_WRITE | DELETE, attr, &io, NULL, 0,
-                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN,
-                           FILE_DELETE_ON_CLOSE, NULL, 0 );
-    if (status == STATUS_SUCCESS) NtClose( handle );
+    get_redirect( &new_attr, &nt_name );
+    if (!(status = nt_to_unix_file_name( &new_attr, &unix_name, FILE_OPEN )))
+    {
+        if (!(status = open_unix_file( &handle, unix_name, GENERIC_READ | GENERIC_WRITE | DELETE, &new_attr,
+                                       0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN,
+                                       FILE_DELETE_ON_CLOSE, NULL, 0 )))
+            NtClose( handle );
+        free( unix_name );
+    }
+    free( nt_name.Buffer );
     return status;
 }
 
@@ -3819,8 +3946,11 @@ NTSTATUS WINAPI NtQueryFullAttributesFile( const OBJECT_ATTRIBUTES *attr,
 {
     char *unix_name;
     NTSTATUS status;
+    UNICODE_STRING redir;
+    OBJECT_ATTRIBUTES new_attr = *attr;
 
-    if (!(status = nt_to_unix_file_name_attr( attr, &unix_name, NULL, FILE_OPEN )))
+    get_redirect( &new_attr, &redir );
+    if (!(status = nt_to_unix_file_name( &new_attr, &unix_name, FILE_OPEN )))
     {
         ULONG attributes;
         struct stat st;
@@ -3849,6 +3979,7 @@ NTSTATUS WINAPI NtQueryFullAttributesFile( const OBJECT_ATTRIBUTES *attr,
         free( unix_name );
     }
     else WARN( "%s not found (%x)\n", debugstr_us(attr->ObjectName), status );
+    free( redir.Buffer );
     return status;
 }
 
@@ -3860,8 +3991,11 @@ NTSTATUS WINAPI NtQueryAttributesFile( const OBJECT_ATTRIBUTES *attr, FILE_BASIC
 {
     char *unix_name;
     NTSTATUS status;
+    UNICODE_STRING redir;
+    OBJECT_ATTRIBUTES new_attr = *attr;
 
-    if (!(status = nt_to_unix_file_name_attr( attr, &unix_name, NULL, FILE_OPEN )))
+    get_redirect( &new_attr, &redir );
+    if (!(status = nt_to_unix_file_name( &new_attr, &unix_name, FILE_OPEN )))
     {
         ULONG attributes;
         struct stat st;
@@ -3878,6 +4012,7 @@ NTSTATUS WINAPI NtQueryAttributesFile( const OBJECT_ATTRIBUTES *attr, FILE_BASIC
         free( unix_name );
     }
     else WARN( "%s not found (%x)\n", debugstr_us(attr->ObjectName), status );
+    free( redir.Buffer );
     return status;
 }
 
@@ -3886,7 +4021,7 @@ NTSTATUS WINAPI NtQueryAttributesFile( const OBJECT_ATTRIBUTES *attr, FILE_BASIC
  *              NtQueryInformationFile   (NTDLL.@)
  */
 NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
-                                        void *ptr, LONG len, FILE_INFORMATION_CLASS class )
+                                        void *ptr, ULONG len, FILE_INFORMATION_CLASS class )
 {
     static const size_t info_sizes[] =
     {
@@ -3960,6 +4095,7 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
     int fd, needs_close = FALSE;
     ULONG attr;
     unsigned int options;
+    NTSTATUS status;
 
     TRACE( "(%p,%p,%p,0x%08x,0x%08x)\n", handle, io, ptr, len, class);
 
@@ -3972,9 +4108,9 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
     if (len < info_sizes[class])
         return io->u.Status = STATUS_INFO_LENGTH_MISMATCH;
 
-    if ((io->u.Status = server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, &options )))
+    if ((status = server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, &options )))
     {
-        if (io->u.Status != STATUS_BAD_DEVICE_TYPE) return io->u.Status;
+        if (status != STATUS_BAD_DEVICE_TYPE) return io->u.Status = status;
         return server_get_file_info( handle, io, ptr, len, class );
     }
 
@@ -3982,9 +4118,9 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
     {
     case FileBasicInformation:
         if (fd_get_file_info( fd, options, &st, &attr ) == -1)
-            io->u.Status = errno_to_status( errno );
+            status = errno_to_status( errno );
         else if (!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode))
-            io->u.Status = STATUS_INVALID_INFO_CLASS;
+            status = STATUS_INVALID_INFO_CLASS;
         else
             fill_file_info( &st, attr, ptr, class );
         break;
@@ -3992,7 +4128,7 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
         {
             FILE_STANDARD_INFORMATION *info = ptr;
 
-            if (fd_get_file_info( fd, options, &st, &attr ) == -1) io->u.Status = errno_to_status( errno );
+            if (fd_get_file_info( fd, options, &st, &attr ) == -1) status = errno_to_status( errno );
             else
             {
                 fill_file_info( &st, attr, info, class );
@@ -4004,12 +4140,12 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
         {
             FILE_POSITION_INFORMATION *info = ptr;
             off_t res = lseek( fd, 0, SEEK_CUR );
-            if (res == (off_t)-1) io->u.Status = errno_to_status( errno );
+            if (res == (off_t)-1) status = errno_to_status( errno );
             else info->CurrentByteOffset.QuadPart = res;
         }
         break;
     case FileInternalInformation:
-        if (fd_get_file_info( fd, options, &st, &attr ) == -1) io->u.Status = errno_to_status( errno );
+        if (fd_get_file_info( fd, options, &st, &attr ) == -1) status = errno_to_status( errno );
         else fill_file_info( &st, attr, ptr, class );
         break;
     case FileEaInformation:
@@ -4019,7 +4155,7 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
         }
         break;
     case FileEndOfFileInformation:
-        if (fd_get_file_info( fd, options, &st, &attr ) == -1) io->u.Status = errno_to_status( errno );
+        if (fd_get_file_info( fd, options, &st, &attr ) == -1) status = errno_to_status( errno );
         else fill_file_info( &st, attr, ptr, class );
         break;
     case FileAllInformation:
@@ -4027,10 +4163,10 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
             FILE_ALL_INFORMATION *info = ptr;
             char *unix_name;
 
-            if (fd_get_file_info( fd, options, &st, &attr ) == -1) io->u.Status = errno_to_status( errno );
+            if (fd_get_file_info( fd, options, &st, &attr ) == -1) status = errno_to_status( errno );
             else if (!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode))
-                io->u.Status = STATUS_INVALID_INFO_CLASS;
-            else if (!(io->u.Status = server_get_unix_name( handle, &unix_name )))
+                status = STATUS_INVALID_INFO_CLASS;
+            else if (!(status = server_get_unix_name( handle, &unix_name )))
             {
                 LONG name_len = len - FIELD_OFFSET(FILE_ALL_INFORMATION, NameInformation.FileName);
 
@@ -4042,7 +4178,7 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
                 info->ModeInformation.Mode = 0;  /* FIXME */
                 info->AlignmentInformation.AlignmentRequirement = 1;  /* FIXME */
 
-                io->u.Status = fill_name_info( unix_name, &info->NameInformation, &name_len );
+                status = fill_name_info( unix_name, &info->NameInformation, &name_len );
                 free( unix_name );
                 io->Information = FIELD_OFFSET(FILE_ALL_INFORMATION, NameInformation.FileName) + name_len;
             }
@@ -4056,8 +4192,8 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
             {
                 req->handle = wine_server_obj_handle( handle );
                 req->flags = 0;
-                io->u.Status = wine_server_call( req );
-                if( io->u.Status == STATUS_SUCCESS )
+                status = wine_server_call( req );
+                if (status == STATUS_SUCCESS)
                 {
                     info->MaximumMessageSize = reply->max_msgsize;
                     info->MailslotQuota = 0;
@@ -4067,7 +4203,7 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
                 }
             }
             SERVER_END_REQ;
-            if (!io->u.Status)
+            if (!status)
             {
                 char *tmpbuf;
                 ULONG size = info->MaximumMessageSize ? info->MaximumMessageSize : 0x10000;
@@ -4091,10 +4227,10 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
             FILE_NAME_INFORMATION *info = ptr;
             char *unix_name;
 
-            if (!(io->u.Status = server_get_unix_name( handle, &unix_name )))
+            if (!(status = server_get_unix_name( handle, &unix_name )))
             {
                 LONG name_len = len - FIELD_OFFSET(FILE_NAME_INFORMATION, FileName);
-                io->u.Status = fill_name_info( unix_name, info, &name_len );
+                status = fill_name_info( unix_name, info, &name_len );
                 free( unix_name );
                 io->Information = FIELD_OFFSET(FILE_NAME_INFORMATION, FileName) + name_len;
             }
@@ -4105,15 +4241,15 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
             FILE_NETWORK_OPEN_INFORMATION *info = ptr;
             char *unix_name;
 
-            if (!(io->u.Status = server_get_unix_name( handle, &unix_name )))
+            if (!(status = server_get_unix_name( handle, &unix_name )))
             {
                 ULONG attributes;
                 struct stat st;
 
                 if (get_file_info( unix_name, &st, &attributes ) == -1)
-                    io->u.Status = errno_to_status( errno );
+                    status = errno_to_status( errno );
                 else if (!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode))
-                    io->u.Status = STATUS_INVALID_INFO_CLASS;
+                    status = STATUS_INVALID_INFO_CLASS;
                 else
                 {
                     FILE_BASIC_INFORMATION basic;
@@ -4135,21 +4271,21 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
         }
         break;
     case FileIdInformation:
-        if (fd_get_file_info( fd, options, &st, &attr ) == -1) io->u.Status = errno_to_status( errno );
+        if (fd_get_file_info( fd, options, &st, &attr ) == -1) status = errno_to_status( errno );
         else
         {
             struct mountmgr_unix_drive drive;
             FILE_ID_INFORMATION *info = ptr;
 
             info->VolumeSerialNumber = 0;
-            if (!(io->u.Status = get_mountmgr_fs_info( handle, fd, &drive, sizeof(drive) )))
+            if (!get_mountmgr_fs_info( handle, fd, &drive, sizeof(drive) ))
                 info->VolumeSerialNumber = drive.serial;
             memset( &info->FileId, 0, sizeof(info->FileId) );
             *(ULONGLONG *)&info->FileId = st.st_ino;
         }
         break;
     case FileAttributeTagInformation:
-        if (fd_get_file_info( fd, options, &st, &attr ) == -1) io->u.Status = errno_to_status( errno );
+        if (fd_get_file_info( fd, options, &st, &attr ) == -1) status = errno_to_status( errno );
         else
         {
             FILE_ATTRIBUTE_TAG_INFORMATION *info = ptr;
@@ -4161,12 +4297,12 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
         break;
     default:
         FIXME("Unsupported class (%d)\n", class);
-        io->u.Status = STATUS_NOT_IMPLEMENTED;
+        status = STATUS_NOT_IMPLEMENTED;
         break;
     }
     if (needs_close) close( fd );
-    if (io->u.Status == STATUS_SUCCESS && !io->Information) io->Information = info_sizes[class];
-    return io->u.Status;
+    if (status == STATUS_SUCCESS && !io->Information) io->Information = info_sizes[class];
+    return io->u.Status = status;
 }
 
 
@@ -4177,10 +4313,10 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
                                       void *ptr, ULONG len, FILE_INFORMATION_CLASS class )
 {
     int fd, needs_close;
+    NTSTATUS status = STATUS_SUCCESS;
 
     TRACE( "(%p,%p,%p,0x%08x,0x%08x)\n", handle, io, ptr, len, class );
 
-    io->u.Status = STATUS_SUCCESS;
     switch (class)
     {
     case FileBasicInformation:
@@ -4190,18 +4326,18 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
             const FILE_BASIC_INFORMATION *info = ptr;
             LARGE_INTEGER mtime, atime;
 
-            if ((io->u.Status = server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL )))
-                return io->u.Status;
+            if ((status = server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL )))
+                return io->u.Status = status;
 
             mtime.QuadPart = info->LastWriteTime.QuadPart == -1 ? 0 : info->LastWriteTime.QuadPart;
             atime.QuadPart = info->LastAccessTime.QuadPart == -1 ? 0 : info->LastAccessTime.QuadPart;
 
             if (atime.QuadPart || mtime.QuadPart)
-                io->u.Status = set_file_times( fd, &mtime, &atime );
+                status = set_file_times( fd, &mtime, &atime );
 
-            if (io->u.Status == STATUS_SUCCESS && info->FileAttributes)
+            if (status == STATUS_SUCCESS && info->FileAttributes)
             {
-                if (fstat( fd, &st ) == -1) io->u.Status = errno_to_status( errno );
+                if (fstat( fd, &st ) == -1) status = errno_to_status( errno );
                 else
                 {
                     if (info->FileAttributes & FILE_ATTRIBUTE_READONLY)
@@ -4216,13 +4352,13 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
                         /* add write permission only where we already have read permission */
                         st.st_mode |= (0600 | ((st.st_mode & 044) >> 1)) & (~start_umask);
                     }
-                    if (fchmod( fd, st.st_mode ) == -1) io->u.Status = errno_to_status( errno );
+                    if (fchmod( fd, st.st_mode ) == -1) status = errno_to_status( errno );
                 }
             }
 
             if (needs_close) close( fd );
         }
-        else io->u.Status = STATUS_INVALID_PARAMETER_3;
+        else status = STATUS_INVALID_PARAMETER_3;
         break;
 
     case FilePositionInformation:
@@ -4230,44 +4366,31 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
         {
             const FILE_POSITION_INFORMATION *info = ptr;
 
-            if ((io->u.Status = server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL )))
-                return io->u.Status;
+            if ((status = server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL )))
+                return io->u.Status = status;
 
             if (lseek( fd, info->CurrentByteOffset.QuadPart, SEEK_SET ) == (off_t)-1)
-                io->u.Status = errno_to_status( errno );
+                status = errno_to_status( errno );
 
             if (needs_close) close( fd );
         }
-        else io->u.Status = STATUS_INVALID_PARAMETER_3;
+        else status = STATUS_INVALID_PARAMETER_3;
         break;
 
     case FileEndOfFileInformation:
         if (len >= sizeof(FILE_END_OF_FILE_INFORMATION))
         {
-            struct stat st;
             const FILE_END_OF_FILE_INFORMATION *info = ptr;
 
-            if ((io->u.Status = server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL )))
-                return io->u.Status;
-
-            /* first try normal truncate */
-            if (ftruncate( fd, (off_t)info->EndOfFile.QuadPart ) != -1) break;
-
-            /* now check for the need to extend the file */
-            if (fstat( fd, &st ) != -1 && (off_t)info->EndOfFile.QuadPart > st.st_size)
+            SERVER_START_REQ( set_fd_eof_info )
             {
-                static const char zero;
-
-                /* extend the file one byte beyond the requested size and then truncate it */
-                /* this should work around ftruncate implementations that can't extend files */
-                if (pwrite( fd, &zero, 1, (off_t)info->EndOfFile.QuadPart ) != -1 &&
-                    ftruncate( fd, (off_t)info->EndOfFile.QuadPart ) != -1) break;
+                req->handle   = wine_server_obj_handle( handle );
+                req->eof      = info->EndOfFile.QuadPart;
+                status = wine_server_call( req );
             }
-            io->u.Status = errno_to_status( errno );
-
-            if (needs_close) close( fd );
+            SERVER_END_REQ;
         }
-        else io->u.Status = STATUS_INVALID_PARAMETER_3;
+        else status = STATUS_INVALID_PARAMETER_3;
         break;
 
     case FilePipeInformation:
@@ -4277,7 +4400,7 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
 
             if ((info->CompletionMode | info->ReadMode) & ~1)
             {
-                io->u.Status = STATUS_INVALID_PARAMETER;
+                status = STATUS_INVALID_PARAMETER;
                 break;
             }
 
@@ -4286,11 +4409,11 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
                 req->handle = wine_server_obj_handle( handle );
                 req->flags  = (info->CompletionMode ? NAMED_PIPE_NONBLOCKING_MODE    : 0) |
                               (info->ReadMode       ? NAMED_PIPE_MESSAGE_STREAM_READ : 0);
-                io->u.Status = wine_server_call( req );
+                status = wine_server_call( req );
             }
             SERVER_END_REQ;
         }
-        else io->u.Status = STATUS_INVALID_PARAMETER_3;
+        else status = STATUS_INVALID_PARAMETER_3;
         break;
 
     case FileMailslotSetInformation:
@@ -4302,7 +4425,7 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
                 req->handle = wine_server_obj_handle( handle );
                 req->flags = MAILSLOT_SET_READ_TIMEOUT;
                 req->read_timeout = info->ReadTimeout.QuadPart;
-                io->u.Status = wine_server_call( req );
+                status = wine_server_call( req );
             }
             SERVER_END_REQ;
         }
@@ -4318,11 +4441,11 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
                 req->handle   = wine_server_obj_handle( handle );
                 req->chandle  = wine_server_obj_handle( info->CompletionPort );
                 req->ckey     = info->CompletionKey;
-                io->u.Status  = wine_server_call( req );
+                status = wine_server_call( req );
             }
             SERVER_END_REQ;
-        } else
-            io->u.Status = STATUS_INVALID_PARAMETER_3;
+        }
+        else status = STATUS_INVALID_PARAMETER_3;
         break;
 
     case FileIoCompletionNotificationInformation:
@@ -4337,11 +4460,11 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
             {
                 req->handle   = wine_server_obj_handle( handle );
                 req->flags    = info->Flags;
-                io->u.Status  = wine_server_call( req );
+                status = wine_server_call( req );
             }
             SERVER_END_REQ;
-        } else
-            io->u.Status = STATUS_INFO_LENGTH_MISMATCH;
+        }
+        else status = STATUS_INFO_LENGTH_MISMATCH;
         break;
 
     case FileIoPriorityHintInformation:
@@ -4351,13 +4474,13 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
             if (info->PriorityHint < MaximumIoPriorityHintType)
                 TRACE( "ignoring FileIoPriorityHintInformation %u\n", info->PriorityHint );
             else
-                io->u.Status = STATUS_INVALID_PARAMETER;
+                status = STATUS_INVALID_PARAMETER;
         }
-        else io->u.Status = STATUS_INFO_LENGTH_MISMATCH;
+        else status = STATUS_INFO_LENGTH_MISMATCH;
         break;
 
     case FileAllInformation:
-        io->u.Status = STATUS_INVALID_INFO_CLASS;
+        status = STATUS_INVALID_INFO_CLASS;
         break;
 
     case FileValidDataLengthInformation:
@@ -4366,28 +4489,28 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
             struct stat st;
             const FILE_VALID_DATA_LENGTH_INFORMATION *info = ptr;
 
-            if ((io->u.Status = server_get_unix_fd( handle, FILE_WRITE_DATA, &fd, &needs_close, NULL, NULL )))
-                return io->u.Status;
+            if ((status = server_get_unix_fd( handle, FILE_WRITE_DATA, &fd, &needs_close, NULL, NULL )))
+                return io->u.Status = status;
 
-            if (fstat( fd, &st ) == -1) io->u.Status = errno_to_status( errno );
+            if (fstat( fd, &st ) == -1) status = errno_to_status( errno );
             else if (info->ValidDataLength.QuadPart <= 0 || (off_t)info->ValidDataLength.QuadPart > st.st_size)
-                io->u.Status = STATUS_INVALID_PARAMETER;
+                status = STATUS_INVALID_PARAMETER;
             else
             {
-#ifdef HAVE_FALLOCATE
-                if (fallocate( fd, 0, 0, (off_t)info->ValidDataLength.QuadPart ) == -1)
+#ifdef HAVE_POSIX_FALLOCATE
+                int err;
+                if ((err = posix_fallocate( fd, 0, (off_t)info->ValidDataLength.QuadPart )) != 0)
                 {
-                    NTSTATUS status = errno_to_status( errno );
-                    if (status == STATUS_NOT_SUPPORTED) WARN( "fallocate not supported on this filesystem\n" );
-                    else io->u.Status = status;
+                    if (err == EOPNOTSUPP) WARN( "posix_fallocate not supported on this filesystem\n" );
+                    else status = errno_to_status( err );
                 }
 #else
-                FIXME( "setting valid data length not supported\n" );
+                WARN( "setting valid data length not supported\n" );
 #endif
             }
             if (needs_close) close( fd );
         }
-        else io->u.Status = STATUS_INVALID_PARAMETER_3;
+        else status = STATUS_INVALID_PARAMETER_3;
         break;
 
     case FileDispositionInformation:
@@ -4399,115 +4522,100 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
             {
                 req->handle   = wine_server_obj_handle( handle );
                 req->unlink   = info->DoDeleteFile;
-                io->u.Status  = wine_server_call( req );
+                status = wine_server_call( req );
             }
             SERVER_END_REQ;
-        } else
-            io->u.Status = STATUS_INVALID_PARAMETER_3;
+        }
+        else status = STATUS_INVALID_PARAMETER_3;
         break;
 
     case FileRenameInformation:
         if (len >= sizeof(FILE_RENAME_INFORMATION))
         {
             FILE_RENAME_INFORMATION *info = ptr;
-            UNICODE_STRING name_str, nt_name = { 0 };
+            UNICODE_STRING name_str, redir;
             OBJECT_ATTRIBUTES attr;
             char *unix_name;
 
             name_str.Buffer = info->FileName;
             name_str.Length = info->FileNameLength;
             name_str.MaximumLength = info->FileNameLength + sizeof(WCHAR);
+            InitializeObjectAttributes( &attr, &name_str, OBJ_CASE_INSENSITIVE, info->RootDirectory, NULL );
+            get_redirect( &attr, &redir );
 
-            attr.Length = sizeof(attr);
-            attr.ObjectName = &name_str;
-            attr.RootDirectory = info->RootDirectory;
-            attr.Attributes = OBJ_CASE_INSENSITIVE;
-
-            io->u.Status = nt_to_unix_file_name_attr( &attr, &unix_name, &nt_name, FILE_OPEN_IF );
-            if (io->u.Status != STATUS_SUCCESS && io->u.Status != STATUS_NO_SUCH_FILE)
-                break;
-
-            SERVER_START_REQ( set_fd_name_info )
+            status = nt_to_unix_file_name( &attr, &unix_name, FILE_OPEN_IF );
+            if (status == STATUS_SUCCESS || status == STATUS_NO_SUCH_FILE)
             {
-                req->handle   = wine_server_obj_handle( handle );
-                req->rootdir  = wine_server_obj_handle( attr.RootDirectory );
-                req->namelen  = nt_name.Length;
-                req->link     = FALSE;
-                req->replace  = info->ReplaceIfExists;
-                wine_server_add_data( req, nt_name.Buffer, nt_name.Length );
-                wine_server_add_data( req, unix_name, strlen(unix_name) );
-                io->u.Status = wine_server_call( req );
-            }
-            SERVER_END_REQ;
+                SERVER_START_REQ( set_fd_name_info )
+                {
+                    req->handle   = wine_server_obj_handle( handle );
+                    req->rootdir  = wine_server_obj_handle( attr.RootDirectory );
+                    req->namelen  = attr.ObjectName->Length;
+                    req->link     = FALSE;
+                    req->replace  = info->ReplaceIfExists;
+                    wine_server_add_data( req, attr.ObjectName->Buffer, attr.ObjectName->Length );
+                    wine_server_add_data( req, unix_name, strlen(unix_name) );
+                    status = wine_server_call( req );
+                }
+                SERVER_END_REQ;
 
-            free( unix_name );
-            free( nt_name.Buffer );
+                free( unix_name );
+            }
+            free( redir.Buffer );
         }
-        else io->u.Status = STATUS_INVALID_PARAMETER_3;
+        else status = STATUS_INVALID_PARAMETER_3;
         break;
 
     case FileLinkInformation:
         if (len >= sizeof(FILE_LINK_INFORMATION))
         {
             FILE_LINK_INFORMATION *info = ptr;
-            UNICODE_STRING name_str, nt_name = { 0 };
+            UNICODE_STRING name_str, redir;
             OBJECT_ATTRIBUTES attr;
             char *unix_name;
 
             name_str.Buffer = info->FileName;
             name_str.Length = info->FileNameLength;
             name_str.MaximumLength = info->FileNameLength + sizeof(WCHAR);
+            InitializeObjectAttributes( &attr, &name_str, OBJ_CASE_INSENSITIVE, info->RootDirectory, NULL );
+            get_redirect( &attr, &redir );
 
-            attr.Length = sizeof(attr);
-            attr.ObjectName = &name_str;
-            attr.RootDirectory = info->RootDirectory;
-            attr.Attributes = OBJ_CASE_INSENSITIVE;
-
-            io->u.Status = nt_to_unix_file_name_attr( &attr, &unix_name, &nt_name, FILE_OPEN_IF );
-            if (io->u.Status != STATUS_SUCCESS && io->u.Status != STATUS_NO_SUCH_FILE)
-                break;
-
-            SERVER_START_REQ( set_fd_name_info )
+            status = nt_to_unix_file_name( &attr, &unix_name, FILE_OPEN_IF );
+            if (status == STATUS_SUCCESS || status == STATUS_NO_SUCH_FILE)
             {
-                req->handle   = wine_server_obj_handle( handle );
-                req->rootdir  = wine_server_obj_handle( attr.RootDirectory );
-                req->namelen  = nt_name.Length;
-                req->link     = TRUE;
-                req->replace  = info->ReplaceIfExists;
-                wine_server_add_data( req, nt_name.Buffer, nt_name.Length );
-                wine_server_add_data( req, unix_name, strlen(unix_name) );
-                io->u.Status  = wine_server_call( req );
-            }
-            SERVER_END_REQ;
+                SERVER_START_REQ( set_fd_name_info )
+                {
+                    req->handle   = wine_server_obj_handle( handle );
+                    req->rootdir  = wine_server_obj_handle( attr.RootDirectory );
+                    req->namelen  = attr.ObjectName->Length;
+                    req->link     = TRUE;
+                    req->replace  = info->ReplaceIfExists;
+                    wine_server_add_data( req, attr.ObjectName->Buffer, attr.ObjectName->Length );
+                    wine_server_add_data( req, unix_name, strlen(unix_name) );
+                    status  = wine_server_call( req );
+                }
+                SERVER_END_REQ;
 
-            free( unix_name );
-            free( nt_name.Buffer );
+                free( unix_name );
+            }
+            free( redir.Buffer );
         }
-        else io->u.Status = STATUS_INVALID_PARAMETER_3;
+        else status = STATUS_INVALID_PARAMETER_3;
         break;
 
     default:
         FIXME("Unsupported class (%d)\n", class);
-        io->u.Status = STATUS_NOT_IMPLEMENTED;
+        status = STATUS_NOT_IMPLEMENTED;
         break;
     }
     io->Information = 0;
-    return io->u.Status;
+    return io->u.Status = status;
 }
 
 
 /***********************************************************************
  *                  Asynchronous file I/O                              *
  */
-
-typedef NTSTATUS async_callback_t( void *user, IO_STATUS_BLOCK *io, NTSTATUS status );
-
-struct async_fileio
-{
-    async_callback_t    *callback; /* must be the first field */
-    struct async_fileio *next;
-    HANDLE               handle;
-};
 
 struct async_fileio_read
 {
@@ -4544,7 +4652,7 @@ struct async_irp
 
 static struct async_fileio *fileio_freelist;
 
-static void release_fileio( struct async_fileio *io )
+void release_fileio( struct async_fileio *io )
 {
     for (;;)
     {
@@ -4554,7 +4662,7 @@ static void release_fileio( struct async_fileio *io )
     }
 }
 
-static struct async_fileio *alloc_fileio( DWORD size, async_callback_t callback, HANDLE handle )
+struct async_fileio *alloc_fileio( DWORD size, async_callback_t callback, HANDLE handle )
 {
     /* first free remaining previous fileinfos */
     struct async_fileio *io = InterlockedExchangePointer( (void **)&fileio_freelist, NULL );
@@ -4574,61 +4682,35 @@ static struct async_fileio *alloc_fileio( DWORD size, async_callback_t callback,
     return io;
 }
 
-static async_data_t server_async( HANDLE handle, struct async_fileio *user, HANDLE event,
-                                  PIO_APC_ROUTINE apc, void *apc_context, IO_STATUS_BLOCK *io )
-{
-    async_data_t async;
-    async.handle      = wine_server_obj_handle( handle );
-    async.user        = wine_server_client_ptr( user );
-    async.iosb        = wine_server_client_ptr( io );
-    async.event       = wine_server_obj_handle( event );
-    async.apc         = wine_server_client_ptr( apc );
-    async.apc_context = wine_server_client_ptr( apc_context );
-    return async;
-}
-
-static NTSTATUS wait_async( HANDLE handle, BOOL alertable, IO_STATUS_BLOCK *io )
-{
-    if (NtWaitForSingleObject( handle, alertable, NULL )) return STATUS_PENDING;
-    return io->u.Status;
-}
-
 /* callback for irp async I/O completion */
-static NTSTATUS irp_completion( void *user, IO_STATUS_BLOCK *io, NTSTATUS status )
+static BOOL irp_completion( void *user, ULONG_PTR *info, NTSTATUS *status )
 {
     struct async_irp *async = user;
-    ULONG information = 0;
 
-    if (status == STATUS_ALERTED)
+    if (*status == STATUS_ALERTED)
     {
         SERVER_START_REQ( get_async_result )
         {
             req->user_arg = wine_server_client_ptr( async );
             wine_server_set_reply( req, async->buffer, async->size );
-            status = virtual_locked_server_call( req );
-            information = reply->size;
+            *status = virtual_locked_server_call( req );
         }
         SERVER_END_REQ;
     }
-    if (status != STATUS_PENDING)
-    {
-        io->u.Status = status;
-        io->Information = information;
-        release_fileio( &async->io );
-    }
-    return status;
+    release_fileio( &async->io );
+    return TRUE;
 }
 
-static NTSTATUS async_read_proc( void *user, IO_STATUS_BLOCK *iosb, NTSTATUS status )
+static BOOL async_read_proc( void *user, ULONG_PTR *info, NTSTATUS *status )
 {
     struct async_fileio_read *fileio = user;
     int fd, needs_close, result;
 
-    switch (status)
+    switch (*status)
     {
     case STATUS_ALERTED: /* got some new data */
         /* check to see if the data is ready (non-blocking) */
-        if ((status = server_get_unix_fd( fileio->io.handle, FILE_READ_DATA, &fd,
+        if ((*status = server_get_unix_fd( fileio->io.handle, FILE_READ_DATA, &fd,
                                           &needs_close, NULL, NULL )))
             break;
 
@@ -4638,49 +4720,48 @@ static NTSTATUS async_read_proc( void *user, IO_STATUS_BLOCK *iosb, NTSTATUS sta
         if (result < 0)
         {
             if (errno == EAGAIN || errno == EINTR)
-                status = STATUS_PENDING;
-            else /* check to see if the transfer is complete */
-                status = errno_to_status( errno );
+                return FALSE;
+
+            /* check to see if the transfer is complete */
+            *status = errno_to_status( errno );
         }
         else if (result == 0)
         {
-            status = fileio->already ? STATUS_SUCCESS : STATUS_PIPE_BROKEN;
+            *status = fileio->already ? STATUS_SUCCESS : STATUS_PIPE_BROKEN;
         }
         else
         {
             fileio->already += result;
-            if (fileio->already >= fileio->count || fileio->avail_mode)
-                status = STATUS_SUCCESS;
-            else
-                status = STATUS_PENDING;
+
+            if (fileio->already < fileio->count && !fileio->avail_mode)
+                return FALSE;
+
+            *status = STATUS_SUCCESS;
         }
         break;
 
     case STATUS_TIMEOUT:
     case STATUS_IO_TIMEOUT:
-        if (fileio->already) status = STATUS_SUCCESS;
+        if (fileio->already) *status = STATUS_SUCCESS;
         break;
     }
-    if (status != STATUS_PENDING)
-    {
-        iosb->u.Status = status;
-        iosb->Information = fileio->already;
-        release_fileio( &fileio->io );
-    }
-    return status;
+
+    *info = fileio->already;
+    release_fileio( &fileio->io );
+    return TRUE;
 }
 
-static NTSTATUS async_write_proc( void *user, IO_STATUS_BLOCK *iosb, NTSTATUS status )
+static BOOL async_write_proc( void *user, ULONG_PTR *info, NTSTATUS *status )
 {
     struct async_fileio_write *fileio = user;
     int result, fd, needs_close;
     enum server_fd_type type;
 
-    switch (status)
+    switch (*status)
     {
     case STATUS_ALERTED:
         /* write some data (non-blocking) */
-        if ((status = server_get_unix_fd( fileio->io.handle, FILE_WRITE_DATA, &fd,
+        if ((*status = server_get_unix_fd( fileio->io.handle, FILE_WRITE_DATA, &fd,
                                           &needs_close, &type, NULL )))
             break;
 
@@ -4693,28 +4774,26 @@ static NTSTATUS async_write_proc( void *user, IO_STATUS_BLOCK *iosb, NTSTATUS st
 
         if (result < 0)
         {
-            if (errno == EAGAIN || errno == EINTR) status = STATUS_PENDING;
-            else status = errno_to_status( errno );
+            if (errno == EAGAIN || errno == EINTR) return FALSE;
+            *status = errno_to_status( errno );
         }
         else
         {
             fileio->already += result;
-            status = (fileio->already < fileio->count) ? STATUS_PENDING : STATUS_SUCCESS;
+            if (fileio->already < fileio->count) return FALSE;
+            *status = STATUS_SUCCESS;
         }
         break;
 
     case STATUS_TIMEOUT:
     case STATUS_IO_TIMEOUT:
-        if (fileio->already) status = STATUS_SUCCESS;
+        if (fileio->already) *status = STATUS_SUCCESS;
         break;
     }
-    if (status != STATUS_PENDING)
-    {
-        iosb->u.Status = status;
-        iosb->Information = fileio->already;
-        release_fileio( &fileio->io );
-    }
-    return status;
+
+    *info = fileio->already;
+    release_fileio( &fileio->io );
+    return TRUE;
 }
 
 /* do a read call through the server */
@@ -4735,7 +4814,7 @@ static NTSTATUS server_read_file( HANDLE handle, HANDLE event, PIO_APC_ROUTINE a
 
     SERVER_START_REQ( read )
     {
-        req->async = server_async( handle, &async->io, event, apc, apc_context, io );
+        req->async = server_async( handle, &async->io, event, apc, apc_context, iosb_client_ptr(io) );
         req->pos   = offset ? offset->QuadPart : 0;
         wine_server_set_reply( req, buffer, size );
         status = virtual_locked_server_call( req );
@@ -4751,7 +4830,7 @@ static NTSTATUS server_read_file( HANDLE handle, HANDLE event, PIO_APC_ROUTINE a
 
     if (status != STATUS_PENDING) free( async );
 
-    if (wait_handle) status = wait_async( wait_handle, (options & FILE_SYNCHRONOUS_IO_ALERT), io );
+    if (wait_handle) status = wait_async( wait_handle, (options & FILE_SYNCHRONOUS_IO_ALERT) );
     return status;
 }
 
@@ -4773,7 +4852,7 @@ static NTSTATUS server_write_file( HANDLE handle, HANDLE event, PIO_APC_ROUTINE 
 
     SERVER_START_REQ( write )
     {
-        req->async = server_async( handle, &async->io, event, apc, apc_context, io );
+        req->async = server_async( handle, &async->io, event, apc, apc_context, iosb_client_ptr(io) );
         req->pos   = offset ? offset->QuadPart : 0;
         wine_server_add_data( req, buffer, size );
         status = wine_server_call( req );
@@ -4789,7 +4868,7 @@ static NTSTATUS server_write_file( HANDLE handle, HANDLE event, PIO_APC_ROUTINE 
 
     if (status != STATUS_PENDING) free( async );
 
-    if (wait_handle) status = wait_async( wait_handle, (options & FILE_SYNCHRONOUS_IO_ALERT), io );
+    if (wait_handle) status = wait_async( wait_handle, (options & FILE_SYNCHRONOUS_IO_ALERT) );
     return status;
 }
 
@@ -4813,7 +4892,7 @@ static NTSTATUS server_ioctl_file( HANDLE handle, HANDLE event,
     SERVER_START_REQ( ioctl )
     {
         req->code        = code;
-        req->async       = server_async( handle, &async->io, event, apc, apc_context, io );
+        req->async       = server_async( handle, &async->io, event, apc, apc_context, iosb_client_ptr(io) );
         wine_server_add_data( req, in_buffer, in_size );
         if ((code & 3) != METHOD_BUFFERED) wine_server_add_data( req, out_buffer, out_size );
         wine_server_set_reply( req, out_buffer, out_size );
@@ -4834,7 +4913,7 @@ static NTSTATUS server_ioctl_file( HANDLE handle, HANDLE event,
 
     if (status != STATUS_PENDING) free( async );
 
-    if (wait_handle) status = wait_async( wait_handle, (options & FILE_SYNCHRONOUS_IO_ALERT), io );
+    if (wait_handle) status = wait_async( wait_handle, (options & FILE_SYNCHRONOUS_IO_ALERT) );
     return status;
 }
 
@@ -4860,7 +4939,7 @@ static NTSTATUS get_io_timeouts( HANDLE handle, enum server_fd_type type, ULONG 
     {
         /* GetCommTimeouts */
         SERIAL_TIMEOUTS st;
-        IO_STATUS_BLOCK io;
+        IO_STATUS_BLOCK io = {0};
 
         status = NtDeviceIoControlFile( handle, NULL, NULL, NULL, &io,
                                         IOCTL_SERIAL_GET_TIMEOUTS, NULL, 0, &st, sizeof(st) );
@@ -4947,7 +5026,7 @@ static NTSTATUS get_io_avail_mode( HANDLE handle, enum server_fd_type type, BOOL
     {
         /* GetCommTimeouts */
         SERIAL_TIMEOUTS st;
-        IO_STATUS_BLOCK io;
+        IO_STATUS_BLOCK io = {0};
 
         status = NtDeviceIoControlFile( handle, NULL, NULL, NULL, &io,
                                         IOCTL_SERIAL_GET_TIMEOUTS, NULL, 0, &st, sizeof(st) );
@@ -4972,7 +5051,7 @@ static NTSTATUS get_io_avail_mode( HANDLE handle, enum server_fd_type type, BOOL
 /* register an async I/O for a file read; helper for NtReadFile */
 static NTSTATUS register_async_file_read( HANDLE handle, HANDLE event,
                                           PIO_APC_ROUTINE apc, void *apc_user,
-                                          IO_STATUS_BLOCK *iosb, void *buffer,
+                                          client_ptr_t iosb, void *buffer,
                                           ULONG already, ULONG length, BOOL avail_mode )
 {
     struct async_fileio_read *fileio;
@@ -4999,7 +5078,7 @@ static NTSTATUS register_async_file_read( HANDLE handle, HANDLE event,
     return status;
 }
 
-static void add_completion( HANDLE handle, ULONG_PTR value, NTSTATUS status, ULONG info, BOOL async )
+void add_completion( HANDLE handle, ULONG_PTR value, NTSTATUS status, ULONG info, BOOL async )
 {
     SERVER_START_REQ( add_fd_completion )
     {
@@ -5040,6 +5119,7 @@ NTSTATUS WINAPI NtReadFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, vo
     struct io_timeouts timeouts;
     NTSTATUS status, ret_status;
     ULONG total = 0;
+    client_ptr_t iosb_ptr = iosb_client_ptr(io);
     enum server_fd_type type;
     ULONG_PTR cvalue = apc ? 0 : (ULONG_PTR)apc_user;
     BOOL send_completion = FALSE, async_read, timeout_init_done = FALSE;
@@ -5103,7 +5183,7 @@ NTSTATUS WINAPI NtReadFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, vo
         if ((status = get_io_timeouts( handle, type, length, TRUE, &timeouts ))) goto err;
         if (timeouts.interval)
         {
-            status = register_async_file_read( handle, event, apc, apc_user, io,
+            status = register_async_file_read( handle, event, apc, apc_user, iosb_ptr,
                                                buffer, total, length, FALSE );
             goto err;
         }
@@ -5159,7 +5239,7 @@ NTSTATUS WINAPI NtReadFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, vo
                 status = STATUS_SUCCESS;
                 goto done;
             }
-            status = register_async_file_read( handle, event, apc, apc_user, io,
+            status = register_async_file_read( handle, event, apc, apc_user, iosb_ptr,
                                                buffer, total, length, avail_mode );
             goto err;
         }
@@ -5208,7 +5288,7 @@ err:
         TRACE("= SUCCESS (%u)\n", total);
         if (event) NtSetEvent( event, NULL );
         if (apc && (!status || async_read)) NtQueueApcThread( GetCurrentThread(), (PNTAPCFUNC)apc,
-                                              (ULONG_PTR)apc_user, (ULONG_PTR)io, 0 );
+                                                              (ULONG_PTR)apc_user, iosb_ptr, 0 );
     }
     else
     {
@@ -5235,6 +5315,7 @@ NTSTATUS WINAPI NtReadFileScatter( HANDLE file, HANDLE event, PIO_APC_ROUTINE ap
     unsigned int options;
     NTSTATUS status;
     ULONG pos = 0, total = 0;
+    client_ptr_t iosb_ptr = iosb_client_ptr(io);
     enum server_fd_type type;
     ULONG_PTR cvalue = apc ? 0 : (ULONG_PTR)apc_user;
     BOOL send_completion = FALSE;
@@ -5288,8 +5369,7 @@ NTSTATUS WINAPI NtReadFileScatter( HANDLE file, HANDLE event, PIO_APC_ROUTINE ap
     io->Information = total;
     TRACE("= 0x%08x (%u)\n", status, total);
     if (event) NtSetEvent( event, NULL );
-    if (apc) NtQueueApcThread( GetCurrentThread(), (PNTAPCFUNC)apc,
-                               (ULONG_PTR)apc_user, (ULONG_PTR)io, 0 );
+    if (apc) NtQueueApcThread( GetCurrentThread(), (PNTAPCFUNC)apc, (ULONG_PTR)apc_user, iosb_ptr, 0 );
     if (send_completion) add_completion( file, cvalue, status, total, TRUE );
 
     return STATUS_PENDING;
@@ -5314,6 +5394,7 @@ NTSTATUS WINAPI NtWriteFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, v
     struct io_timeouts timeouts;
     NTSTATUS status, ret_status;
     ULONG total = 0;
+    client_ptr_t iosb_ptr = iosb_client_ptr(io);
     enum server_fd_type type;
     ULONG_PTR cvalue = apc ? 0 : (ULONG_PTR)apc_user;
     BOOL send_completion = FALSE, async_write, append_write = FALSE, timeout_init_done = FALSE;
@@ -5456,7 +5537,7 @@ NTSTATUS WINAPI NtWriteFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, v
             {
                 req->type   = ASYNC_TYPE_WRITE;
                 req->count  = length;
-                req->async  = server_async( handle, &fileio->io, event, apc, apc_user, io );
+                req->async  = server_async( handle, &fileio->io, event, apc, apc_user, iosb_ptr );
                 status = wine_server_call( req );
             }
             SERVER_END_REQ;
@@ -5511,8 +5592,7 @@ err:
         io->Information = total;
         TRACE("= SUCCESS (%u)\n", total);
         if (event) NtSetEvent( event, NULL );
-        if (apc) NtQueueApcThread( GetCurrentThread(), (PNTAPCFUNC)apc,
-                                   (ULONG_PTR)apc_user, (ULONG_PTR)io, 0 );
+        if (apc) NtQueueApcThread( GetCurrentThread(), (PNTAPCFUNC)apc, (ULONG_PTR)apc_user, iosb_ptr, 0 );
     }
     else
     {
@@ -5537,6 +5617,7 @@ NTSTATUS WINAPI NtWriteFileGather( HANDLE file, HANDLE event, PIO_APC_ROUTINE ap
     unsigned int options;
     NTSTATUS status;
     ULONG pos = 0, total = 0;
+    client_ptr_t iosb_ptr = iosb_client_ptr(io);
     enum server_fd_type type;
     ULONG_PTR cvalue = apc ? 0 : (ULONG_PTR)apc_user;
     BOOL send_completion = FALSE;
@@ -5601,8 +5682,7 @@ NTSTATUS WINAPI NtWriteFileGather( HANDLE file, HANDLE event, PIO_APC_ROUTINE ap
         io->Information = total;
         TRACE("= SUCCESS (%u)\n", total);
         if (event) NtSetEvent( event, NULL );
-        if (apc) NtQueueApcThread( GetCurrentThread(), (PNTAPCFUNC)apc,
-                                   (ULONG_PTR)apc_user, (ULONG_PTR)io, 0 );
+        if (apc) NtQueueApcThread( GetCurrentThread(), (PNTAPCFUNC)apc, (ULONG_PTR)apc_user, iosb_ptr, 0 );
     }
     else
     {
@@ -5629,6 +5709,11 @@ NTSTATUS WINAPI NtDeviceIoControlFile( HANDLE handle, HANDLE event, PIO_APC_ROUT
 
     switch (device)
     {
+    case FILE_DEVICE_BEEP:
+    case FILE_DEVICE_NETWORK:
+        status = sock_ioctl( handle, event, apc, apc_context, io, code, in_buffer, in_size, out_buffer, out_size );
+        if (status != STATUS_NOT_SUPPORTED && status != STATUS_BAD_DEVICE_TYPE) return status;
+        break;
     case FILE_DEVICE_DISK:
     case FILE_DEVICE_CD_ROM:
     case FILE_DEVICE_DVD:
@@ -5651,7 +5736,7 @@ NTSTATUS WINAPI NtDeviceIoControlFile( HANDLE handle, HANDLE event, PIO_APC_ROUT
         return server_ioctl_file( handle, event, apc, apc_context, io, code,
                                   in_buffer, in_size, out_buffer, out_size );
 
-    if (status != STATUS_PENDING) io->u.Status = status;
+    if (status != STATUS_PENDING && !NT_ERROR(status)) io->u.Status = status;
     return status;
 }
 
@@ -5814,7 +5899,7 @@ NTSTATUS WINAPI NtFlushBuffersFile( HANDLE handle, IO_STATUS_BLOCK *io )
 
         SERVER_START_REQ( flush )
         {
-            req->async = server_async( handle, &async->io, NULL, NULL, NULL, io );
+            req->async = server_async( handle, &async->io, NULL, NULL, NULL, iosb_client_ptr(io) );
             ret = wine_server_call( req );
             wait_handle = wine_server_ptr_handle( reply->event );
             if (wait_handle && ret != STATUS_PENDING)
@@ -5827,7 +5912,7 @@ NTSTATUS WINAPI NtFlushBuffersFile( HANDLE handle, IO_STATUS_BLOCK *io )
 
         if (ret != STATUS_PENDING) free( async );
 
-        if (wait_handle) ret = wait_async( wait_handle, FALSE, io );
+        if (wait_handle) ret = wait_async( wait_handle, FALSE );
     }
 
     if (needs_close) close( fd );
@@ -5840,16 +5925,23 @@ NTSTATUS WINAPI NtFlushBuffersFile( HANDLE handle, IO_STATUS_BLOCK *io )
  */
 NTSTATUS WINAPI NtCancelIoFile( HANDLE handle, IO_STATUS_BLOCK *io_status )
 {
+    NTSTATUS status;
+
     TRACE( "%p %p\n", handle, io_status );
 
     SERVER_START_REQ( cancel_async )
     {
         req->handle      = wine_server_obj_handle( handle );
         req->only_thread = TRUE;
-        io_status->u.Status = wine_server_call( req );
+        if (!(status = wine_server_call( req )))
+        {
+            io_status->u.Status = status;
+            io_status->Information = 0;
+        }
     }
     SERVER_END_REQ;
-    return io_status->u.Status;
+
+    return status;
 }
 
 
@@ -5858,16 +5950,23 @@ NTSTATUS WINAPI NtCancelIoFile( HANDLE handle, IO_STATUS_BLOCK *io_status )
  */
 NTSTATUS WINAPI NtCancelIoFileEx( HANDLE handle, IO_STATUS_BLOCK *io, IO_STATUS_BLOCK *io_status )
 {
+    NTSTATUS status;
+
     TRACE( "%p %p %p\n", handle, io, io_status );
 
     SERVER_START_REQ( cancel_async )
     {
         req->handle = wine_server_obj_handle( handle );
         req->iosb   = wine_server_client_ptr( io );
-        io_status->u.Status = wine_server_call( req );
+        if (!(status = wine_server_call( req )))
+        {
+            io_status->u.Status = status;
+            io_status->Information = 0;
+        }
     }
     SERVER_END_REQ;
-    return io_status->u.Status;
+
+    return status;
 }
 
 
@@ -5959,23 +6058,23 @@ NTSTATUS WINAPI NtUnlockFile( HANDLE handle, IO_STATUS_BLOCK *io_status, LARGE_I
 }
 
 
-static NTSTATUS read_changes_apc( void *user, IO_STATUS_BLOCK *iosb, NTSTATUS status )
+static BOOL read_changes_apc( void *user, ULONG_PTR *info, NTSTATUS *status )
 {
     struct async_fileio_read_changes *fileio = user;
     int size = 0;
 
-    if (status == STATUS_ALERTED)
+    if (*status == STATUS_ALERTED)
     {
         SERVER_START_REQ( read_change )
         {
             req->handle = wine_server_obj_handle( fileio->io.handle );
             wine_server_set_reply( req, fileio->data, fileio->data_size );
-            status = wine_server_call( req );
+            *status = wine_server_call( req );
             size = wine_server_reply_size( reply );
         }
         SERVER_END_REQ;
 
-        if (status == STATUS_SUCCESS && fileio->buffer)
+        if (*status == STATUS_SUCCESS && fileio->buffer)
         {
             FILE_NOTIFY_INFORMATION *pfni = fileio->buffer;
             int i, left = fileio->buffer_size;
@@ -6010,7 +6109,7 @@ static NTSTATUS read_changes_apc( void *user, IO_STATUS_BLOCK *iosb, NTSTATUS st
 
             if (size)
             {
-                status = STATUS_NOTIFY_ENUM_DIR;
+                *status = STATUS_NOTIFY_ENUM_DIR;
                 size = 0;
             }
             else
@@ -6021,18 +6120,14 @@ static NTSTATUS read_changes_apc( void *user, IO_STATUS_BLOCK *iosb, NTSTATUS st
         }
         else
         {
-            status = STATUS_NOTIFY_ENUM_DIR;
+            *status = STATUS_NOTIFY_ENUM_DIR;
             size = 0;
         }
     }
 
-    if (status != STATUS_PENDING)
-    {
-        iosb->u.Status = status;
-        iosb->Information = size;
-        release_fileio( &fileio->io );
-    }
-    return status;
+    *info = size;
+    release_fileio( &fileio->io );
+    return TRUE;
 }
 
 #define FILE_NOTIFY_ALL        (  \
@@ -6075,7 +6170,7 @@ NTSTATUS WINAPI NtNotifyChangeDirectoryFile( HANDLE handle, HANDLE event, PIO_AP
         req->filter    = filter;
         req->want_data = (buffer != NULL);
         req->subtree   = subtree;
-        req->async     = server_async( handle, &fileio->io, event, apc, apc_context, iosb );
+        req->async     = server_async( handle, &fileio->io, event, apc, apc_context, iosb_client_ptr(iosb) );
         status = wine_server_call( req );
     }
     SERVER_END_REQ;
@@ -6128,7 +6223,7 @@ static inline BOOL is_device_placeholder( int fd )
     return !memcmp( buffer, wine_placeholder, sizeof(wine_placeholder) - 1 );
 }
 
-static NTSTATUS get_device_info( int fd, FILE_FS_DEVICE_INFORMATION *info )
+NTSTATUS get_device_info( int fd, FILE_FS_DEVICE_INFORMATION *info )
 {
     struct stat st;
 
@@ -6297,13 +6392,13 @@ NTSTATUS WINAPI NtQueryVolumeInformationFile( HANDLE handle, IO_STATUS_BLOCK *io
 {
     int fd, needs_close;
     struct stat st;
+    NTSTATUS status;
 
-    io->u.Status = server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL );
-    if (io->u.Status == STATUS_BAD_DEVICE_TYPE)
+    status = server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL );
+    if (status == STATUS_BAD_DEVICE_TYPE)
     {
         struct async_irp *async;
         HANDLE wait_handle;
-        NTSTATUS status;
 
         if (!(async = (struct async_irp *)alloc_fileio( sizeof(*async), irp_completion, handle )))
             return STATUS_NO_MEMORY;
@@ -6312,7 +6407,7 @@ NTSTATUS WINAPI NtQueryVolumeInformationFile( HANDLE handle, IO_STATUS_BLOCK *io
 
         SERVER_START_REQ( get_volume_info )
         {
-            req->async = server_async( handle, &async->io, NULL, NULL, NULL, io );
+            req->async = server_async( handle, &async->io, NULL, NULL, NULL, iosb_client_ptr(io) );
             req->handle = wine_server_obj_handle( handle );
             req->info_class = info_class;
             wine_server_set_reply( req, buffer, length );
@@ -6326,35 +6421,35 @@ NTSTATUS WINAPI NtQueryVolumeInformationFile( HANDLE handle, IO_STATUS_BLOCK *io
         }
         SERVER_END_REQ;
         if (status != STATUS_PENDING) free( async );
-        if (wait_handle) status = wait_async( wait_handle, FALSE, io );
+        if (wait_handle) status = wait_async( wait_handle, FALSE );
         return status;
     }
-    else if (io->u.Status) return io->u.Status;
+    else if (status) return io->u.Status = status;
 
-    io->u.Status = STATUS_NOT_IMPLEMENTED;
     io->Information = 0;
 
     switch( info_class )
     {
     case FileFsLabelInformation:
         FIXME( "%p: label info not supported\n", handle );
+        status = STATUS_NOT_IMPLEMENTED;
         break;
 
     case FileFsSizeInformation:
         if (length < sizeof(FILE_FS_SIZE_INFORMATION))
-            io->u.Status = STATUS_BUFFER_TOO_SMALL;
+            status = STATUS_BUFFER_TOO_SMALL;
         else
         {
             FILE_FS_SIZE_INFORMATION *info = buffer;
 
             if (fstat( fd, &st ) < 0)
             {
-                io->u.Status = errno_to_status( errno );
+                status = errno_to_status( errno );
                 break;
             }
             if (!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode))
             {
-                io->u.Status = STATUS_INVALID_DEVICE_REQUEST;
+                status = STATUS_INVALID_DEVICE_REQUEST;
             }
             else
             {
@@ -6365,7 +6460,7 @@ NTSTATUS WINAPI NtQueryVolumeInformationFile( HANDLE handle, IO_STATUS_BLOCK *io
 
                 if (fstatvfs( fd, &stfs ) < 0)
                 {
-                    io->u.Status = errno_to_status( errno );
+                    status = errno_to_status( errno );
                     break;
                 }
                 bsize = stfs.f_frsize;
@@ -6373,7 +6468,7 @@ NTSTATUS WINAPI NtQueryVolumeInformationFile( HANDLE handle, IO_STATUS_BLOCK *io
                 struct statfs stfs;
                 if (fstatfs( fd, &stfs ) < 0)
                 {
-                    io->u.Status = errno_to_status( errno );
+                    status = errno_to_status( errno );
                     break;
                 }
                 bsize = stfs.f_bsize;
@@ -6391,19 +6486,19 @@ NTSTATUS WINAPI NtQueryVolumeInformationFile( HANDLE handle, IO_STATUS_BLOCK *io
                 info->TotalAllocationUnits.QuadPart = bsize * stfs.f_blocks / (info->BytesPerSector * info->SectorsPerAllocationUnit);
                 info->AvailableAllocationUnits.QuadPart = bsize * stfs.f_bavail / (info->BytesPerSector * info->SectorsPerAllocationUnit);
                 io->Information = sizeof(*info);
-                io->u.Status = STATUS_SUCCESS;
+                status = STATUS_SUCCESS;
             }
         }
         break;
 
     case FileFsDeviceInformation:
         if (length < sizeof(FILE_FS_DEVICE_INFORMATION))
-            io->u.Status = STATUS_BUFFER_TOO_SMALL;
+            status = STATUS_BUFFER_TOO_SMALL;
         else
         {
             FILE_FS_DEVICE_INFORMATION *info = buffer;
 
-            if ((io->u.Status = get_device_info( fd, info )) == STATUS_SUCCESS)
+            if ((status = get_device_info( fd, info )) == STATUS_SUCCESS)
                 io->Information = sizeof(*info);
         }
         break;
@@ -6422,7 +6517,7 @@ NTSTATUS WINAPI NtQueryVolumeInformationFile( HANDLE handle, IO_STATUS_BLOCK *io
 
         if (length < sizeof(FILE_FS_ATTRIBUTE_INFORMATION))
         {
-            io->u.Status = STATUS_INFO_LENGTH_MISMATCH;
+            status = STATUS_INFO_LENGTH_MISMATCH;
             break;
         }
 
@@ -6494,7 +6589,7 @@ NTSTATUS WINAPI NtQueryVolumeInformationFile( HANDLE handle, IO_STATUS_BLOCK *io
         }
 
         io->Information = offsetof( FILE_FS_ATTRIBUTE_INFORMATION, FileSystemName ) + info->FileSystemNameLength;
-        io->u.Status = STATUS_SUCCESS;
+        status = STATUS_SUCCESS;
         break;
     }
 
@@ -6507,13 +6602,13 @@ NTSTATUS WINAPI NtQueryVolumeInformationFile( HANDLE handle, IO_STATUS_BLOCK *io
 
         if (length < sizeof(FILE_FS_VOLUME_INFORMATION))
         {
-            io->u.Status = STATUS_INFO_LENGTH_MISMATCH;
+            status = STATUS_INFO_LENGTH_MISMATCH;
             break;
         }
 
         if (get_mountmgr_fs_info( handle, fd, drive, sizeof(data) ))
         {
-            io->u.Status = STATUS_NOT_IMPLEMENTED;
+            status = STATUS_NOT_IMPLEMENTED;
             break;
         }
 
@@ -6525,32 +6620,36 @@ NTSTATUS WINAPI NtQueryVolumeInformationFile( HANDLE handle, IO_STATUS_BLOCK *io
         info->SupportsObjects = (drive->fs_type == MOUNTMGR_FS_TYPE_NTFS);
         memcpy( info->VolumeLabel, label, info->VolumeLabelLength );
         io->Information = offsetof( FILE_FS_VOLUME_INFORMATION, VolumeLabel ) + info->VolumeLabelLength;
-        io->u.Status = STATUS_SUCCESS;
+        status = STATUS_SUCCESS;
         break;
     }
 
     case FileFsControlInformation:
         FIXME( "%p: control info not supported\n", handle );
+        status = STATUS_NOT_IMPLEMENTED;
         break;
 
     case FileFsFullSizeInformation:
         FIXME( "%p: full size info not supported\n", handle );
+        status = STATUS_NOT_IMPLEMENTED;
         break;
 
     case FileFsObjectIdInformation:
         FIXME( "%p: object id info not supported\n", handle );
+        status = STATUS_NOT_IMPLEMENTED;
         break;
 
     case FileFsMaximumInformation:
         FIXME( "%p: maximum info not supported\n", handle );
+        status = STATUS_NOT_IMPLEMENTED;
         break;
 
     default:
-        io->u.Status = STATUS_INVALID_PARAMETER;
+        status = STATUS_INVALID_PARAMETER;
         break;
     }
     if (needs_close) close( fd );
-    return io->u.Status;
+    return io->u.Status = status;
 }
 
 
@@ -6630,7 +6729,7 @@ NTSTATUS WINAPI NtQueryObject( HANDLE handle, OBJECT_INFORMATION_CLASS info_clas
     {
         OBJECT_BASIC_INFORMATION *p = ptr;
 
-        if (len < sizeof(*p)) return STATUS_INVALID_BUFFER_SIZE;
+        if (len < sizeof(*p)) return STATUS_INFO_LENGTH_MISMATCH;
 
         SERVER_START_REQ( get_object_info )
         {
@@ -6681,7 +6780,7 @@ NTSTATUS WINAPI NtQueryObject( HANDLE handle, OBJECT_INFORMATION_CLASS info_clas
 
         /* not a file, treat as a generic object */
 
-        SERVER_START_REQ( get_object_info )
+        SERVER_START_REQ( get_object_name )
         {
             req->handle = wine_server_obj_handle( handle );
             if (len > sizeof(*p)) wine_server_set_reply( req, p + 1, len - sizeof(*p) );

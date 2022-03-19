@@ -55,6 +55,8 @@ NTSTATUS WINAPI NtOpenProcessTokenEx( HANDLE process, DWORD access, DWORD attrib
 
     TRACE( "(%p,0x%08x,0x%08x,%p)\n", process, access, attributes, handle );
 
+    *handle = 0;
+
     SERVER_START_REQ( open_token )
     {
         req->handle     = wine_server_obj_handle( process );
@@ -88,6 +90,8 @@ NTSTATUS WINAPI NtOpenThreadTokenEx( HANDLE thread, DWORD access, BOOLEAN self, 
 
     TRACE( "(%p,0x%08x,%u,0x%08x,%p)\n", thread, access, self, attributes, handle );
 
+    *handle = 0;
+
     SERVER_START_REQ( open_token )
     {
         req->handle     = wine_server_obj_handle( thread );
@@ -113,6 +117,7 @@ NTSTATUS WINAPI NtDuplicateToken( HANDLE token, ACCESS_MASK access, OBJECT_ATTRI
     data_size_t len;
     struct object_attributes *objattr;
 
+    *handle = 0;
     if ((status = alloc_object_attributes( attr, &objattr, &len ))) return status;
 
     if (attr && attr->SecurityQualityOfService)
@@ -228,43 +233,38 @@ NTSTATUS WINAPI NtQueryInformationToken( HANDLE token, TOKEN_INFORMATION_CLASS c
     {
         /* reply buffer is always shorter than output one */
         void *buffer = malloc( length );
+        TOKEN_GROUPS *groups = info;
+        ULONG i, count, needed_size;
 
         SERVER_START_REQ( get_token_groups )
         {
-            TOKEN_GROUPS *groups = info;
-
             req->handle = wine_server_obj_handle( token );
             wine_server_set_reply( req, buffer, length );
             status = wine_server_call( req );
-            if (status == STATUS_BUFFER_TOO_SMALL)
+
+            count = reply->attr_len / sizeof(unsigned int);
+            needed_size = offsetof( TOKEN_GROUPS, Groups[count] ) + reply->sid_len;
+            if (status == STATUS_SUCCESS && needed_size > length) status = STATUS_BUFFER_TOO_SMALL;
+
+            if (status == STATUS_SUCCESS)
             {
-                if (retlen) *retlen = reply->user_len;
-            }
-            else if (status == STATUS_SUCCESS)
-            {
-                struct token_groups *tg = buffer;
-                unsigned int *attr = (unsigned int *)(tg + 1);
-                ULONG i;
-                const int non_sid_portion = (sizeof(struct token_groups) + tg->count * sizeof(unsigned int));
-                SID *sids = (SID *)((char *)info + FIELD_OFFSET( TOKEN_GROUPS, Groups[tg->count] ));
+                unsigned int *attr = buffer;
+                SID *sids = (SID *)&groups->Groups[count];
 
-                if (retlen) *retlen = reply->user_len;
-
-                groups->GroupCount = tg->count;
-                memcpy( sids, (char *)buffer + non_sid_portion,
-                        reply->user_len - offsetof( TOKEN_GROUPS, Groups[tg->count] ));
-
-                for (i = 0; i < tg->count; i++)
+                groups->GroupCount = count;
+                memcpy( sids, attr + count, reply->sid_len );
+                for (i = 0; i < count; i++)
                 {
                     groups->Groups[i].Attributes = attr[i];
                     groups->Groups[i].Sid = sids;
                     sids = (SID *)((char *)sids + offsetof( SID, SubAuthority[sids->SubAuthorityCount] ));
                 }
              }
-             else if (retlen) *retlen = 0;
+            else if (status != STATUS_BUFFER_TOO_SMALL) needed_size = 0;
         }
         SERVER_END_REQ;
         free( buffer );
+        if (retlen) *retlen = needed_size;
         break;
     }
 
@@ -418,10 +418,13 @@ NTSTATUS WINAPI NtQueryInformationToken( HANDLE token, TOKEN_INFORMATION_CLASS c
         break;
 
     case TokenSessionId:
+        SERVER_START_REQ( get_token_info )
         {
-            *(DWORD *)info = 0;
-            FIXME("QueryInformationToken( ..., TokenSessionId, ...) semi-stub\n");
+            req->handle = wine_server_obj_handle( token );
+            status = wine_server_call( req );
+            if (!status) *(DWORD *)info = reply->session_id;
         }
+        SERVER_END_REQ;
         break;
 
     case TokenVirtualizationEnabled:

@@ -19,6 +19,8 @@
 @ stdcall AddAuditAccessAce(ptr long long ptr long long)
 @ stdcall AddAuditAccessAceEx(ptr long long long ptr long long)
 @ stdcall AddAuditAccessObjectAce(ptr long long long ptr ptr ptr long long)
+@ stdcall AddConsoleAliasA(str str str)
+@ stdcall AddConsoleAliasW(wstr wstr wstr)
 @ stdcall AddDllDirectory(wstr)
 @ stdcall AddMandatoryAce(ptr long long long ptr)
 @ stdcall AddRefActCtx(ptr)
@@ -43,7 +45,7 @@
 # @ stub AppPolicyGetClrCompat
 # @ stub AppPolicyGetCreateFileAccess
 # @ stub AppPolicyGetLifecycleManagement
-# @ stub AppPolicyGetMediaFoundationCodecLoading
+@ stdcall AppPolicyGetMediaFoundationCodecLoading(ptr ptr)
 @ stdcall AppPolicyGetProcessTerminationMethod(ptr ptr)
 @ stdcall AppPolicyGetShowDeveloperDiagnostic(ptr ptr)
 @ stdcall AppPolicyGetThreadInitializationType(ptr ptr)
@@ -153,7 +155,7 @@
 @ stdcall CloseThreadpoolWork(ptr) ntdll.TpReleaseWork
 # @ stub CommitStateAtom
 @ stdcall CompareFileTime(ptr ptr)
-# @ stub CompareObjectHandles
+@ stdcall CompareObjectHandles(ptr ptr)
 @ stdcall CompareStringA(long long str long str long)
 @ stdcall CompareStringEx(wstr long wstr long wstr long ptr ptr long)
 @ stdcall CompareStringOrdinal(wstr long wstr long long)
@@ -174,7 +176,7 @@
 # @ stub CouldMultiUserAppsBehaviorBePossibleForPackage
 @ stdcall CreateActCtxW(ptr)
 # @ stub CreateAppContainerToken
-# @ stub CreateBoundaryDescriptorW
+@ stdcall CreateBoundaryDescriptorW(wstr long)
 @ stdcall CreateConsoleScreenBuffer(long long ptr long ptr)
 @ stdcall CreateDirectoryA(str ptr)
 @ stdcall CreateDirectoryExW(wstr wstr ptr)
@@ -343,6 +345,8 @@
 @ stdcall ExitThread(long) ntdll.RtlExitUserThread
 @ stdcall ExpandEnvironmentStringsA(str ptr long)
 @ stdcall ExpandEnvironmentStringsW(wstr ptr long)
+@ stdcall ExpungeConsoleCommandHistoryA(str)
+@ stdcall ExpungeConsoleCommandHistoryW(wstr)
 @ stdcall FatalAppExitA(long str)
 @ stdcall FatalAppExitW(long wstr)
 @ stdcall FileTimeToLocalFileTime(ptr ptr)
@@ -437,23 +441,44 @@
 @ stdcall GetCommTimeouts(long ptr)
 @ stdcall GetCommandLineA()
 @ stdcall GetCommandLineW()
-@ stdcall GetCompressedFileSizeA(long ptr)
-@ stdcall GetCompressedFileSizeW(long ptr)
+@ stdcall GetCompressedFileSizeA(str ptr)
+@ stdcall GetCompressedFileSizeW(wstr ptr)
 @ stdcall GetComputerNameExA(long ptr ptr)
 @ stdcall GetComputerNameExW(long ptr ptr)
+@ stdcall GetConsoleAliasA(str ptr long str)
+#@ stub GetConsoleAliasExesA
+@ stdcall GetConsoleAliasExesLengthA()
+@ stdcall GetConsoleAliasExesLengthW()
+#@ stub GetConsoleAliasExesW
+@ stdcall GetConsoleAliasW(wstr ptr long wstr)
+#@ stub GetConsoleAliasesA
+@ stdcall GetConsoleAliasesLengthA(str)
+@ stdcall GetConsoleAliasesLengthW(wstr)
+#@ stub GetConsoleAliasesW
 @ stdcall GetConsoleCP()
+@ stdcall GetConsoleCommandHistoryA(ptr long str)
+@ stdcall GetConsoleCommandHistoryLengthA(str)
+@ stdcall GetConsoleCommandHistoryLengthW(wstr)
+@ stdcall GetConsoleCommandHistoryW(ptr long wstr)
 @ stdcall GetConsoleCursorInfo(long ptr)
+@ stdcall GetConsoleDisplayMode(ptr)
+@ stdcall GetConsoleFontSize(long long)
 @ stdcall GetConsoleInputExeNameA(long ptr)
 @ stdcall GetConsoleInputExeNameW(long ptr)
 @ stdcall GetConsoleMode(long ptr)
 @ stdcall GetConsoleOutputCP()
+@ stdcall GetConsoleProcessList(ptr long)
 @ stdcall GetConsoleScreenBufferInfo(long ptr)
 @ stdcall GetConsoleScreenBufferInfoEx(long ptr)
+@ stdcall GetConsoleTitleA(ptr long)
 @ stdcall GetConsoleTitleW(ptr long)
+@ stdcall GetConsoleWindow()
 @ stdcall GetCurrencyFormatEx(wstr long wstr ptr ptr long) kernel32.GetCurrencyFormatEx
 @ stdcall GetCurrencyFormatW(long long wstr ptr ptr long) kernel32.GetCurrencyFormatW
 @ stdcall GetCurrentActCtx(ptr)
 # @ stub GetCurrentApplicationUserModelId
+@ stdcall GetCurrentConsoleFont(long long ptr)
+@ stdcall GetCurrentConsoleFontEx(long long ptr)
 @ stdcall GetCurrentDirectoryA(long ptr)
 @ stdcall GetCurrentDirectoryW(long ptr)
 # @ stub GetCurrentPackageApplicationContext
@@ -463,7 +488,7 @@
 @ stdcall GetCurrentPackageFullName(ptr ptr)
 @ stdcall GetCurrentPackageId(ptr ptr)
 # @ stub GetCurrentPackageInfo
-# @ stub GetCurrentPackagePath
+@ stdcall GetCurrentPackagePath(ptr ptr)
 # @ stub GetCurrentPackageResourcesContext
 # @ stub GetCurrentPackageSecurityContext
 @ stdcall -norelay GetCurrentProcess() kernelbase_GetCurrentProcess
@@ -582,6 +607,7 @@
 @ stdcall GetNumberFormatEx(wstr long wstr ptr ptr long) kernel32.GetNumberFormatEx
 @ stdcall GetNumberFormatW(long long wstr ptr ptr long) kernel32.GetNumberFormatW
 @ stdcall GetNumberOfConsoleInputEvents(long ptr)
+@ stdcall GetNumberOfConsoleMouseButtons(ptr)
 @ stdcall GetOEMCP()
 # @ stub GetOsManufacturingMode
 # @ stub GetOsSafeBootMode
@@ -623,7 +649,7 @@
 @ stdcall GetProcAddress(long str)
 # @ stub GetProcAddressForCaller
 # @ stub GetProcessDefaultCpuSets
-# @ stub GetProcessGroupAffinity
+@ stdcall GetProcessGroupAffinity(long ptr ptr)
 @ stdcall GetProcessHandleCount(long ptr)
 @ stdcall -norelay GetProcessHeap() kernelbase_GetProcessHeap
 @ stdcall -import GetProcessHeaps(long ptr) RtlGetProcessHeaps
@@ -681,7 +707,7 @@
 @ stdcall GetStringTypeW(long wstr long ptr)
 # @ stub GetSystemAppDataFolder
 # @ stub GetSystemAppDataKey
-# @ stub GetSystemCpuSetInformation
+@ stdcall GetSystemCpuSetInformation(ptr long ptr ptr long)
 @ stdcall GetSystemDefaultLCID()
 @ stdcall GetSystemDefaultLangID()
 @ stdcall GetSystemDefaultLocaleName(ptr long)
@@ -741,6 +767,7 @@
 @ stub GetUILanguageInfo
 # @ stub GetUnicodeStringToEightBitSizeRoutine
 # @ stub GetUnicodeStringToEightBitStringRoutine
+@ stdcall GetUserDefaultGeoName(ptr long)
 @ stdcall GetUserDefaultLCID()
 @ stdcall GetUserDefaultLangID()
 @ stdcall GetUserDefaultLocaleName(ptr long)
@@ -841,6 +868,7 @@
 # @ stub InternetTimeToSystemTimeW
 # @ stub InvalidateAppModelVersionCache
 @ stub InvalidateTzSpecificCache
+@ stdcall IsApiSetImplemented(str)
 @ stdcall IsCharAlphaA(long)
 @ stdcall IsCharAlphaNumericA(long)
 @ stdcall IsCharAlphaNumericW(long)
@@ -1013,7 +1041,7 @@
 # @ stub PackageFamilyNameFromProductId
 # @ stub PackageFullNameFromId
 # @ stub PackageFullNameFromProductId
-# @ stub PackageIdFromFullName
+@ stdcall PackageIdFromFullName(wstr long ptr ptr)
 # @ stub PackageIdFromProductId
 # @ stub PackageNameAndPublisherIdFromFamilyName
 # @ stub PackageRelativeApplicationIdFromProductId
@@ -1096,8 +1124,8 @@
 @ stdcall PathIsValidCharA(long long)
 @ stdcall PathIsValidCharW(long long)
 @ stdcall PathMatchSpecA(str str)
-# @ stub PathMatchSpecExA
-# @ stub PathMatchSpecExW
+@ stdcall PathMatchSpecExA(str str long)
+@ stdcall PathMatchSpecExW(wstr wstr long)
 @ stdcall PathMatchSpecW(wstr wstr)
 @ stdcall PathParseIconLocationA(str)
 @ stdcall PathParseIconLocationW(wstr)
@@ -1163,7 +1191,7 @@
 @ stdcall PerfStopProvider(long)
 # @ stub PoolPerAppKeyStateInternal
 @ stdcall PostQueuedCompletionStatus(long long ptr ptr)
-# @ stub PrefetchVirtualMemory
+@ stdcall PrefetchVirtualMemory(ptr ptr ptr long)
 @ stub PrivCopyFileExW
 @ stdcall PrivilegeCheck(ptr ptr ptr)
 @ stdcall PrivilegedServiceAuditAlarmW(wstr wstr long ptr long)
@@ -1392,7 +1420,7 @@
 @ stdcall SearchPathA(str str str long ptr ptr)
 @ stdcall SearchPathW(wstr wstr wstr long ptr ptr)
 @ stdcall SetAclInformation(ptr ptr long long)
-# @ stub SetCachedSigningLevel
+@ stdcall SetCachedSigningLevel(ptr long long long)
 @ stdcall SetCalendarInfoW(long long long wstr)
 # @ stub SetClientDynamicTimeZoneInformation
 # @ stub SetClientTimeZoneInformation
@@ -1411,6 +1439,7 @@
 @ stdcall SetConsoleCtrlHandler(ptr long)
 @ stdcall SetConsoleCursorInfo(long ptr)
 @ stdcall SetConsoleCursorPosition(long long)
+@ stdcall SetConsoleDisplayMode(long long ptr)
 @ stdcall SetConsoleInputExeNameA(str)
 @ stdcall SetConsoleInputExeNameW(wstr)
 @ stdcall SetConsoleMode(long long)
@@ -1418,9 +1447,11 @@
 @ stdcall SetConsoleScreenBufferInfoEx(long ptr)
 @ stdcall SetConsoleScreenBufferSize(long long)
 @ stdcall SetConsoleTextAttribute(long long)
+@ stdcall SetConsoleTitleA(str)
 @ stdcall SetConsoleTitleW(wstr)
 @ stdcall SetConsoleWindowInfo(long long ptr)
 @ stdcall SetCriticalSectionSpinCount(ptr long) ntdll.RtlSetCriticalSectionSpinCount
+@ stdcall SetCurrentConsoleFontEx(long long ptr)
 @ stdcall SetCurrentDirectoryA(str)
 @ stdcall SetCurrentDirectoryW(wstr)
 @ stdcall SetDefaultDllDirectories(long)
@@ -1459,7 +1490,7 @@
 @ stdcall SetPrivateObjectSecurityEx(long ptr ptr long ptr long)
 @ stdcall SetProcessAffinityUpdateMode(long long)
 # @ stub SetProcessDefaultCpuSets
-# @ stub SetProcessGroupAffinity
+@ stdcall SetProcessGroupAffinity(long ptr ptr)
 # @ stub SetProcessInformation
 @ stdcall SetProcessMitigationPolicy(long ptr long)
 @ stdcall SetProcessPreferredUILanguages(long ptr ptr)
@@ -1493,7 +1524,7 @@
 @ stdcall SetThreadPreferredUILanguages(long ptr ptr)
 @ stdcall SetThreadPriority(long long)
 @ stdcall SetThreadPriorityBoost(long long)
-# @ stub SetThreadSelectedCpuSets
+@ stdcall SetThreadSelectedCpuSets(ptr ptr long)
 @ stdcall SetThreadStackGuarantee(ptr)
 @ stdcall SetThreadToken(ptr ptr)
 @ stdcall SetThreadUILanguage(long)
@@ -1508,6 +1539,7 @@
 @ stdcall SetTokenInformation(long long ptr long)
 @ stdcall SetUnhandledExceptionFilter(ptr)
 @ stdcall SetUserGeoID(long)
+@ stdcall SetUserGeoName(wstr)
 @ stdcall SetWaitableTimer(long ptr long ptr ptr long)
 @ stdcall SetWaitableTimerEx(long ptr long ptr ptr ptr long)
 @ stdcall -arch=i386,x86_64 SetXStateFeaturesMask(ptr int64)
@@ -1676,7 +1708,7 @@
 @ stdcall VirtualAlloc(ptr long long long)
 @ stdcall VirtualAllocEx(long ptr long long long)
 @ stdcall VirtualAllocExNuma(long ptr long long long long)
-# @ stub VirtualAllocFromApp
+@ stdcall VirtualAllocFromApp(ptr long long long)
 @ stdcall VirtualFree(ptr long long)
 @ stdcall VirtualFreeEx(long ptr long long)
 @ stdcall VirtualLock(ptr long)

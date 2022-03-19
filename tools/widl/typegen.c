@@ -20,13 +20,9 @@
  */
 
 #include "config.h"
-#include "wine/port.h"
 
 #include <stdio.h>
 #include <stdlib.h>
-#ifdef HAVE_UNISTD_H
-# include <unistd.h>
-#endif
 #include <string.h>
 #include <assert.h>
 #include <ctype.h>
@@ -3510,7 +3506,7 @@ static unsigned int write_ip_tfs(FILE *file, const attr_list_t *attrs, type_t *t
     else
     {
         const type_t *base = is_ptr(type) ? type_pointer_get_ref_type(type) : type;
-        const UUID *uuid = get_attrp(base->attrs, ATTR_UUID);
+        const struct uuid *uuid = get_attrp(base->attrs, ATTR_UUID);
 
         if (! uuid)
             error("%s: interface %s missing UUID\n", __FUNCTION__, base->name);

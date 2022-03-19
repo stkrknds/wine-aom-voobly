@@ -21,9 +21,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-#include "wine/port.h"
-
 #include "wined3d_private.h"
 #include "winternl.h"
 
@@ -158,6 +155,15 @@ UINT64 adapter_adjust_memory(struct wined3d_adapter *adapter, INT64 amount)
     return adapter->vram_bytes_used;
 }
 
+ssize_t adapter_adjust_mapped_memory(struct wined3d_adapter *adapter, ssize_t size)
+{
+    /* Note that this needs to be thread-safe; the Vulkan adapter may map from
+     * client threads. */
+    ssize_t ret = InterlockedExchangeAddSizeT(&adapter->mapped_size, size) + size;
+    TRACE("Adjusted mapped adapter memory by %Id to %Id.\n", size, ret);
+    return ret;
+}
+
 void wined3d_adapter_cleanup(struct wined3d_adapter *adapter)
 {
     unsigned int output_idx;
@@ -187,6 +193,7 @@ ULONG CDECL wined3d_decref(struct wined3d *wined3d)
     {
         unsigned int i;
 
+        wined3d_mutex_lock();
         for (i = 0; i < wined3d->adapter_count; ++i)
         {
             struct wined3d_adapter *adapter = wined3d->adapters[i];
@@ -194,6 +201,7 @@ ULONG CDECL wined3d_decref(struct wined3d *wined3d)
             adapter->adapter_ops->adapter_destroy(adapter);
         }
         heap_free(wined3d);
+        wined3d_mutex_unlock();
     }
 
     return refcount;
@@ -436,6 +444,7 @@ static const struct wined3d_gpu_description gpu_description_table[] =
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX970M,    "NVIDIA GeForce GTX 970M",          DRIVER_NVIDIA_KEPLER,  3072},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX980,     "NVIDIA GeForce GTX 980",           DRIVER_NVIDIA_KEPLER,  4096},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX980TI,   "NVIDIA GeForce GTX 980 Ti",        DRIVER_NVIDIA_KEPLER,  6144},
+    {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GT1030,     "NVIDIA GeForce GT 1030",           DRIVER_NVIDIA_KEPLER,  2048},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX1050,    "NVIDIA GeForce GTX 1050",          DRIVER_NVIDIA_KEPLER,  2048},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX1050TI,  "NVIDIA GeForce GTX 1050 Ti",       DRIVER_NVIDIA_KEPLER,  4096},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX1060_3GB,"NVIDIA GeForce GTX 1060 3GB",      DRIVER_NVIDIA_KEPLER,  3072},
@@ -514,6 +523,8 @@ static const struct wined3d_gpu_description gpu_description_table[] =
     {HW_VENDOR_AMD,        CARD_AMD_RADEON_RX_VEGA_20,     "Radeon RX Vega 20",                DRIVER_AMD_RX,           4096},
     {HW_VENDOR_AMD,        CARD_AMD_RADEON_RX_NAVI_10,     "Radeon RX 5700 / 5700 XT",         DRIVER_AMD_RX,           8192},
     {HW_VENDOR_AMD,        CARD_AMD_RADEON_RX_NAVI_14,     "Radeon RX 5500M",                  DRIVER_AMD_RX,           4096},
+    {HW_VENDOR_AMD,        CARD_AMD_RADEON_RX_NAVI_21,     "Radeon RX 6800/6800 XT / 6900 XT", DRIVER_AMD_RX,          16384},
+    {HW_VENDOR_AMD,        CARD_AMD_VANGOGH,               "AMD VANGOGH",                      DRIVER_AMD_RX,           4096},
 
     /* Red Hat */
     {HW_VENDOR_REDHAT,     CARD_REDHAT_VIRGL,              "Red Hat VirtIO GPU",                                        DRIVER_REDHAT_VIRGL,  1024},
@@ -600,6 +611,7 @@ static const struct wined3d_gpu_description gpu_description_table[] =
     {HW_VENDOR_INTEL,      CARD_INTEL_HD620,               "Intel(R) HD Graphics 620",                                  DRIVER_INTEL_HD4000,  3072},
     {HW_VENDOR_INTEL,      CARD_INTEL_HD630_1,             "Intel(R) HD Graphics 630",                                  DRIVER_INTEL_HD4000,  3072},
     {HW_VENDOR_INTEL,      CARD_INTEL_HD630_2,             "Intel(R) HD Graphics 630",                                  DRIVER_INTEL_HD4000,  3072},
+    {HW_VENDOR_INTEL,      CARD_INTEL_UHD630,              "Intel(R) UHD Graphics 630",                                 DRIVER_INTEL_HD4000,  3072},
 };
 
 static const struct driver_version_information *get_driver_version_info(enum wined3d_display_driver driver,
@@ -1223,8 +1235,8 @@ HRESULT CDECL wined3d_output_find_closest_matching_mode(const struct wined3d_out
     closest = ~0u;
     for (i = 0, j = 0; i < matching_mode_count; ++i)
     {
-        unsigned int d = abs(mode->width - matching_modes[i]->width)
-                + abs(mode->height - matching_modes[i]->height);
+        unsigned int d = abs((int)(mode->width - matching_modes[i]->width))
+            + abs((int)(mode->height - matching_modes[i]->height));
 
         if (closest > d)
         {
@@ -1492,6 +1504,32 @@ HRESULT CDECL wined3d_output_set_display_mode(struct wined3d_output *output,
 
     /* Store the new values. */
     output->screen_format = new_format_id;
+
+    return WINED3D_OK;
+}
+
+HRESULT CDECL wined3d_output_set_gamma_ramp(struct wined3d_output *output, const struct wined3d_gamma_ramp *ramp)
+{
+    HDC dc;
+
+    TRACE("output %p, ramp %p.\n", output, ramp);
+
+    dc = CreateDCW(output->device_name, NULL, NULL, NULL);
+    SetDeviceGammaRamp(dc, (void *)ramp);
+    DeleteDC(dc);
+
+    return WINED3D_OK;
+}
+
+HRESULT wined3d_output_get_gamma_ramp(struct wined3d_output *output, struct wined3d_gamma_ramp *ramp)
+{
+    HDC dc;
+
+    TRACE("output %p, ramp %p.\n", output, ramp);
+
+    dc = CreateDCW(output->device_name, NULL, NULL, NULL);
+    GetDeviceGammaRamp(dc, ramp);
+    DeleteDC(dc);
 
     return WINED3D_OK;
 }
@@ -1790,7 +1828,9 @@ HRESULT CDECL wined3d_check_device_format(const struct wined3d *wined3d,
 
             allowed_usage = WINED3DUSAGE_DYNAMIC;
             allowed_bind_flags = WINED3D_BIND_SHADER_RESOURCE
-                    | WINED3D_BIND_UNORDERED_ACCESS;
+                    | WINED3D_BIND_UNORDERED_ACCESS
+                    | WINED3D_BIND_VERTEX_BUFFER
+                    | WINED3D_BIND_INDEX_BUFFER;
             gl_type = gl_type_end = WINED3D_GL_RES_TYPE_BUFFER;
             break;
 
@@ -1822,6 +1862,11 @@ HRESULT CDECL wined3d_check_device_format(const struct wined3d *wined3d,
         format_flags |= WINED3DFMT_FLAG_DEPTH_STENCIL;
     if (bind_flags & WINED3D_BIND_UNORDERED_ACCESS)
         format_flags |= WINED3DFMT_FLAG_UNORDERED_ACCESS;
+    if (bind_flags & WINED3D_BIND_VERTEX_BUFFER)
+        format_flags |= WINED3DFMT_FLAG_VERTEX_ATTRIBUTE;
+    if (bind_flags & WINED3D_BIND_INDEX_BUFFER)
+        format_flags |= WINED3DFMT_FLAG_INDEX_BUFFER;
+
     if (usage & WINED3DUSAGE_QUERY_FILTER)
         format_flags |= WINED3DFMT_FLAG_FILTERING;
     if (usage & WINED3DUSAGE_QUERY_POSTPIXELSHADER_BLENDING)
@@ -2660,7 +2705,7 @@ static void adapter_no3d_destroy_device(struct wined3d_device *device)
     heap_free(device);
 }
 
-struct wined3d_context *adapter_no3d_acquire_context(struct wined3d_device *device,
+static struct wined3d_context *adapter_no3d_acquire_context(struct wined3d_device *device,
         struct wined3d_texture *texture, unsigned int sub_resource_idx)
 {
     TRACE("device %p, texture %p, sub_resource_idx %u.\n", device, texture, sub_resource_idx);
@@ -2673,7 +2718,7 @@ struct wined3d_context *adapter_no3d_acquire_context(struct wined3d_device *devi
     return &wined3d_device_no3d(device)->context_no3d;
 }
 
-void adapter_no3d_release_context(struct wined3d_context *context)
+static void adapter_no3d_release_context(struct wined3d_context *context)
 {
     TRACE("context %p.\n", context);
 }
@@ -2742,7 +2787,7 @@ static void *adapter_no3d_map_bo_address(struct wined3d_context *context,
 {
     if (data->buffer_object)
     {
-        ERR("Unsupported buffer object %#lx.\n", data->buffer_object);
+        ERR("Unsupported buffer object %p.\n", data->buffer_object);
         return NULL;
     }
 
@@ -2753,19 +2798,39 @@ static void adapter_no3d_unmap_bo_address(struct wined3d_context *context,
         const struct wined3d_bo_address *data, unsigned int range_count, const struct wined3d_range *ranges)
 {
     if (data->buffer_object)
-        ERR("Unsupported buffer object %#lx.\n", data->buffer_object);
+        ERR("Unsupported buffer object %p.\n", data->buffer_object);
 }
 
 static void adapter_no3d_copy_bo_address(struct wined3d_context *context,
-        const struct wined3d_bo_address *dst, const struct wined3d_bo_address *src, size_t size)
+        const struct wined3d_bo_address *dst, const struct wined3d_bo_address *src,
+        unsigned int range_count, const struct wined3d_range *ranges)
 {
+    unsigned int i;
+
     if (dst->buffer_object)
-        ERR("Unsupported dst buffer object %#lx.\n", dst->buffer_object);
+        ERR("Unsupported dst buffer object %p.\n", dst->buffer_object);
     if (src->buffer_object)
-        ERR("Unsupported src buffer object %#lx.\n", src->buffer_object);
+        ERR("Unsupported src buffer object %p.\n", src->buffer_object);
     if (dst->buffer_object || src->buffer_object)
         return;
-    memcpy(dst->addr, src->addr, size);
+
+    for (i = 0; i < range_count; ++i)
+        memcpy(dst->addr + ranges[i].offset, src->addr + ranges[i].offset, ranges[i].size);
+}
+
+static void adapter_no3d_flush_bo_address(struct wined3d_context *context,
+        const struct wined3d_const_bo_address *data, size_t size)
+{
+}
+
+static bool adapter_no3d_alloc_bo(struct wined3d_device *device, struct wined3d_resource *resource,
+        unsigned int sub_resource_idx, struct wined3d_bo_address *addr)
+{
+    return false;
+}
+
+static void adapter_no3d_destroy_bo(struct wined3d_context *context, struct wined3d_bo *bo)
+{
 }
 
 static HRESULT adapter_no3d_create_swapchain(struct wined3d_device *device,
@@ -3017,10 +3082,10 @@ static void adapter_no3d_dispatch_compute(struct wined3d_device *device,
     ERR("device %p, state %p, parameters %p.\n", device, state, parameters);
 }
 
-void adapter_no3d_clear_uav(struct wined3d_context *context,
-        struct wined3d_unordered_access_view *view, const struct wined3d_uvec4 *clear_value)
+static void adapter_no3d_clear_uav(struct wined3d_context *context,
+        struct wined3d_unordered_access_view *view, const struct wined3d_uvec4 *clear_value, bool fp)
 {
-    ERR("context %p, view %p, clear_value %s.\n", context, view, debug_uvec4(clear_value));
+    ERR("context %p, view %p, clear_value %s, fp %#x.\n", context, view, debug_uvec4(clear_value), fp);
 }
 
 static const struct wined3d_adapter_ops wined3d_adapter_no3d_ops =
@@ -3037,6 +3102,9 @@ static const struct wined3d_adapter_ops wined3d_adapter_no3d_ops =
     .adapter_map_bo_address = adapter_no3d_map_bo_address,
     .adapter_unmap_bo_address = adapter_no3d_unmap_bo_address,
     .adapter_copy_bo_address = adapter_no3d_copy_bo_address,
+    .adapter_flush_bo_address = adapter_no3d_flush_bo_address,
+    .adapter_alloc_bo = adapter_no3d_alloc_bo,
+    .adapter_destroy_bo = adapter_no3d_destroy_bo,
     .adapter_create_swapchain = adapter_no3d_create_swapchain,
     .adapter_destroy_swapchain = adapter_no3d_destroy_swapchain,
     .adapter_create_buffer = adapter_no3d_create_buffer,

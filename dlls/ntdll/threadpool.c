@@ -201,7 +201,8 @@ struct threadpool_object
         {
             PTP_IO_CALLBACK callback;
             /* locked via .pool->cs */
-            unsigned int    pending_count, completion_count, completion_max;
+            unsigned int    pending_count, skipped_count, completion_count, completion_max;
+            BOOL            shutting_down;
             struct io_completion *completions;
         } io;
     } u;
@@ -783,7 +784,7 @@ NTSTATUS WINAPI RtlCreateTimerQueue(PHANDLE NewTimerQueue)
         RtlFreeHeap(GetProcessHeap(), 0, q);
         return status;
     }
-    status = RtlCreateUserThread(GetCurrentProcess(), NULL, FALSE, NULL, 0, 0,
+    status = RtlCreateUserThread(GetCurrentProcess(), NULL, FALSE, 0, 0, 0,
                                  timer_queue_thread_proc, q, &q->thread, NULL);
     if (status != STATUS_SUCCESS)
     {
@@ -886,8 +887,8 @@ static struct timer_queue *get_timer_queue(HANDLE TimerQueue)
  * Creates a new timer associated with the given queue.
  *
  * PARAMS
- *  NewTimer   [O] The newly created timer.
  *  TimerQueue [I] The queue to hold the timer.
+ *  NewTimer   [O] The newly created timer.
  *  Callback   [I] The callback to fire.
  *  Parameter  [I] The argument for the callback.
  *  DueTime    [I] The delay, in milliseconds, before first firing the
@@ -905,7 +906,7 @@ static struct timer_queue *get_timer_queue(HANDLE TimerQueue)
  *  Success: STATUS_SUCCESS.
  *  Failure: Any NTSTATUS code.
  */
-NTSTATUS WINAPI RtlCreateTimer(PHANDLE NewTimer, HANDLE TimerQueue,
+NTSTATUS WINAPI RtlCreateTimer(HANDLE TimerQueue, HANDLE *NewTimer,
                                RTL_WAITORTIMERCALLBACKFUNC Callback,
                                PVOID Parameter, DWORD DueTime, DWORD Period,
                                ULONG Flags)
@@ -1141,7 +1142,7 @@ static NTSTATUS tp_new_worker_thread( struct threadpool *pool )
     HANDLE thread;
     NTSTATUS status;
 
-    status = RtlCreateUserThread( GetCurrentProcess(), NULL, FALSE, NULL, 0, 0,
+    status = RtlCreateUserThread( GetCurrentProcess(), NULL, FALSE, 0, 0, 0,
                                   threadpool_worker_proc, pool, &thread, NULL );
     if (status == STATUS_SUCCESS)
     {
@@ -1176,7 +1177,7 @@ static NTSTATUS tp_timerqueue_lock( struct threadpool_object *timer )
     if (!timerqueue.thread_running)
     {
         HANDLE thread;
-        status = RtlCreateUserThread( GetCurrentProcess(), NULL, FALSE, NULL, 0, 0,
+        status = RtlCreateUserThread( GetCurrentProcess(), NULL, FALSE, 0, 0, 0,
                                       timerqueue_thread_proc, NULL, &thread, NULL );
         if (status == STATUS_SUCCESS)
         {
@@ -1454,7 +1455,7 @@ static NTSTATUS tp_waitqueue_lock( struct threadpool_object *wait )
         goto out;
     }
 
-    status = RtlCreateUserThread( GetCurrentProcess(), NULL, FALSE, NULL, 0, 0,
+    status = RtlCreateUserThread( GetCurrentProcess(), NULL, FALSE, 0, 0, 0,
                                   waitqueue_thread_proc, bucket, &thread, NULL );
     if (status == STATUS_SUCCESS)
     {
@@ -1506,6 +1507,7 @@ static void CALLBACK ioqueue_thread_proc( void *param )
     struct threadpool_object *io;
     IO_STATUS_BLOCK iosb;
     ULONG_PTR key, value;
+    BOOL destroy, skip;
     NTSTATUS status;
 
     TRACE( "starting I/O completion thread\n" );
@@ -1519,26 +1521,58 @@ static void CALLBACK ioqueue_thread_proc( void *param )
             ERR("NtRemoveIoCompletion failed, status %#x.\n", status);
         RtlEnterCriticalSection( &ioqueue.cs );
 
-        if (key)
-        {
-            io = (struct threadpool_object *)key;
+        destroy = skip = FALSE;
+        io = (struct threadpool_object *)key;
 
+        TRACE( "io %p, iosb.Status %#x.\n", io, iosb.u.Status );
+
+        if (io && (io->shutdown || io->u.io.shutting_down))
+        {
+            RtlEnterCriticalSection( &io->pool->cs );
+            if (!io->u.io.pending_count)
+            {
+                if (io->u.io.skipped_count)
+                    --io->u.io.skipped_count;
+
+                if (io->u.io.skipped_count)
+                    skip = TRUE;
+                else
+                    destroy = TRUE;
+            }
+            RtlLeaveCriticalSection( &io->pool->cs );
+            if (skip) continue;
+        }
+
+        if (destroy)
+        {
+            --ioqueue.objcount;
+            TRACE( "Releasing io %p.\n", io );
+            io->shutdown = TRUE;
+            tp_object_release( io );
+        }
+        else if (io)
+        {
             RtlEnterCriticalSection( &io->pool->cs );
 
-            if (!array_reserve((void **)&io->u.io.completions, &io->u.io.completion_max,
-                    io->u.io.completion_count + 1, sizeof(*io->u.io.completions)))
+            TRACE( "pending_count %u.\n", io->u.io.pending_count );
+
+            if (io->u.io.pending_count)
             {
-                ERR("Failed to allocate memory.\n");
-                RtlLeaveCriticalSection( &io->pool->cs );
-                continue;
+                --io->u.io.pending_count;
+                if (!array_reserve((void **)&io->u.io.completions, &io->u.io.completion_max,
+                        io->u.io.completion_count + 1, sizeof(*io->u.io.completions)))
+                {
+                    ERR( "Failed to allocate memory.\n" );
+                    RtlLeaveCriticalSection( &io->pool->cs );
+                    continue;
+                }
+
+                completion = &io->u.io.completions[io->u.io.completion_count++];
+                completion->iosb = iosb;
+                completion->cvalue = value;
+
+                tp_object_submit( io, FALSE );
             }
-
-            completion = &io->u.io.completions[io->u.io.completion_count++];
-            completion->iosb = iosb;
-            completion->cvalue = value;
-
-            tp_object_submit( io, FALSE );
-
             RtlLeaveCriticalSection( &io->pool->cs );
         }
 
@@ -1554,6 +1588,7 @@ static void CALLBACK ioqueue_thread_proc( void *param )
         }
     }
 
+    ioqueue.thread_running = FALSE;
     RtlLeaveCriticalSection( &ioqueue.cs );
 
     TRACE( "terminating I/O completion thread\n" );
@@ -1581,7 +1616,7 @@ static NTSTATUS tp_ioqueue_lock( struct threadpool_object *io, HANDLE file )
         HANDLE thread;
 
         if (!(status = RtlCreateUserThread( GetCurrentProcess(), NULL, FALSE,
-                NULL, 0, 0, ioqueue_thread_proc, NULL, &thread, NULL )))
+                                            0, 0, 0, ioqueue_thread_proc, NULL, &thread, NULL )))
         {
             ioqueue.thread_running = TRUE;
             NtClose( thread );
@@ -1607,18 +1642,6 @@ static NTSTATUS tp_ioqueue_lock( struct threadpool_object *io, HANDLE file )
 
     RtlLeaveCriticalSection( &ioqueue.cs );
     return status;
-}
-
-static void tp_ioqueue_unlock( struct threadpool_object *io )
-{
-    assert( io->type == TP_OBJECT_TYPE_IO );
-
-    RtlEnterCriticalSection( &ioqueue.cs );
-
-    if (!--ioqueue.objcount)
-        NtSetIoCompletion( ioqueue.port, 0, 0, STATUS_SUCCESS, 0 );
-
-    RtlLeaveCriticalSection( &ioqueue.cs );
 }
 
 /***********************************************************************
@@ -1999,7 +2022,10 @@ static void tp_object_cancel( struct threadpool_object *object )
             object->u.wait.signaled = 0;
     }
     if (object->type == TP_OBJECT_TYPE_IO)
+    {
+        object->u.io.skipped_count += object->u.io.pending_count;
         object->u.io.pending_count = 0;
+    }
     RtlLeaveCriticalSection( &pool->cs );
 
     while (pending_callbacks--)
@@ -2038,6 +2064,20 @@ static void tp_object_wait( struct threadpool_object *object, BOOL group_wait )
             RtlSleepConditionVariableCS( &object->finished_event, &pool->cs, NULL );
     }
     RtlLeaveCriticalSection( &pool->cs );
+}
+
+static void tp_ioqueue_unlock( struct threadpool_object *io )
+{
+    assert( io->type == TP_OBJECT_TYPE_IO );
+
+    RtlEnterCriticalSection( &ioqueue.cs );
+
+    assert(ioqueue.objcount);
+
+    if (!io->shutdown && !--ioqueue.objcount)
+        NtSetIoCompletion( ioqueue.port, 0, 0, STATUS_SUCCESS, 0 );
+
+    RtlLeaveCriticalSection( &ioqueue.cs );
 }
 
 /***********************************************************************
@@ -2141,7 +2181,6 @@ static void tp_object_execute( struct threadpool_object *object, BOOL wait_threa
     {
         assert( object->u.io.completion_count );
         completion = object->u.io.completions[--object->u.io.completion_count];
-        object->u.io.pending_count--;
     }
 
     /* Leave critical section and do the actual callback. */
@@ -2527,6 +2566,8 @@ void WINAPI TpCancelAsyncIoOperation( TP_IO *io )
 
     RtlEnterCriticalSection( &this->pool->cs );
 
+    TRACE("pending_count %u.\n", this->u.io.pending_count);
+
     this->u.io.pending_count--;
     if (object_is_finished( this, TRUE ))
         RtlWakeAllConditionVariable( &this->group_finished_event );
@@ -2793,12 +2834,21 @@ VOID WINAPI TpReleaseCleanupGroupMembers( TP_CLEANUP_GROUP *group, BOOL cancel_p
 void WINAPI TpReleaseIoCompletion( TP_IO *io )
 {
     struct threadpool_object *this = impl_from_TP_IO( io );
+    BOOL can_destroy;
 
     TRACE( "%p\n", io );
 
-    tp_object_prepare_shutdown( this );
-    this->shutdown = TRUE;
-    tp_object_release( this );
+    RtlEnterCriticalSection( &this->pool->cs );
+    this->u.io.shutting_down = TRUE;
+    can_destroy = !this->u.io.pending_count && !this->u.io.skipped_count;
+    RtlLeaveCriticalSection( &this->pool->cs );
+
+    if (can_destroy)
+    {
+        tp_object_prepare_shutdown( this );
+        this->shutdown = TRUE;
+        tp_object_release( this );
+    }
 }
 
 /***********************************************************************
