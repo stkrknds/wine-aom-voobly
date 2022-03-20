@@ -1,16 +1,16 @@
-#Wine for AoM & Voobly
+# Wine for AoM & Voobly
 
 Working with Voobly and AoM. **ONLY USE THIS WINE FOR PLAYING AoM THROUGH VOOBLY. CREATE A UNIQUE PREFIX FOR THIS WINE.**
 
 Make sure you can run the latest version of wine-staging(i386), before using this wine(make sure you have all the runtime depedencies installed).
 
-You can either build it yourself, or you can download the binaries in the "Releases" tab:
+You can either build it yourself, or you can download the binaries in the **Releases** tab:
 
 https://github.com/stkrknds/wine-aom-voobly/releases/tag/aom-voobly
 
 The wine build itself is in the folder aom-voobly/wine-aom-voobly.
 
-##"Installation" (Not really...)
+## "Installation" (Not really...)
 
 1) Download.
 ```
