@@ -1,5 +1,43 @@
-Finally Working. Dodgy fix, but who cares... 
+#Wine for AoM & Voobly
 
+Working with Voobly and AoM. **ONLY USE THIS WINE FOR PLAYING AoM THROUGH VOOBLY. CREATE A UNIQUE PREFIX FOR THIS WINE.**
+
+Make sure you can run the latest version of wine-staging(i386), before using this wine(make sure you have all the runtime depedencies installed).
+
+You can either build it yourself, or you can download the binaries in the "Releases" tab:
+
+https://github.com/stkrknds/wine-aom-voobly/releases/tag/aom-voobly
+
+The wine build itself is in the folder aom-voobly/wine-aom-voobly.
+
+##"Installation" (Not really...)
+
+1) Download.
+```
+wget https://github.com/stkrknds/wine-aom-voobly/releases/download/aom-voobly/v0-7.4-wine-aom-voobly.tar.gz
+```
+
+2) Uncompress.
+```
+tar -xf v0-7.4-wine-aom-voobly.tar.gz
+```
+3) You can run the install.sh script. It will move the aom-voobly folder in your home directory and create a prefix inside it called ".aompre". In the winecfg window, press ok.
+```
+sh install.sh
+```
+Make sure that everytime you want to install/config something for this wine/prefix(e.g. AoM/Voobly), you use the following format:
+
+WINEPREFIX=~/aom-voobly/.aompre ~/aom-voobly/wine-aom-voobly/bin/wine path_to_file
+
+Of course you can, alternatively, create an alias.
+
+Now it is important to remember that I don't really know what caused the I.P. issue to begin with, I just edited/removed some lines, and now it is
+working fine(ONLY FOR THIS PURPOSE, AGAIN, DONT USE THIS WINE FOR ANYTHING ELSE). If someone tries to run this, and fails, please let me know, I will do my best to help you.
+Also if anyone has any suggestions/tips, let me know.. I haven't studied the code extensively, only enough to "fix" the issue, probably not in a good way, but it works!
+
+Hf!
+
+Below the original wine readme.
 
 --------------------------------------------------------------------------------------
 1. INTRODUCTION
