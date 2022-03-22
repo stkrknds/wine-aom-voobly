@@ -233,6 +233,8 @@ struct unix_funcs
     BOOL     (WINAPI *pNtUserGetUpdatedClipboardFormats)( UINT *formats, UINT size, UINT *out_size );
     BOOL     (WINAPI *pNtUserIsClipboardFormatAvailable)( UINT format );
     UINT     (WINAPI *pNtUserMapVirtualKeyEx)( UINT code, UINT type, HKL layout );
+    BOOL     (WINAPI *pNtUserMessageCall)( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
+                                           ULONG_PTR result_info, DWORD type, BOOL ansi );
     BOOL     (WINAPI *pNtUserMoveWindow)( HWND hwnd, INT x, INT y, INT cx, INT cy, BOOL repaint );
     BOOL     (WINAPI *pNtUserRedrawWindow)( HWND hwnd, const RECT *rect, HRGN hrgn, UINT flags );
     ATOM     (WINAPI *pNtUserRegisterClassExWOW)( const WNDCLASSEXW *wc, UNICODE_STRING *name,
@@ -290,8 +292,6 @@ struct unix_funcs
     const struct vulkan_funcs * (CDECL *get_vulkan_driver)( UINT version );
     struct opengl_funcs * (CDECL *get_wgl_driver)( HDC hdc, UINT version );
     void (CDECL *set_display_driver)( struct user_driver_funcs *funcs, UINT version );
-    void (CDECL *set_visible_region)( HDC hdc, HRGN hrgn, const RECT *vis_rect, const RECT *device_rect,
-                                      struct window_surface *surface );
 };
 
 /* clipboard.c */
@@ -305,6 +305,7 @@ extern ULONG_PTR set_icon_param( HICON handle, ULONG_PTR param ) DECLSPEC_HIDDEN
 
 /* dce.c */
 extern struct window_surface dummy_surface DECLSPEC_HIDDEN;
+extern BOOL create_dib_surface( HDC hdc, const BITMAPINFO *info ) DECLSPEC_HIDDEN;
 extern void create_offscreen_window_surface( const RECT *visible_rect,
                                              struct window_surface **surface ) DECLSPEC_HIDDEN;
 extern void erase_now( HWND hwnd, UINT rdw_flags ) DECLSPEC_HIDDEN;
@@ -380,6 +381,7 @@ extern HWND is_current_process_window( HWND hwnd ) DECLSPEC_HIDDEN;
 extern HWND is_current_thread_window( HWND hwnd ) DECLSPEC_HIDDEN;
 extern BOOL is_desktop_window( HWND hwnd ) DECLSPEC_HIDDEN;
 extern BOOL is_iconic( HWND hwnd ) DECLSPEC_HIDDEN;
+extern BOOL is_window_unicode( HWND hwnd ) DECLSPEC_HIDDEN;
 extern DWORD get_window_long( HWND hwnd, INT offset ) DECLSPEC_HIDDEN;
 extern BOOL get_window_rect( HWND hwnd, RECT *rect, UINT dpi ) DECLSPEC_HIDDEN;
 enum coords_relative;

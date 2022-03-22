@@ -1186,6 +1186,7 @@ static struct unix_funcs unix_funcs =
     NtUserGetUpdatedClipboardFormats,
     NtUserIsClipboardFormatAvailable,
     NtUserMapVirtualKeyEx,
+    NtUserMessageCall,
     NtUserMoveWindow,
     NtUserRedrawWindow,
     NtUserRegisterClassExWOW,
@@ -1229,7 +1230,6 @@ static struct unix_funcs unix_funcs =
     __wine_get_vulkan_driver,
     __wine_get_wgl_driver,
     __wine_set_display_driver,
-    __wine_set_visible_region,
 };
 
 NTSTATUS gdi_init(void)

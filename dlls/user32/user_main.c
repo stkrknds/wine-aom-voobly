@@ -33,6 +33,7 @@
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(graphics);
+WINE_DECLARE_DEBUG_CHANNEL(message);
 
 HMODULE user32_module = 0;
 
@@ -185,11 +186,6 @@ static const struct user_callbacks user_funcs =
     unregister_imm,
 };
 
-static void WINAPI User32CallFreeIcon( ULONG *param, ULONG size )
-{
-    wow_handlers.free_icon_param( *param );
-}
-
 static BOOL WINAPI User32LoadDriver( const WCHAR *path, ULONG size )
 {
     return LoadLibraryW( path ) != NULL;
@@ -201,7 +197,6 @@ static const void *kernel_callback_table[NtUserCallCount] =
     User32CallWinEventHook,
     User32CallWindowsHook,
     User32LoadDriver,
-    User32CallFreeIcon,
 };
 
 
@@ -360,4 +355,24 @@ BOOL WINAPI ShutdownBlockReasonDestroy(HWND hwnd)
     FIXME("(%p): stub\n", hwnd);
     SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
     return FALSE;
+}
+
+const char *SPY_GetMsgName( UINT msg, HWND hwnd )
+{
+    return (const char *)NtUserCallHwndParam( hwnd, msg, NtUserSpyGetMsgName );
+}
+
+const char *SPY_GetVKeyName( WPARAM wparam )
+{
+    return (const char *)NtUserCallOneParam( wparam, NtUserSpyGetVKeyName );
+}
+
+void SPY_EnterMessage( INT flag, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam )
+{
+    if (TRACE_ON(message)) NtUserMessageCall( hwnd, msg, wparam, lparam, 0, FNID_SPYENTER, flag );
+}
+
+void SPY_ExitMessage( INT flag, HWND hwnd, UINT msg, LRESULT lreturn, WPARAM wparam, LPARAM lparam )
+{
+    if (TRACE_ON(message)) NtUserMessageCall( hwnd, msg, wparam, lparam, lreturn, FNID_SPYEXIT, flag );
 }

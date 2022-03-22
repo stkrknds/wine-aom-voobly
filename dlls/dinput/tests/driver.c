@@ -406,16 +406,44 @@ struct hid_device
     KSPIN_LOCK lock;
 };
 
+static DRIVER_OBJECT *expect_driver;
+static DEVICE_OBJECT *expect_bus_pdo;
+static DEVICE_OBJECT *expect_hid_fdo;
+static DEVICE_OBJECT *expect_hid_pdo;
+static struct hid_device *expect_hid_ext;
+
+static void check_device( DEVICE_OBJECT *device )
+{
+    static int checked_fdo, checked_pdo;
+    HID_DEVICE_EXTENSION *ext = device->DeviceExtension;
+
+    ok( device == expect_hid_pdo || device == expect_hid_fdo, "got device %p\n", device );
+    ok( device->DriverObject == expect_driver, "got DriverObject %p\n", device->DriverObject );
+    if (!device->NextDevice) ok( device == expect_hid_fdo, "got device %p\n", device );
+    else ok( device->NextDevice == expect_hid_fdo, "got NextDevice %p\n", device->NextDevice );
+    ok( !device->AttachedDevice, "got AttachedDevice %p\n", device->AttachedDevice );
+
+    if (device == expect_hid_pdo && checked_pdo++) return;
+    if (device == expect_hid_fdo && checked_fdo++) return;
+
+    todo_wine_if( device != expect_hid_fdo )
+    ok( ext->MiniDeviceExtension == expect_hid_ext, "got MiniDeviceExtension %p\n", ext->MiniDeviceExtension );
+    if (ext->MiniDeviceExtension != expect_hid_ext) return;
+    ok( ext->PhysicalDeviceObject == expect_bus_pdo, "got PhysicalDeviceObject %p\n", ext->PhysicalDeviceObject );
+    ok( ext->NextDeviceObject == expect_bus_pdo, "got NextDeviceObject %p\n", ext->NextDeviceObject );
+}
+
 static NTSTATUS WINAPI driver_pnp( DEVICE_OBJECT *device, IRP *irp )
 {
     IO_STACK_LOCATION *stack = IoGetCurrentIrpStackLocation( irp );
     HID_DEVICE_EXTENSION *ext = device->DeviceExtension;
     struct hid_device *impl = ext->MiniDeviceExtension;
+    ULONG code = stack->MinorFunction;
     KIRQL irql;
 
-    if (winetest_debug > 1) trace( "pnp %#x\n", stack->MinorFunction );
+    if (winetest_debug > 1) trace( "%s: device %p, code %#lx %s\n", __func__, device, code, debugstr_pnp(code) );
 
-    switch (stack->MinorFunction)
+    switch (code)
     {
     case IRP_MN_START_DEVICE:
         ++got_start_device;
@@ -456,18 +484,6 @@ static NTSTATUS WINAPI driver_pnp( DEVICE_OBJECT *device, IRP *irp )
     return IoCallDriver( ext->NextDeviceObject, irp );
 }
 
-static NTSTATUS WINAPI driver_power( DEVICE_OBJECT *device, IRP *irp )
-{
-    HID_DEVICE_EXTENSION *ext = device->DeviceExtension;
-
-    /* We do not expect power IRPs as part of normal operation. */
-    ok( 0, "unexpected call\n" );
-
-    PoStartNextPowerIrp( irp );
-    IoSkipCurrentIrpStackLocation( irp );
-    return PoCallDriver( ext->NextDeviceObject, irp );
-}
-
 #define check_buffer( a, b ) check_buffer_( __LINE__, a, b )
 static void check_buffer_( int line, HID_XFER_PACKET *packet, struct hid_expect *expect )
 {
@@ -502,7 +518,10 @@ static NTSTATUS WINAPI driver_internal_ioctl( DEVICE_OBJECT *device, IRP *irp )
     KIRQL irql;
     LONG index;
 
-    if (winetest_debug > 1) trace( "ioctl %#lx\n", code );
+    if (winetest_debug > 1) trace( "%s: device %p, code %#lx %s\n", __func__, device, code, debugstr_ioctl(code) );
+
+    ok( expect_hid_fdo == device, "got device %p\n", device );
+    check_device( device );
 
     ok( got_start_device, "expected IRP_MN_START_DEVICE before any ioctls\n" );
 
@@ -717,13 +736,19 @@ static NTSTATUS WINAPI driver_internal_ioctl( DEVICE_OBJECT *device, IRP *irp )
     return ret;
 }
 
-static NTSTATUS( WINAPI *hidclass_driver_ioctl )(DEVICE_OBJECT *device, IRP *irp);
+static NTSTATUS (WINAPI *hidclass_driver_ioctl)( DEVICE_OBJECT *device, IRP *irp );
 static NTSTATUS WINAPI driver_ioctl( DEVICE_OBJECT *device, IRP *irp )
 {
     IO_STACK_LOCATION *stack = IoGetCurrentIrpStackLocation( irp );
     ULONG in_size = stack->Parameters.DeviceIoControl.InputBufferLength;
     ULONG code = stack->Parameters.DeviceIoControl.IoControlCode;
     KIRQL irql;
+
+    if (winetest_debug > 1) trace( "%s: device %p, code %#lx %s\n", __func__, device, code, debugstr_ioctl(code) );
+
+    if (!expect_hid_pdo) expect_hid_pdo = device;
+    else ok( expect_hid_pdo == device, "got device %p\n", device );
+    check_device( device );
 
     switch (code)
     {
@@ -752,27 +777,34 @@ static NTSTATUS WINAPI driver_ioctl( DEVICE_OBJECT *device, IRP *irp )
     return hidclass_driver_ioctl( device, irp );
 }
 
-static NTSTATUS WINAPI driver_add_device( DRIVER_OBJECT *driver, DEVICE_OBJECT *fdo )
+static NTSTATUS WINAPI driver_add_device( DRIVER_OBJECT *driver, DEVICE_OBJECT *device )
 {
-    HID_DEVICE_EXTENSION *ext = fdo->DeviceExtension;
+    HID_DEVICE_EXTENSION *ext = device->DeviceExtension;
     NTSTATUS ret;
 
-    /* We should be given the FDO, not the PDO. */
-    ok( !!ext->PhysicalDeviceObject, "expected non-NULL pdo\n" );
-    ok( ext->NextDeviceObject == ext->PhysicalDeviceObject, "got pdo %p, next %p\n",
-        ext->PhysicalDeviceObject, ext->NextDeviceObject );
+    if (winetest_debug > 1) trace( "%s: driver %p, device %p\n", __func__, driver, device );
+
+    expect_hid_fdo = device;
+    expect_bus_pdo = ext->PhysicalDeviceObject;
+    expect_hid_ext = ext->MiniDeviceExtension;
+
     todo_wine
-    ok( ext->NextDeviceObject->AttachedDevice == fdo, "wrong attached device\n" );
+    ok( expect_bus_pdo->AttachedDevice == device, "got AttachedDevice %p\n", expect_bus_pdo->AttachedDevice );
+    ok( driver == expect_driver, "got driver %p\n", driver );
+    check_device( device );
 
     ret = IoRegisterDeviceInterface( ext->PhysicalDeviceObject, &control_class, NULL, &control_symlink );
     ok( !ret, "got %#lx\n", ret );
 
-    fdo->Flags &= ~DO_DEVICE_INITIALIZING;
+    if (winetest_debug > 1) trace( "Created HID FDO %p for Bus PDO %p\n", device, ext->PhysicalDeviceObject );
+
+    device->Flags &= ~DO_DEVICE_INITIALIZING;
     return STATUS_SUCCESS;
 }
 
 static NTSTATUS WINAPI driver_create( DEVICE_OBJECT *device, IRP *irp )
 {
+    if (winetest_debug > 1) trace( "%s: device %p\n", __func__, device );
     ok( 0, "unexpected call\n" );
     irp->IoStatus.Status = STATUS_SUCCESS;
     IoCompleteRequest( irp, IO_NO_INCREMENT );
@@ -781,6 +813,7 @@ static NTSTATUS WINAPI driver_create( DEVICE_OBJECT *device, IRP *irp )
 
 static NTSTATUS WINAPI driver_close( DEVICE_OBJECT *device, IRP *irp )
 {
+    if (winetest_debug > 1) trace( "%s: device %p\n", __func__, device );
     ok( 0, "unexpected call\n" );
     irp->IoStatus.Status = STATUS_SUCCESS;
     IoCompleteRequest( irp, IO_NO_INCREMENT );
@@ -789,6 +822,7 @@ static NTSTATUS WINAPI driver_close( DEVICE_OBJECT *device, IRP *irp )
 
 static void WINAPI driver_unload( DRIVER_OBJECT *driver )
 {
+    if (winetest_debug > 1) trace( "%s: driver %p\n", __func__, driver );
     input_queue_cleanup( &input_queue );
     expect_queue_cleanup( &expect_queue );
     winetest_cleanup();
@@ -811,7 +845,10 @@ NTSTATUS WINAPI DriverEntry( DRIVER_OBJECT *driver, UNICODE_STRING *registry )
     HANDLE hkey;
     DWORD size;
 
+    expect_driver = driver;
+
     if ((ret = winetest_init())) return ret;
+    if (winetest_debug > 1) trace( "%s: driver %p\n", __func__, driver );
 
     InitializeObjectAttributes( &attr, registry, 0, NULL, NULL );
     ret = ZwOpenKey( &hkey, KEY_ALL_ACCESS, &attr );
@@ -833,6 +870,8 @@ NTSTATUS WINAPI DriverEntry( DRIVER_OBJECT *driver, UNICODE_STRING *registry )
     ok( !ret, "ZwQueryValueKey returned %#lx\n", ret );
     memcpy( &polled, buffer + info_size, size - info_size );
     params.DevicesArePolled = polled;
+    /* polled mode calls this in a state where printing anything locks the system up */
+    if (polled) winetest_debug = 0;
 
     RtlInitUnicodeString( &name_str, L"Descriptor" );
     size = info_size + sizeof(report_descriptor_buf);
@@ -876,7 +915,6 @@ NTSTATUS WINAPI DriverEntry( DRIVER_OBJECT *driver, UNICODE_STRING *registry )
     driver->DriverExtension->AddDevice = driver_add_device;
     driver->DriverUnload = driver_unload;
     driver->MajorFunction[IRP_MJ_PNP] = driver_pnp;
-    driver->MajorFunction[IRP_MJ_POWER] = driver_power;
     driver->MajorFunction[IRP_MJ_DEVICE_CONTROL] = driver_ioctl;
     driver->MajorFunction[IRP_MJ_INTERNAL_DEVICE_CONTROL] = driver_internal_ioctl;
     driver->MajorFunction[IRP_MJ_CREATE] = driver_create;

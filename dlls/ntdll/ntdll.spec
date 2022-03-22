@@ -235,6 +235,7 @@
 @ stdcall -syscall NtImpersonateAnonymousToken(long)
 # @ stub NtImpersonateClientOfPort
 # @ stub NtImpersonateThread
+@ stdcall -syscall NtInitializeNlsFiles(ptr ptr ptr)
 # @ stub NtInitializeRegistry
 @ stdcall -syscall NtInitiatePowerAction (long long long long)
 @ stdcall -syscall NtIsProcessInJob(long long)
@@ -725,6 +726,7 @@
 # @ stub RtlGetLengthWithoutLastFullDosOrNtPathElement
 # Yes, Microsoft really misspelled this one!
 # @ stub RtlGetLengthWithoutTrailingPathSeperators
+@ stdcall RtlGetLocaleFileMappingAddress(ptr ptr ptr)
 @ stdcall RtlGetLongestNtPathLength()
 @ stdcall -syscall -arch=win32 RtlGetNativeSystemInformation(long ptr long ptr) NtWow64GetNativeSystemInformation
 @ stdcall -syscall -arch=win64 RtlGetNativeSystemInformation(long ptr long ptr) NtQuerySystemInformation
@@ -1257,6 +1259,7 @@
 @ stdcall -private -syscall ZwImpersonateAnonymousToken(long) NtImpersonateAnonymousToken
 # @ stub ZwImpersonateClientOfPort
 # @ stub ZwImpersonateThread
+@ stdcall -private -syscall ZwInitializeNlsFiles(ptr ptr ptr) NtInitializeNlsFiles
 # @ stub ZwInitializeRegistry
 @ stdcall -private -syscall ZwInitiatePowerAction(long long long long) NtInitiatePowerAction
 @ stdcall -private -syscall ZwIsProcessInJob(long long) NtIsProcessInJob

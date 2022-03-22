@@ -451,6 +451,8 @@ BOOL bool_obj_value(jsdisp_t*) DECLSPEC_HIDDEN;
 unsigned array_get_length(jsdisp_t*) DECLSPEC_HIDDEN;
 
 HRESULT JSGlobal_eval(script_ctx_t*,jsval_t,WORD,unsigned,jsval_t*,jsval_t*) DECLSPEC_HIDDEN;
+HRESULT Object_get_proto_(script_ctx_t*,jsval_t,WORD,unsigned,jsval_t*,jsval_t*) DECLSPEC_HIDDEN;
+HRESULT Object_set_proto_(script_ctx_t*,jsval_t,WORD,unsigned,jsval_t*,jsval_t*) DECLSPEC_HIDDEN;
 
 static inline BOOL is_class(jsdisp_t *jsdisp, jsclass_t class)
 {
@@ -516,6 +518,8 @@ static inline DWORD make_grfdex(script_ctx_t *ctx, DWORD flags)
 #define JS_E_PRECISION_OUT_OF_RANGE  MAKE_JSERROR(IDS_PRECISION_OUT_OF_RANGE)
 #define JS_E_INVALID_LENGTH          MAKE_JSERROR(IDS_INVALID_LENGTH)
 #define JS_E_ARRAY_EXPECTED          MAKE_JSERROR(IDS_ARRAY_EXPECTED)
+#define JS_E_CYCLIC_PROTO_VALUE      MAKE_JSERROR(IDS_CYCLIC_PROTO_VALUE)
+#define JS_E_CANNOT_CREATE_FOR_NONEXTENSIBLE MAKE_JSERROR(IDS_CREATE_FOR_NONEXTENSIBLE)
 #define JS_E_OBJECT_NONEXTENSIBLE    MAKE_JSERROR(IDS_OBJECT_NONEXTENSIBLE)
 #define JS_E_NONCONFIGURABLE_REDEFINED MAKE_JSERROR(IDS_NONCONFIGURABLE_REDEFINED)
 #define JS_E_NONWRITABLE_MODIFIED    MAKE_JSERROR(IDS_NONWRITABLE_MODIFIED)

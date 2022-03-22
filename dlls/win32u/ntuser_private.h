@@ -159,6 +159,7 @@ struct user_thread_info
     HWND                          top_window;             /* Desktop window */
     HWND                          msg_window;             /* HWND_MESSAGE parent window */
     struct rawinput_thread_data  *rawinput;               /* RawInput thread local data / buffer */
+    UINT                          spy_indent;             /* Current spy indent */
 };
 
 C_ASSERT( sizeof(struct user_thread_info) <= sizeof(((TEB *)0)->Win32ClientInfo) );
@@ -216,6 +217,21 @@ typedef struct tagWINDOWPROC
 #define DIALOG_CLASS_ATOM    MAKEINTATOM(32770)  /* Dialog */
 #define WINSWITCH_CLASS_ATOM MAKEINTATOM(32771)  /* WinSwitch */
 #define ICONTITLE_CLASS_ATOM MAKEINTATOM(32772)  /* IconTitle */
+
+/* message spy definitions */
+
+#define SPY_DISPATCHMESSAGE       0x0100
+#define SPY_SENDMESSAGE           0x0101
+#define SPY_DEFWNDPROC            0x0102
+
+#define SPY_RESULT_OK             0x0001
+#define SPY_RESULT_DEFWND         0x0002
+
+extern const char *debugstr_msg_name( UINT msg, HWND hwnd ) DECLSPEC_HIDDEN;
+extern const char *debugstr_vkey_name( WPARAM wParam ) DECLSPEC_HIDDEN;
+extern void spy_enter_message( INT flag, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam ) DECLSPEC_HIDDEN;
+extern void spy_exit_message( INT flag, HWND hwnd, UINT msg,
+                              LRESULT lreturn, WPARAM wparam, LPARAM lparam ) DECLSPEC_HIDDEN;
 
 /* class.c */
 WNDPROC alloc_winproc( WNDPROC func, BOOL ansi ) DECLSPEC_HIDDEN;

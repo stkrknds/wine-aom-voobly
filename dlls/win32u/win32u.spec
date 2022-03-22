@@ -1079,7 +1079,7 @@
 @ stdcall NtUserMapVirtualKeyEx(long long long)
 @ stub NtUserMarkWindowForRawMouse
 @ stub NtUserMenuItemFromPoint
-@ stub NtUserMessageCall
+@ stdcall NtUserMessageCall(long long long long long long long)
 @ stub NtUserMinInitialize
 @ stub NtUserMinMaximize
 @ stub NtUserModifyUserStartupInfoFlags
@@ -1319,9 +1319,6 @@
 
 ################################################################
 # Wine internal extensions
-
-# user32
-@ cdecl __wine_set_visible_region(long long ptr ptr ptr)
 
 # Graphics drivers
 @ cdecl __wine_set_display_driver(ptr long)

@@ -415,8 +415,9 @@ static void unload_driver( SC_HANDLE service )
     CloseServiceHandle( service );
 }
 
-void pnp_driver_stop(void)
+static void pnp_driver_stop(void)
 {
+    const WCHAR *service_name = L"winetest";
     SP_DEVINFO_DATA device = {sizeof(SP_DEVINFO_DATA)};
     WCHAR path[MAX_PATH], dest[MAX_PATH], *filepart;
     SC_HANDLE manager, service;
@@ -453,7 +454,7 @@ void pnp_driver_stop(void)
     manager = OpenSCManagerW( NULL, NULL, SC_MANAGER_CONNECT );
     ok( !!manager, "failed to open service manager, error %lu\n", GetLastError() );
 
-    service = OpenServiceW( manager, L"winetest", SERVICE_STOP | DELETE );
+    service = OpenServiceW( manager, service_name, SERVICE_STOP | DELETE );
     if (service) unload_driver( service );
     else ok( GetLastError() == ERROR_SERVICE_DOES_NOT_EXIST, "got error %lu\n", GetLastError() );
 
@@ -488,11 +489,48 @@ void pnp_driver_stop(void)
     ok( ret || GetLastError() == ERROR_FILE_NOT_FOUND, "Failed to delete file, error %lu\n", GetLastError() );
 }
 
-BOOL pnp_driver_start( const WCHAR *resource )
+static BOOL find_hid_device_path( WCHAR *device_path )
+{
+    char buffer[FIELD_OFFSET( SP_DEVICE_INTERFACE_DETAIL_DATA_W, DevicePath[MAX_PATH] )] = {0};
+    SP_DEVICE_INTERFACE_DATA iface = {sizeof(SP_DEVICE_INTERFACE_DATA)};
+    SP_DEVICE_INTERFACE_DETAIL_DATA_W *iface_detail = (void *)buffer;
+    SP_DEVINFO_DATA device = {sizeof(SP_DEVINFO_DATA)};
+    ULONG i, len = wcslen( device_path );
+    HDEVINFO set;
+    BOOL ret;
+
+    set = SetupDiGetClassDevsW( &GUID_DEVINTERFACE_HID, NULL, NULL, DIGCF_DEVICEINTERFACE | DIGCF_PRESENT );
+    ok( set != INVALID_HANDLE_VALUE, "Failed to get device list, error %#lx\n", GetLastError() );
+
+    for (i = 0; SetupDiEnumDeviceInfo( set, i, &device ); ++i)
+    {
+        ret = SetupDiEnumDeviceInterfaces( set, &device, &GUID_DEVINTERFACE_HID, 0, &iface );
+        ok( ret, "Failed to get interface, error %#lx\n", GetLastError() );
+        ok( IsEqualGUID( &iface.InterfaceClassGuid, &GUID_DEVINTERFACE_HID ), "wrong class %s\n",
+            debugstr_guid( &iface.InterfaceClassGuid ) );
+        ok( iface.Flags == SPINT_ACTIVE, "got flags %#lx\n", iface.Flags );
+
+        iface_detail->cbSize = sizeof(*iface_detail);
+        ret = SetupDiGetDeviceInterfaceDetailW( set, &iface, iface_detail, sizeof(buffer), NULL, NULL );
+        ok( ret, "Failed to get interface path, error %#lx\n", GetLastError() );
+
+        if (!wcsncmp( iface_detail->DevicePath, device_path, len )) break;
+    }
+
+    ret = SetupDiDestroyDeviceInfoList( set );
+    ok( ret, "Failed to destroy set, error %lu\n", GetLastError() );
+
+    ret = !wcsncmp( iface_detail->DevicePath, device_path, len );
+    if (ret) wcscpy( device_path, iface_detail->DevicePath );
+    return ret;
+}
+
+static BOOL pnp_driver_start(void)
 {
     static const WCHAR hardware_id[] = L"test_hardware_id\0";
     SP_DEVINFO_DATA device = {sizeof(SP_DEVINFO_DATA)};
     WCHAR path[MAX_PATH], filename[MAX_PATH];
+    const WCHAR *service_name = L"winetest";
     SC_HANDLE manager, service;
     const CERT_CONTEXT *cert;
     int old_mute_threshold;
@@ -504,7 +542,7 @@ BOOL pnp_driver_start( const WCHAR *resource )
     old_mute_threshold = winetest_mute_threshold;
     winetest_mute_threshold = 1;
 
-    load_resource( resource, filename );
+    load_resource( L"driver.dll", filename );
     ret = MoveFileExW( filename, L"winetest.sys", MOVEFILE_COPY_ALLOWED | MOVEFILE_REPLACE_EXISTING );
     ok( ret, "failed to move file, error %lu\n", GetLastError() );
 
@@ -570,7 +608,7 @@ BOOL pnp_driver_start( const WCHAR *resource )
     manager = OpenSCManagerW( NULL, NULL, SC_MANAGER_CONNECT );
     ok( !!manager, "failed to open service manager, error %lu\n", GetLastError() );
 
-    service = OpenServiceW( manager, L"winetest", SERVICE_START );
+    service = OpenServiceW( manager, service_name, SERVICE_START );
     ok( !!service, "failed to open service, error %lu\n", GetLastError() );
 
     ret = StartServiceW( service, 0, NULL );
@@ -588,6 +626,16 @@ BOOL pnp_driver_start( const WCHAR *resource )
 
     winetest_mute_threshold = old_mute_threshold;
     return ret || GetLastError() == ERROR_SERVICE_ALREADY_RUNNING;
+}
+
+void hid_device_stop(void)
+{
+    pnp_driver_stop();
+}
+
+BOOL hid_device_start(void)
+{
+    return pnp_driver_start();
 }
 
 #define check_hidp_caps( a, b ) check_hidp_caps_( __LINE__, a, b )
@@ -2325,50 +2373,22 @@ static void test_hidp( HANDLE file, HANDLE async_file, int report_id, BOOL polle
 
 static void test_hid_device( DWORD report_id, DWORD polled, const HIDP_CAPS *expect_caps )
 {
-    char buffer[FIELD_OFFSET( SP_DEVICE_INTERFACE_DETAIL_DATA_W, DevicePath[MAX_PATH] )];
-    SP_DEVICE_INTERFACE_DATA iface = {sizeof(SP_DEVICE_INTERFACE_DATA)};
-    SP_DEVICE_INTERFACE_DETAIL_DATA_W *iface_detail = (void *)buffer;
-    SP_DEVINFO_DATA device = {sizeof(SP_DEVINFO_DATA)};
     ULONG count, poll_freq, out_len;
+    WCHAR device_path[MAX_PATH];
     HANDLE file, async_file;
-    BOOL ret, found = FALSE;
     OBJECT_ATTRIBUTES attr;
     UNICODE_STRING string;
     IO_STATUS_BLOCK io;
     NTSTATUS status;
-    unsigned int i;
-    HDEVINFO set;
+    BOOL ret;
 
     winetest_push_context( "id %ld%s", report_id, polled ? " poll" : "" );
 
-    set = SetupDiGetClassDevsW( &GUID_DEVINTERFACE_HID, NULL, NULL, DIGCF_DEVICEINTERFACE | DIGCF_PRESENT );
-    ok( set != INVALID_HANDLE_VALUE, "failed to get device list, error %#lx\n", GetLastError() );
+    swprintf( device_path, MAX_PATH, L"\\\\?\\hid#winetest#" );
+    ret = find_hid_device_path( device_path );
+    ok( ret, "Failed to find HID device matching %s\n", debugstr_w( device_path ) );
 
-    for (i = 0; SetupDiEnumDeviceInfo( set, i, &device ); ++i)
-    {
-        ret = SetupDiEnumDeviceInterfaces( set, &device, &GUID_DEVINTERFACE_HID, 0, &iface );
-        ok( ret, "failed to get interface, error %#lx\n", GetLastError() );
-        ok( IsEqualGUID( &iface.InterfaceClassGuid, &GUID_DEVINTERFACE_HID ), "wrong class %s\n",
-            debugstr_guid( &iface.InterfaceClassGuid ) );
-        ok( iface.Flags == SPINT_ACTIVE, "got flags %#lx\n", iface.Flags );
-
-        iface_detail->cbSize = sizeof(*iface_detail);
-        ret = SetupDiGetDeviceInterfaceDetailW( set, &iface, iface_detail, sizeof(buffer), NULL, NULL );
-        ok( ret, "failed to get interface path, error %#lx\n", GetLastError() );
-
-        if (wcsstr( iface_detail->DevicePath, L"\\\\?\\hid#winetest#1" ))
-        {
-            found = TRUE;
-            break;
-        }
-    }
-
-    SetupDiDestroyDeviceInfoList( set );
-
-    todo_wine
-    ok( found, "didn't find device\n" );
-
-    file = CreateFileW( iface_detail->DevicePath, FILE_READ_ACCESS | FILE_WRITE_ACCESS,
+    file = CreateFileW( device_path, FILE_READ_ACCESS | FILE_WRITE_ACCESS,
                         FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL );
     ok( file != INVALID_HANDLE_VALUE, "got error %lu\n", GetLastError() );
 
@@ -2399,7 +2419,7 @@ static void test_hid_device( DWORD report_id, DWORD polled, const HIDP_CAPS *exp
     ok( ret, "HidD_GetNumInputBuffers failed last error %lu\n", GetLastError() );
     ok( count == 16, "HidD_GetNumInputBuffers returned %lu\n", count );
 
-    async_file = CreateFileW( iface_detail->DevicePath, FILE_READ_ACCESS | FILE_WRITE_ACCESS,
+    async_file = CreateFileW( device_path, FILE_READ_ACCESS | FILE_WRITE_ACCESS,
                               FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
                               FILE_FLAG_OVERLAPPED | FILE_FLAG_NO_BUFFERING, NULL );
     ok( async_file != INVALID_HANDLE_VALUE, "got error %lu\n", GetLastError() );
@@ -2809,9 +2829,9 @@ static void test_hid_driver( DWORD report_id, DWORD polled )
     status = RegSetValueExW( hkey, L"Context", 0, REG_BINARY, (void *)context, sizeof(context) );
     ok( !status, "RegSetValueExW returned %#lx\n", status );
 
-    if (pnp_driver_start( L"driver_hid.dll" )) test_hid_device( report_id, polled, &caps );
+    if (hid_device_start()) test_hid_device( report_id, polled, &caps );
+    hid_device_stop();
 
-    pnp_driver_stop();
     SetCurrentDirectoryW( cwd );
 }
 
@@ -3121,17 +3141,13 @@ static void test_hidp_kdr(void)
         },
     };
 
-    char buffer[FIELD_OFFSET( SP_DEVICE_INTERFACE_DETAIL_DATA_W, DevicePath[MAX_PATH] )];
-    SP_DEVICE_INTERFACE_DATA iface = {sizeof(SP_DEVICE_INTERFACE_DATA)};
-    SP_DEVICE_INTERFACE_DETAIL_DATA_W *iface_detail = (void *)buffer;
-    SP_DEVINFO_DATA device = {sizeof(SP_DEVINFO_DATA)};
     WCHAR cwd[MAX_PATH], tempdir[MAX_PATH];
     PHIDP_PREPARSED_DATA preparsed_data;
     DWORD i, report_id = 0, polled = 0;
+    WCHAR device_path[MAX_PATH];
     struct hidp_kdr *kdr;
     char context[64];
     LSTATUS status;
-    HDEVINFO set;
     HANDLE file;
     HKEY hkey;
     BOOL ret;
@@ -3169,27 +3185,13 @@ static void test_hidp_kdr(void)
     status = RegSetValueExW( hkey, L"Context", 0, REG_BINARY, (void *)context, sizeof(context) );
     ok( !status, "RegSetValueExW returned %#lx\n", status );
 
-    if (!pnp_driver_start( L"driver_hid.dll" )) goto done;
+    if (!hid_device_start()) goto done;
 
-    set = SetupDiGetClassDevsW( &GUID_DEVINTERFACE_HID, NULL, NULL, DIGCF_DEVICEINTERFACE | DIGCF_PRESENT );
-    ok( set != INVALID_HANDLE_VALUE, "failed to get device list, error %#lx\n", GetLastError() );
-    for (i = 0; SetupDiEnumDeviceInfo( set, i, &device ); ++i)
-    {
-        ret = SetupDiEnumDeviceInterfaces( set, &device, &GUID_DEVINTERFACE_HID, 0, &iface );
-        ok( ret, "failed to get interface, error %#lx\n", GetLastError() );
-        ok( IsEqualGUID( &iface.InterfaceClassGuid, &GUID_DEVINTERFACE_HID ), "wrong class %s\n",
-            debugstr_guid( &iface.InterfaceClassGuid ) );
-        ok( iface.Flags == SPINT_ACTIVE, "got flags %#lx\n", iface.Flags );
+    swprintf( device_path, MAX_PATH, L"\\\\?\\hid#winetest#" );
+    ret = find_hid_device_path( device_path );
+    ok( ret, "Failed to find HID device matching %s\n", debugstr_w( device_path ) );
 
-        iface_detail->cbSize = sizeof(*iface_detail);
-        ret = SetupDiGetDeviceInterfaceDetailW( set, &iface, iface_detail, sizeof(buffer), NULL, NULL );
-        ok( ret, "failed to get interface path, error %#lx\n", GetLastError() );
-
-        if (wcsstr( iface_detail->DevicePath, L"\\\\?\\hid#winetest#1" )) break;
-    }
-    SetupDiDestroyDeviceInfoList( set );
-
-    file = CreateFileW( iface_detail->DevicePath, FILE_READ_ACCESS | FILE_WRITE_ACCESS,
+    file = CreateFileW( device_path, FILE_READ_ACCESS | FILE_WRITE_ACCESS,
                         FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL );
     ok( file != INVALID_HANDLE_VALUE, "got error %lu\n", GetLastError() );
 
@@ -3286,7 +3288,7 @@ static void test_hidp_kdr(void)
     CloseHandle( file );
 
 done:
-    pnp_driver_stop();
+    hid_device_stop();
     SetCurrentDirectoryW( cwd );
 }
 
@@ -3360,7 +3362,7 @@ BOOL dinput_driver_start_( const char *file, int line, const BYTE *desc_buf, ULO
     status = RegSetValueExW( hkey, L"Context", 0, REG_BINARY, (void *)context, sizeof(context) );
     ok_(file, line)( !status, "RegSetValueExW returned %#lx\n", status );
 
-    return pnp_driver_start( L"driver_hid.dll" );
+    return hid_device_start();
 }
 
 BOOL dinput_test_init_( const char *file, int line )
@@ -3395,7 +3397,7 @@ BOOL dinput_test_init_( const char *file, int line )
                           FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, 0, NULL );
     ok( okfile != INVALID_HANDLE_VALUE, "failed to create file, error %lu\n", GetLastError() );
 
-    subtest( "driver_hid" );
+    subtest( "driver" );
     return TRUE;
 }
 
@@ -3555,9 +3557,9 @@ DWORD WINAPI dinput_test_device_thread( void *stop_event )
     status = RegSetValueExW( hkey, L"Context", 0, REG_BINARY, (void *)context, sizeof(context) );
     ok( !status, "RegSetValueExW returned %#lx\n", status );
 
-    pnp_driver_start( L"driver_hid.dll" );
+    hid_device_start();
     WaitForSingleObject( stop_event, INFINITE );
-    pnp_driver_stop();
+    hid_device_stop();
 
     SetCurrentDirectoryW( cwd );
 

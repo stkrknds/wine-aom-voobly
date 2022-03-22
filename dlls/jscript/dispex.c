@@ -488,13 +488,18 @@ static HRESULT prop_put(jsdisp_t *This, dispex_prop_t *prop, jsval_t val)
             prop_iter = prototype_iter->props + prop_iter->u.ref;
         } while(prop_iter->type == PROP_PROTREF);
 
-        if(prop_iter->type == PROP_ACCESSOR ||
-           (prop_iter->type == PROP_BUILTIN && prop_iter->u.p->setter))
+        if(prop_iter->type == PROP_ACCESSOR)
             prop = prop_iter;
     }
 
     switch(prop->type) {
     case PROP_BUILTIN:
+        if(prop->u.p->invoke) {
+            prop->type = PROP_JSVAL;
+            prop->flags = PROPF_CONFIGURABLE | PROPF_WRITABLE;
+            prop->u.val = jsval_undefined();
+            break;
+        }
         if(!prop->u.p->setter) {
             TRACE("getter with no setter\n");
             return S_OK;
@@ -2007,6 +2012,9 @@ HRESULT jsdisp_call_name(jsdisp_t *disp, const WCHAR *name, WORD flags, unsigned
     if(FAILED(hres))
         return hres;
 
+    if(!prop || prop->type == PROP_DELETED)
+        return JS_E_INVALID_PROPERTY;
+
     return invoke_prop_func(disp, to_disp(disp), prop, flags, argc, argv, r, NULL);
 }
 
@@ -2700,10 +2708,17 @@ HRESULT jsdisp_define_data_property(jsdisp_t *obj, const WCHAR *name, unsigned f
 
 HRESULT jsdisp_change_prototype(jsdisp_t *obj, jsdisp_t *proto)
 {
+    jsdisp_t *iter;
     DWORD i;
 
     if(obj->prototype == proto)
         return S_OK;
+    if(!obj->extensible)
+        return JS_E_CANNOT_CREATE_FOR_NONEXTENSIBLE;
+
+    for(iter = proto; iter; iter = iter->prototype)
+        if(iter == obj)
+            return JS_E_CYCLIC_PROTO_VALUE;
 
     if(obj->prototype) {
         for(i = 0; i < obj->prop_cnt; i++)

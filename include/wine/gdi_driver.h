@@ -165,7 +165,7 @@ struct gdi_dc_funcs
 };
 
 /* increment this when you change the DC function table */
-#define WINE_GDI_DRIVER_VERSION 75
+#define WINE_GDI_DRIVER_VERSION 76
 
 #define GDI_PRIORITY_NULL_DRV        0  /* null driver */
 #define GDI_PRIORITY_FONT_DRV      100  /* any font driver */
@@ -195,15 +195,17 @@ static inline void push_dc_driver( PHYSDEV *dev, PHYSDEV physdev, const struct g
 
 struct window_surface;
 
+#ifndef __WINE_USE_MSVCRT
+
 struct window_surface_funcs
 {
-    void  (CDECL *lock)( struct window_surface *surface );
-    void  (CDECL *unlock)( struct window_surface *surface );
-    void* (CDECL *get_info)( struct window_surface *surface, BITMAPINFO *info );
-    RECT* (CDECL *get_bounds)( struct window_surface *surface );
-    void  (CDECL *set_region)( struct window_surface *surface, HRGN region );
-    void  (CDECL *flush)( struct window_surface *surface );
-    void  (CDECL *destroy)( struct window_surface *surface );
+    void  (*lock)( struct window_surface *surface );
+    void  (*unlock)( struct window_surface *surface );
+    void* (*get_info)( struct window_surface *surface, BITMAPINFO *info );
+    RECT* (*get_bounds)( struct window_surface *surface );
+    void  (*set_region)( struct window_surface *surface, HRGN region );
+    void  (*flush)( struct window_surface *surface );
+    void  (*destroy)( struct window_surface *surface );
 };
 
 struct window_surface
@@ -226,6 +228,8 @@ static inline ULONG window_surface_release( struct window_surface *surface )
     if (!ret) surface->funcs->destroy( surface );
     return ret;
 }
+
+#endif /* __WINE_USE_MSVCRT */
 
 /* display manager interface, used to initialize display device registry data */
 
@@ -327,8 +331,6 @@ struct user_driver_funcs
 };
 
 extern void CDECL __wine_set_user_driver( const struct user_driver_funcs *funcs, UINT version );
-extern void CDECL __wine_set_visible_region( HDC hdc, HRGN hrgn, const RECT *vis_rect,
-                                             const RECT *device_rect, struct window_surface *surface );
 extern void CDECL __wine_set_display_driver( struct user_driver_funcs *funcs, UINT version );
 extern struct opengl_funcs * CDECL __wine_get_wgl_driver( HDC hdc, UINT version );
 extern const struct vulkan_funcs * CDECL __wine_get_vulkan_driver( UINT version );
