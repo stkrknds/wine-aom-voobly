@@ -35,6 +35,8 @@
 #include "winternl.h"
 
 #include "ddk/wdm.h"
+#include "ddk/hidsdi.h"
+#include "ddk/hidport.h"
 #include "ddk/hidclass.h"
 
 DEFINE_GUID(control_class,0xdeadbeef,0x29ef,0x4538,0xa5,0xfd,0xb6,0x95,0x73,0xa3,0x62,0xc0);
@@ -43,6 +45,8 @@ DEFINE_GUID(control_class,0xdeadbeef,0x29ef,0x4538,0xa5,0xfd,0xb6,0x95,0x73,0xa3
 #define IOCTL_WINETEST_HID_WAIT_EXPECT   CTL_CODE(FILE_DEVICE_KEYBOARD, 0x801, METHOD_NEITHER, FILE_ANY_ACCESS)
 #define IOCTL_WINETEST_HID_SEND_INPUT    CTL_CODE(FILE_DEVICE_KEYBOARD, 0x802, METHOD_IN_DIRECT, FILE_ANY_ACCESS)
 #define IOCTL_WINETEST_HID_SET_CONTEXT   CTL_CODE(FILE_DEVICE_KEYBOARD, 0x803, METHOD_IN_DIRECT, FILE_ANY_ACCESS)
+#define IOCTL_WINETEST_CREATE_DEVICE     CTL_CODE(FILE_DEVICE_KEYBOARD, 0x804, METHOD_IN_DIRECT, FILE_ANY_ACCESS)
+#define IOCTL_WINETEST_REMOVE_DEVICE     CTL_CODE(FILE_DEVICE_KEYBOARD, 0x805, METHOD_IN_DIRECT, FILE_ANY_ACCESS)
 
 struct hid_expect
 {
@@ -55,6 +59,26 @@ struct hid_expect
     BYTE report_id;
     BYTE report_len;
     BYTE report_buf[128];
+};
+
+/* create/remove device */
+struct hid_device_desc
+{
+    BOOL is_polled;
+    BOOL use_report_id;
+
+    DWORD report_descriptor_len;
+    char report_descriptor_buf[1024];
+
+    HIDP_CAPS caps;
+    HID_DEVICE_ATTRIBUTES attributes;
+
+    ULONG input_size;
+    struct hid_expect input[64];
+    ULONG expect_size;
+    struct hid_expect expect[64];
+    ULONG context_size;
+    char context[64];
 };
 
 /* kernel/user shared data */
@@ -136,6 +160,8 @@ static inline const char *debugstr_ioctl( ULONG code )
     case IOCTL_WINETEST_HID_WAIT_EXPECT: return "IOCTL_WINETEST_HID_WAIT_EXPECT";
     case IOCTL_WINETEST_HID_SEND_INPUT: return "IOCTL_WINETEST_HID_SEND_INPUT";
     case IOCTL_WINETEST_HID_SET_CONTEXT: return "IOCTL_WINETEST_HID_SET_CONTEXT";
+    case IOCTL_WINETEST_CREATE_DEVICE: return "IOCTL_WINETEST_CREATE_DEVICE";
+    case IOCTL_WINETEST_REMOVE_DEVICE: return "IOCTL_WINETEST_REMOVE_DEVICE";
     default: return "unknown";
     }
 }

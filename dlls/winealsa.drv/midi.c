@@ -54,15 +54,6 @@ static	int 		MIDM_NumDevs = 0;
 
 static	int		numStartedMidiIn = 0;
 
-static CRITICAL_SECTION crit_sect;   /* protects all MidiIn buffer queues */
-static CRITICAL_SECTION_DEBUG critsect_debug =
-{
-    0, 0, &crit_sect,
-    { &critsect_debug.ProcessLocksList, &critsect_debug.ProcessLocksList },
-      0, 0, { (DWORD_PTR)(__FILE__ ": crit_sect") }
-};
-static CRITICAL_SECTION crit_sect = { &critsect_debug, -1, 0, 0, 0, 0 };
-
 static int end_thread;
 static HANDLE hThread;
 
@@ -74,6 +65,16 @@ static void seq_lock(void)
 static void seq_unlock(void)
 {
     ALSA_CALL(midi_seq_lock, (void *)(UINT_PTR)0);
+}
+
+static void in_buffer_lock(void)
+{
+    ALSA_CALL(midi_in_lock, (void *)(UINT_PTR)1);
+}
+
+static void in_buffer_unlock(void)
+{
+    ALSA_CALL(midi_in_lock, (void *)(UINT_PTR)0);
 }
 
 static void notify_client(struct notify_context *notify)
@@ -240,7 +241,7 @@ static void handle_midi_event(snd_seq_event_t *ev)
                 LPBYTE ptr = ev->data.ext.ptr;
                 LPMIDIHDR lpMidiHdr;
 
-                EnterCriticalSection(&crit_sect);
+                in_buffer_lock();
                 while (len) {
                     if ((lpMidiHdr = MidiInDev[wDevID].lpQueueHdr) != NULL) {
                         int copylen = min(len, lpMidiHdr->dwBufferLength - lpMidiHdr->dwBytesRecorded);
@@ -262,7 +263,7 @@ static void handle_midi_event(snd_seq_event_t *ev)
                         break;
                     }
                 }
-                LeaveCriticalSection(&crit_sect);
+                in_buffer_unlock();
             }
             break;
         case SND_SEQ_EVENT_SENSING:
@@ -331,22 +332,6 @@ static DWORD WINAPI midRecThread(void *arg)
     }
     return 0;
 }
-
-/**************************************************************************
- * 				midGetDevCaps			[internal]
- */
-static DWORD midGetDevCaps(WORD wDevID, LPMIDIINCAPSW lpCaps, DWORD dwSize)
-{
-    TRACE("(%04X, %p, %08X);\n", wDevID, lpCaps, dwSize);
-
-    if (wDevID >= MIDM_NumDevs) return MMSYSERR_BADDEVICEID;
-    if (lpCaps == NULL)		return MMSYSERR_INVALPARAM;
-
-    memcpy(lpCaps, &MidiInDev[wDevID].caps, min(dwSize, sizeof(*lpCaps)));
-
-    return MMSYSERR_NOERROR;
-}
-
 
 /**************************************************************************
  * 			midOpen					[internal]
@@ -474,80 +459,6 @@ static DWORD midClose(WORD wDevID)
     return ret;
 }
 
-
-/**************************************************************************
- * 				midAddBuffer			[internal]
- */
-static DWORD midAddBuffer(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
-{
-    TRACE("(%04X, %p, %d);\n", wDevID, lpMidiHdr, dwSize);
-
-    if (wDevID >= MIDM_NumDevs) return MMSYSERR_BADDEVICEID;
-    if (MidiInDev[wDevID].state == -1) return MIDIERR_NODEVICE;
-
-    if (lpMidiHdr == NULL)	return MMSYSERR_INVALPARAM;
-    if (dwSize < offsetof(MIDIHDR,dwOffset)) return MMSYSERR_INVALPARAM;
-    if (lpMidiHdr->dwBufferLength == 0) return MMSYSERR_INVALPARAM;
-    if (lpMidiHdr->dwFlags & MHDR_INQUEUE) return MIDIERR_STILLPLAYING;
-    if (!(lpMidiHdr->dwFlags & MHDR_PREPARED)) return MIDIERR_UNPREPARED;
-
-    EnterCriticalSection(&crit_sect);
-    lpMidiHdr->dwFlags &= ~WHDR_DONE;
-    lpMidiHdr->dwFlags |= MHDR_INQUEUE;
-    lpMidiHdr->dwBytesRecorded = 0;
-    lpMidiHdr->lpNext = 0;
-    if (MidiInDev[wDevID].lpQueueHdr == 0) {
-	MidiInDev[wDevID].lpQueueHdr = lpMidiHdr;
-    } else {
-	LPMIDIHDR	ptr;
-
-        for (ptr = MidiInDev[wDevID].lpQueueHdr; ptr->lpNext != 0;
-             ptr = ptr->lpNext);
-        ptr->lpNext = lpMidiHdr;
-    }
-    LeaveCriticalSection(&crit_sect);
-
-    return MMSYSERR_NOERROR;
-}
-
-/**************************************************************************
- * 				midPrepare			[internal]
- */
-static DWORD midPrepare(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
-{
-    TRACE("(%04X, %p, %d);\n", wDevID, lpMidiHdr, dwSize);
-
-    if (dwSize < offsetof(MIDIHDR,dwOffset) || lpMidiHdr == 0 || lpMidiHdr->lpData == 0)
-	return MMSYSERR_INVALPARAM;
-    if (lpMidiHdr->dwFlags & MHDR_PREPARED)
-	return MMSYSERR_NOERROR;
-
-    lpMidiHdr->lpNext = 0;
-    lpMidiHdr->dwFlags |= MHDR_PREPARED;
-    lpMidiHdr->dwFlags &= ~(MHDR_DONE|MHDR_INQUEUE); /* flags cleared since w2k */
-
-    return MMSYSERR_NOERROR;
-}
-
-/**************************************************************************
- * 				midUnprepare			[internal]
- */
-static DWORD midUnprepare(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
-{
-    TRACE("(%04X, %p, %d);\n", wDevID, lpMidiHdr, dwSize);
-
-    if (dwSize < offsetof(MIDIHDR,dwOffset) || lpMidiHdr == 0 || lpMidiHdr->lpData == 0)
-	return MMSYSERR_INVALPARAM;
-    if (!(lpMidiHdr->dwFlags & MHDR_PREPARED))
-	return MMSYSERR_NOERROR;
-    if (lpMidiHdr->dwFlags & MHDR_INQUEUE)
-	return MIDIERR_STILLPLAYING;
-
-    lpMidiHdr->dwFlags &= ~MHDR_PREPARED;
-
-    return MMSYSERR_NOERROR;
-}
-
 /**************************************************************************
  * 			midReset				[internal]
  */
@@ -560,15 +471,15 @@ static DWORD midReset(WORD wDevID)
     if (wDevID >= MIDM_NumDevs) return MMSYSERR_BADDEVICEID;
     if (MidiInDev[wDevID].state == -1) return MIDIERR_NODEVICE;
 
-    EnterCriticalSection(&crit_sect);
+    in_buffer_lock();
     while (MidiInDev[wDevID].lpQueueHdr) {
 	LPMIDIHDR lpMidiHdr = MidiInDev[wDevID].lpQueueHdr;
 	MidiInDev[wDevID].lpQueueHdr = lpMidiHdr->lpNext;
 	lpMidiHdr->dwFlags &= ~MHDR_INQUEUE;
 	lpMidiHdr->dwFlags |= MHDR_DONE;
-	MIDI_NotifyClient(wDevID, MIM_LONGDATA, (DWORD_PTR)lpMidiHdr, dwTime);
+	MIDI_NotifyClient(wDevID, MIM_LONGDATA, (DWORD_PTR)lpMidiHdr, dwTime - MidiInDev[wDevID].startTime);
     }
-    LeaveCriticalSection(&crit_sect);
+    in_buffer_unlock();
 
     return MMSYSERR_NOERROR;
 }
@@ -633,41 +544,37 @@ static BOOL ALSA_MidiInit(void)
 DWORD WINAPI ALSA_midMessage(UINT wDevID, UINT wMsg, DWORD_PTR dwUser,
 			    DWORD_PTR dwParam1, DWORD_PTR dwParam2)
 {
+    struct midi_in_message_params params;
+    UINT err;
+
     TRACE("(%04X, %04X, %08lX, %08lX, %08lX);\n",
 	  wDevID, wMsg, dwUser, dwParam1, dwParam2);
     switch (wMsg) {
     case DRVM_INIT:
         ALSA_MidiInit();
         return 0;
-    case DRVM_EXIT:
-    case DRVM_ENABLE:
-    case DRVM_DISABLE:
-	/* FIXME: Pretend this is supported */
-	return 0;
     case MIDM_OPEN:
 	return midOpen(wDevID, (LPMIDIOPENDESC)dwParam1, dwParam2);
     case MIDM_CLOSE:
 	return midClose(wDevID);
-    case MIDM_ADDBUFFER:
-	return midAddBuffer(wDevID, (LPMIDIHDR)dwParam1, dwParam2);
-    case MIDM_PREPARE:
-	return midPrepare(wDevID, (LPMIDIHDR)dwParam1, dwParam2);
-    case MIDM_UNPREPARE:
-	return midUnprepare(wDevID, (LPMIDIHDR)dwParam1, dwParam2);
-    case MIDM_GETDEVCAPS:
-	return midGetDevCaps(wDevID, (LPMIDIINCAPSW)dwParam1,dwParam2);
-    case MIDM_GETNUMDEVS:
-	return MIDM_NumDevs;
     case MIDM_RESET:
 	return midReset(wDevID);
     case MIDM_START:
 	return midStart(wDevID);
     case MIDM_STOP:
 	return midStop(wDevID);
-    default:
-	TRACE("Unsupported message\n");
     }
-    return MMSYSERR_NOTSUPPORTED;
+
+    params.dev_id = wDevID;
+    params.msg = wMsg;
+    params.user = dwUser;
+    params.param_1 = dwParam1;
+    params.param_2 = dwParam2;
+    params.err = &err;
+
+    ALSA_CALL(midi_in_message, &params);
+
+    return err;
 }
 
 /**************************************************************************
