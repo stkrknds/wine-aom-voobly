@@ -29,6 +29,7 @@ enum
     /* user32 callbacks */
     NtUserCallEnumDisplayMonitor,
     NtUserCallWinEventHook,
+    NtUserCallWindowProc,
     NtUserCallWindowsHook,
     NtUserLoadDriver,
     /* win16 hooks */
@@ -57,8 +58,41 @@ struct win_event_hook_params
     LONG object_id;
     LONG child_id;
     void *handle;
+    DWORD tid;
+    DWORD time;
     WINEVENTPROC proc;
     WCHAR module[MAX_PATH];
+};
+
+/* type of message-sending functions that need special WM_CHAR handling */
+enum wm_char_mapping
+{
+    WMCHAR_MAP_POSTMESSAGE,
+    WMCHAR_MAP_SENDMESSAGE,
+    WMCHAR_MAP_SENDMESSAGETIMEOUT,
+    WMCHAR_MAP_RECVMESSAGE,
+    WMCHAR_MAP_DISPATCHMESSAGE,
+    WMCHAR_MAP_CALLWINDOWPROC,
+    WMCHAR_MAP_COUNT,
+    WMCHAR_MAP_NOMAPPING = WMCHAR_MAP_COUNT
+};
+
+/* NtUserCallWindowProc params */
+struct win_proc_params
+{
+    WNDPROC func;
+    HWND hwnd;
+    UINT msg;
+    WPARAM wparam;
+    LPARAM lparam;
+    LRESULT *result;
+    BOOL ansi;
+    BOOL ansi_dst;
+    BOOL is_dialog;
+    enum wm_char_mapping mapping;
+    DPI_AWARENESS_CONTEXT dpi_awareness;
+    WNDPROC procA;
+    WNDPROC procW;
 };
 
 /* NtUserCallWindowsHook params */
@@ -100,6 +134,7 @@ enum
 {
     NtUserBeginDeferWindowPos,
     NtUserCreateCursorIcon,
+    NtUserDispatchMessageA,
     NtUserEnableDC,
     NtUserGetClipCursor,
     NtUserGetCursorPos,
@@ -177,6 +212,7 @@ enum
     NtUserIsChild,
     NtUserKillSystemTimer,
     NtUserMonitorFromWindow,
+    NtUserScreenToClient,
     NtUserSetCaptureWindow,
     NtUserSetForegroundWindow,
     NtUserSetWindowPixelFormat,
@@ -189,6 +225,7 @@ enum
 /* NtUserMessageCall codes */
 enum
 {
+    FNID_CALLWNDPROC        = 0x02ab,
     FNID_SENDMESSAGE        = 0x02b1,
     FNID_SENDNOTIFYMESSAGE  = 0x02b7,
     /* Wine-specific exports */
@@ -311,6 +348,7 @@ BOOL    WINAPI NtUserDestroyAcceleratorTable( HACCEL handle );
 BOOL    WINAPI NtUserDestroyCursor( HCURSOR cursor, ULONG arg );
 BOOL    WINAPI NtUserDestroyMenu( HMENU menu );
 BOOL    WINAPI NtUserDestroyWindow( HWND hwnd );
+LRESULT WINAPI NtUserDispatchMessage( const MSG *msg );
 BOOL    WINAPI NtUserDrawIconEx( HDC hdc, INT x0, INT y0, HICON icon, INT width,
                                  INT height, UINT istep, HBRUSH hbr, UINT flags );
 BOOL    WINAPI NtUserEndDeferWindowPosEx( HDWP hdwp, BOOL async );

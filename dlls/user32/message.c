@@ -53,6 +53,8 @@ WINE_DECLARE_DEBUG_CHANNEL(key);
 
 #define MAX_PACK_COUNT 4
 
+#define MAX_WINPROC_RECURSION  64
+
 /* the various structures that can be sent in messages, in platform-independent layout */
 struct packed_CREATESTRUCTW
 {
@@ -2162,6 +2164,38 @@ static BOOL unpack_dde_message( HWND hwnd, UINT message, WPARAM *wparam, LPARAM 
     return TRUE;
 }
 
+static BOOL init_window_call_params( struct win_proc_params *params, HWND hwnd, UINT msg, WPARAM wParam,
+                                     LPARAM lParam, LRESULT *result, BOOL ansi,
+                                     enum wm_char_mapping mapping )
+{
+    WND *win;
+
+    USER_CheckNotLock();
+
+    if (!(win = WIN_GetPtr( hwnd ))) return FALSE;
+    if (win == WND_OTHER_PROCESS || win == WND_DESKTOP) return FALSE;
+    if (win->tid != GetCurrentThreadId())
+    {
+        WIN_ReleasePtr( win );
+        return FALSE;
+    }
+    params->func = win->winproc;
+    params->ansi_dst = !(win->flags & WIN_ISUNICODE);
+    params->is_dialog = win->dlgInfo != NULL;
+    WIN_ReleasePtr( win );
+
+    params->hwnd = WIN_GetFullHandle( hwnd );
+    get_winproc_params( params );
+    params->msg = msg;
+    params->wparam = wParam;
+    params->lparam = lParam;
+    params->result = result;
+    params->ansi = ansi;
+    params->mapping = mapping;
+    params->dpi_awareness = GetWindowDpiAwarenessContext( params->hwnd );
+    return TRUE;
+}
+
 /***********************************************************************
  *           call_window_proc
  *
@@ -2170,35 +2204,43 @@ static BOOL unpack_dde_message( HWND hwnd, UINT message, WPARAM *wparam, LPARAM 
 static LRESULT call_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
                                  BOOL unicode, BOOL same_thread, enum wm_char_mapping mapping )
 {
+    struct user_thread_info *thread_info = get_user_thread_info();
+    struct win_proc_params params;
     LRESULT result = 0;
     CWPSTRUCT cwp;
     CWPRETSTRUCT cwpret;
 
     if (msg & 0x80000000)
-    {
-        result = handle_internal_message( hwnd, msg, wparam, lparam );
-        goto done;
-    }
+        return handle_internal_message( hwnd, msg, wparam, lparam );
+
+    if (!WIN_IsCurrentThread( hwnd )) return 0;
+    if (!init_window_call_params( &params, hwnd, msg, wparam, lparam, &result, !unicode, mapping ))
+        return 0;
 
     /* first the WH_CALLWNDPROC hook */
-    hwnd = WIN_GetFullHandle( hwnd );
     cwp.lParam  = lparam;
     cwp.wParam  = wparam;
     cwp.message = msg;
-    cwp.hwnd    = hwnd;
+    cwp.hwnd    = params.hwnd;
     HOOK_CallHooks( WH_CALLWNDPROC, HC_ACTION, same_thread, (LPARAM)&cwp, unicode );
 
-    /* now call the window procedure */
-    if (!WINPROC_call_window( hwnd, msg, wparam, lparam, &result, unicode, mapping )) goto done;
+    if (thread_info->recursion_count <= MAX_WINPROC_RECURSION)
+    {
+        thread_info->recursion_count++;
+
+        /* now call the window procedure */
+        User32CallWindowProc( &params, sizeof(params) );
+
+        thread_info->recursion_count--;
+    }
 
     /* and finally the WH_CALLWNDPROCRET hook */
     cwpret.lResult = result;
     cwpret.lParam  = lparam;
     cwpret.wParam  = wparam;
     cwpret.message = msg;
-    cwpret.hwnd    = hwnd;
+    cwpret.hwnd    = params.hwnd;
     HOOK_CallHooks( WH_CALLWNDPROCRET, HC_ACTION, same_thread, (LPARAM)&cwpret, unicode );
- done:
     return result;
 }
 
@@ -2716,38 +2758,27 @@ static int peek_message( MSG *msg, HWND hwnd, UINT first, UINT last, UINT flags,
         case MSG_WINEVENT:
             if (size >= sizeof(msg_data->winevent))
             {
-                WINEVENTPROC hook_proc;
-                HMODULE free_module = 0;
+                struct win_event_hook_params params;
 
-                hook_proc = wine_server_get_ptr( msg_data->winevent.hook_proc );
+                params.proc = wine_server_get_ptr( msg_data->winevent.hook_proc );
                 size -= sizeof(msg_data->winevent);
                 if (size)
                 {
-                    WCHAR module[MAX_PATH];
-
-                    size = min( size, (MAX_PATH - 1) * sizeof(WCHAR) );
-                    memcpy( module, &msg_data->winevent + 1, size );
-                    module[size / sizeof(WCHAR)] = 0;
-                    if (!(hook_proc = get_hook_proc( hook_proc, module, &free_module )))
-                    {
-                        ERR( "invalid winevent hook module name %s\n", debugstr_w(module) );
-                        continue;
-                    }
+                    size = min( size, sizeof(params.module) - sizeof(WCHAR) );
+                    memcpy( params.module, &msg_data->winevent + 1, size );
                 }
+                params.module[size / sizeof(WCHAR)] = 0;
+                size = FIELD_OFFSET( struct win_hook_params, module[size / sizeof(WCHAR) + 1] );
 
-                TRACE_(relay)( "\1Call winevent proc %p (hook=%04x,event=%x,hwnd=%p,object_id=%lx,child_id=%lx,tid=%04x,time=%x)\n",
-                               hook_proc, msg_data->winevent.hook, info.msg.message, info.msg.hwnd,
-                               info.msg.wParam, info.msg.lParam, msg_data->winevent.tid, info.msg.time);
+                params.handle    = wine_server_ptr_handle( msg_data->winevent.hook );
+                params.event     = info.msg.message;
+                params.hwnd      = info.msg.hwnd;
+                params.object_id = info.msg.wParam;
+                params.child_id  = info.msg.lParam;
+                params.tid       = msg_data->winevent.tid;
+                params.time      = info.msg.time;
 
-                hook_proc( wine_server_ptr_handle( msg_data->winevent.hook ), info.msg.message,
-                           info.msg.hwnd, info.msg.wParam, info.msg.lParam,
-                           msg_data->winevent.tid, info.msg.time );
-
-                TRACE_(relay)( "\1Ret  winevent proc %p (hook=%04x,event=%x,hwnd=%p,object_id=%lx,child_id=%lx,tid=%04x,time=%x)\n",
-                               hook_proc, msg_data->winevent.hook, info.msg.message, info.msg.hwnd,
-                               info.msg.wParam, info.msg.lParam, msg_data->winevent.tid, info.msg.time);
-
-                if (free_module) FreeLibrary(free_module);
+                User32CallWinEventHook( &params, size );
             }
             continue;
         case MSG_HOOK_LL:
@@ -3901,30 +3932,7 @@ LRESULT WINAPI DECLSPEC_HOTPATCH DispatchMessageA( const MSG* msg )
             return retval;
         }
     }
-    if (!msg->hwnd) return 0;
-
-    SPY_EnterMessage( SPY_DISPATCHMESSAGE, msg->hwnd, msg->message,
-                      msg->wParam, msg->lParam );
-
-    if (!WINPROC_call_window( msg->hwnd, msg->message, msg->wParam, msg->lParam,
-                              &retval, FALSE, WMCHAR_MAP_DISPATCHMESSAGE ))
-    {
-        if (!IsWindow( msg->hwnd )) SetLastError( ERROR_INVALID_WINDOW_HANDLE );
-        else SetLastError( ERROR_MESSAGE_SYNC_ONLY );
-        retval = 0;
-    }
-
-    SPY_ExitMessage( SPY_RESULT_OK, msg->hwnd, msg->message, retval,
-                     msg->wParam, msg->lParam );
-
-    if (msg->message == WM_PAINT)
-    {
-        /* send a WM_NCPAINT and WM_ERASEBKGND if the non-client area is still invalid */
-        HRGN hrgn = CreateRectRgn( 0, 0, 0, 0 );
-        NtUserGetUpdateRgn( msg->hwnd, hrgn, TRUE );
-        DeleteObject( hrgn );
-    }
-    return retval;
+    return NtUserCallOneParam( (UINT_PTR)msg, NtUserDispatchMessageA );
 }
 
 
@@ -3972,30 +3980,7 @@ LRESULT WINAPI DECLSPEC_HOTPATCH DispatchMessageW( const MSG* msg )
             return retval;
         }
     }
-    if (!msg->hwnd) return 0;
-
-    SPY_EnterMessage( SPY_DISPATCHMESSAGE, msg->hwnd, msg->message,
-                      msg->wParam, msg->lParam );
-
-    if (!WINPROC_call_window( msg->hwnd, msg->message, msg->wParam, msg->lParam,
-                              &retval, TRUE, WMCHAR_MAP_DISPATCHMESSAGE ))
-    {
-        if (!IsWindow( msg->hwnd )) SetLastError( ERROR_INVALID_WINDOW_HANDLE );
-        else SetLastError( ERROR_MESSAGE_SYNC_ONLY );
-        retval = 0;
-    }
-
-    SPY_ExitMessage( SPY_RESULT_OK, msg->hwnd, msg->message, retval,
-                     msg->wParam, msg->lParam );
-
-    if (msg->message == WM_PAINT)
-    {
-        /* send a WM_NCPAINT and WM_ERASEBKGND if the non-client area is still invalid */
-        HRGN hrgn = CreateRectRgn( 0, 0, 0, 0 );
-        NtUserGetUpdateRgn( msg->hwnd, hrgn, TRUE );
-        DeleteObject( hrgn );
-    }
-    return retval;
+    return NtUserDispatchMessage( msg );
 }
 
 

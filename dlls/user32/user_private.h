@@ -47,19 +47,6 @@ extern void USER_unload_driver(void) DECLSPEC_HIDDEN;
 
 struct received_message_info;
 
-/* type of message-sending functions that need special WM_CHAR handling */
-enum wm_char_mapping
-{
-    WMCHAR_MAP_POSTMESSAGE,
-    WMCHAR_MAP_SENDMESSAGE,
-    WMCHAR_MAP_SENDMESSAGETIMEOUT,
-    WMCHAR_MAP_RECVMESSAGE,
-    WMCHAR_MAP_DISPATCHMESSAGE,
-    WMCHAR_MAP_CALLWINDOWPROC,
-    WMCHAR_MAP_COUNT,
-    WMCHAR_MAP_NOMAPPING = WMCHAR_MAP_COUNT
-};
-
 /* data to store state for A/W mappings of WM_CHAR */
 struct wm_char_mapping_data
 {
@@ -128,9 +115,8 @@ extern LRESULT WINPROC_CallProcAtoW( winproc_callback_t callback, HWND hwnd, UIN
 
 extern INT_PTR WINPROC_CallDlgProcA( DLGPROC func, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam ) DECLSPEC_HIDDEN;
 extern INT_PTR WINPROC_CallDlgProcW( DLGPROC func, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam ) DECLSPEC_HIDDEN;
-extern BOOL WINPROC_call_window( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
-                                 LRESULT *result, BOOL unicode, enum wm_char_mapping mapping ) DECLSPEC_HIDDEN;
 extern void winproc_init(void) DECLSPEC_HIDDEN;
+extern void get_winproc_params( struct win_proc_params *params ) DECLSPEC_HIDDEN;
 
 extern ATOM get_class_info( HINSTANCE instance, const WCHAR *name, WNDCLASSEXW *info,
                             UNICODE_STRING *name_str, BOOL ansi ) DECLSPEC_HIDDEN;
@@ -139,6 +125,7 @@ extern ATOM get_class_info( HINSTANCE instance, const WCHAR *name, WNDCLASSEXW *
 
 BOOL WINAPI User32CallEnumDisplayMonitor( struct enum_display_monitor_params *params, ULONG size );
 BOOL WINAPI User32CallWinEventHook( const struct win_event_hook_params *params, ULONG size );
+BOOL WINAPI User32CallWindowProc( struct win_proc_params *params, ULONG size );
 BOOL WINAPI User32CallWindowsHook( const struct win_hook_params *params, ULONG size );
 
 /* message spy definitions */
