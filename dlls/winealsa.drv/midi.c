@@ -67,16 +67,6 @@ static void seq_unlock(void)
     ALSA_CALL(midi_seq_lock, (void *)(UINT_PTR)0);
 }
 
-static void in_buffer_lock(void)
-{
-    ALSA_CALL(midi_in_lock, (void *)(UINT_PTR)1);
-}
-
-static void in_buffer_unlock(void)
-{
-    ALSA_CALL(midi_in_lock, (void *)(UINT_PTR)0);
-}
-
 static void notify_client(struct notify_context *notify)
 {
     TRACE("dev_id = %d msg = %d param1 = %04lX param2 = %04lX\n", notify->dev_id, notify->msg, notify->param_1, notify->param_2);
@@ -122,11 +112,6 @@ static void MIDI_NotifyClient(UINT wDevID, WORD wMsg,
     switch (wMsg) {
     case MIM_OPEN:
     case MIM_CLOSE:
-    case MIM_DATA:
-    case MIM_LONGDATA:
-    case MIM_ERROR:
-    case MIM_LONGERROR:
-    case MIM_MOREDATA:
 	if (wDevID > MIDM_NumDevs) return;
 
 	dwCallBack = MidiInDev[wDevID].midiDesc.dwCallback;
@@ -170,116 +155,6 @@ static int midiCloseSeq(void)
     return 0;
 }
 
-static void handle_midi_event(snd_seq_event_t *ev)
-{
-    WORD wDevID;
-
-    /* Find the target device */
-    for (wDevID = 0; wDevID < MIDM_NumDevs; wDevID++)
-        if ( (ev->source.client == MidiInDev[wDevID].addr.client) && (ev->source.port == MidiInDev[wDevID].addr.port) )
-            break;
-    if ((wDevID == MIDM_NumDevs) || (MidiInDev[wDevID].state != 1))
-        FIXME("Unexpected event received, type = %x from %d:%d\n", ev->type, ev->source.client, ev->source.port);
-    else {
-        DWORD dwTime, toSend = 0;
-        int value = 0;
-        /* FIXME: Should use ev->time instead for better accuracy */
-        dwTime = GetTickCount() - MidiInDev[wDevID].startTime;
-        TRACE("Event received, type = %x, device = %d\n", ev->type, wDevID);
-        switch(ev->type)
-        {
-        case SND_SEQ_EVENT_NOTEOFF:
-            toSend = (ev->data.note.velocity << 16) | (ev->data.note.note << 8) | MIDI_CMD_NOTE_OFF | ev->data.control.channel;
-            break;
-        case SND_SEQ_EVENT_NOTEON:
-            toSend = (ev->data.note.velocity << 16) | (ev->data.note.note << 8) | MIDI_CMD_NOTE_ON | ev->data.control.channel;
-            break;
-        case SND_SEQ_EVENT_KEYPRESS:
-            toSend = (ev->data.note.velocity << 16) | (ev->data.note.note << 8) | MIDI_CMD_NOTE_PRESSURE | ev->data.control.channel;
-            break;
-        case SND_SEQ_EVENT_CONTROLLER:
-            toSend = (ev->data.control.value << 16) | (ev->data.control.param << 8) | MIDI_CMD_CONTROL | ev->data.control.channel;
-            break;
-        case SND_SEQ_EVENT_PITCHBEND:
-            value = ev->data.control.value + 0x2000;
-            toSend = (((value >> 7) & 0x7f) << 16) | ((value & 0x7f) << 8) | MIDI_CMD_BENDER | ev->data.control.channel;
-            break;
-        case SND_SEQ_EVENT_PGMCHANGE:
-            toSend = ((ev->data.control.value & 0x7f) << 8) | MIDI_CMD_PGM_CHANGE | ev->data.control.channel;
-            break;
-        case SND_SEQ_EVENT_CHANPRESS:
-            toSend = ((ev->data.control.value & 0x7f) << 8) | MIDI_CMD_CHANNEL_PRESSURE | ev->data.control.channel;
-            break;
-        case SND_SEQ_EVENT_CLOCK:
-            toSend = 0xF8;
-            break;
-        case SND_SEQ_EVENT_START:
-            toSend = 0xFA;
-            break;
-        case SND_SEQ_EVENT_CONTINUE:
-            toSend = 0xFB;
-            break;
-        case SND_SEQ_EVENT_STOP:
-            toSend = 0xFC;
-            break;
-        case SND_SEQ_EVENT_SONGPOS:
-            toSend = (((ev->data.control.value >> 7) & 0x7f) << 16) | ((ev->data.control.value & 0x7f) << 8) | MIDI_CMD_COMMON_SONG_POS;
-            break;
-        case SND_SEQ_EVENT_SONGSEL:
-          toSend = ((ev->data.control.value & 0x7f) << 8) | MIDI_CMD_COMMON_SONG_SELECT;
-            break;
-        case SND_SEQ_EVENT_RESET:
-            toSend = 0xFF;
-            break;
-        case SND_SEQ_EVENT_QFRAME:
-          toSend = ((ev->data.control.value & 0x7f) << 8) | MIDI_CMD_COMMON_MTC_QUARTER;
-            break;
-        case SND_SEQ_EVENT_SYSEX:
-            {
-                int pos = 0;
-                int len = ev->data.ext.len;
-                LPBYTE ptr = ev->data.ext.ptr;
-                LPMIDIHDR lpMidiHdr;
-
-                in_buffer_lock();
-                while (len) {
-                    if ((lpMidiHdr = MidiInDev[wDevID].lpQueueHdr) != NULL) {
-                        int copylen = min(len, lpMidiHdr->dwBufferLength - lpMidiHdr->dwBytesRecorded);
-                        memcpy(lpMidiHdr->lpData + lpMidiHdr->dwBytesRecorded, ptr + pos, copylen);
-                        lpMidiHdr->dwBytesRecorded += copylen;
-                        len -= copylen;
-                        pos += copylen;
-                        /* We check if we reach the end of buffer or the end of sysex before notifying
-                         * to handle the case where ALSA split the sysex into several events */
-                        if ((lpMidiHdr->dwBytesRecorded == lpMidiHdr->dwBufferLength) ||
-                            (*(BYTE*)(lpMidiHdr->lpData + lpMidiHdr->dwBytesRecorded - 1) == 0xF7)) {
-                            MidiInDev[wDevID].lpQueueHdr = lpMidiHdr->lpNext;
-                            lpMidiHdr->dwFlags &= ~MHDR_INQUEUE;
-                            lpMidiHdr->dwFlags |= MHDR_DONE;
-                            MIDI_NotifyClient(wDevID, MIM_LONGDATA, (DWORD_PTR)lpMidiHdr, dwTime);
-                        }
-                    } else {
-                        FIXME("Sysex data received but no buffer to store it!\n");
-                        break;
-                    }
-                }
-                in_buffer_unlock();
-            }
-            break;
-        case SND_SEQ_EVENT_SENSING:
-            /* Noting to do */
-            break;
-        default:
-            FIXME("Unhandled event received, type = %x\n", ev->type);
-            break;
-        }
-        if (toSend != 0) {
-            TRACE("Received event %08x from %d:%d\n", toSend, ev->source.client, ev->source.port);
-            MIDI_NotifyClient(wDevID, MIM_DATA, toSend, dwTime);
-        }
-    }
-}
-
 static DWORD WINAPI midRecThread(void *arg)
 {
     snd_seq_t *midi_seq = arg;
@@ -319,7 +194,7 @@ static DWORD WINAPI midRecThread(void *arg)
             seq_unlock();
 
             if (ev) {
-                handle_midi_event(ev);
+                ALSA_CALL(midi_handle_event, ev);
                 snd_seq_free_event(ev);
             }
 
@@ -459,60 +334,6 @@ static DWORD midClose(WORD wDevID)
     return ret;
 }
 
-/**************************************************************************
- * 			midReset				[internal]
- */
-static DWORD midReset(WORD wDevID)
-{
-    DWORD		dwTime = GetTickCount();
-
-    TRACE("(%04X);\n", wDevID);
-
-    if (wDevID >= MIDM_NumDevs) return MMSYSERR_BADDEVICEID;
-    if (MidiInDev[wDevID].state == -1) return MIDIERR_NODEVICE;
-
-    in_buffer_lock();
-    while (MidiInDev[wDevID].lpQueueHdr) {
-	LPMIDIHDR lpMidiHdr = MidiInDev[wDevID].lpQueueHdr;
-	MidiInDev[wDevID].lpQueueHdr = lpMidiHdr->lpNext;
-	lpMidiHdr->dwFlags &= ~MHDR_INQUEUE;
-	lpMidiHdr->dwFlags |= MHDR_DONE;
-	MIDI_NotifyClient(wDevID, MIM_LONGDATA, (DWORD_PTR)lpMidiHdr, dwTime - MidiInDev[wDevID].startTime);
-    }
-    in_buffer_unlock();
-
-    return MMSYSERR_NOERROR;
-}
-
-/**************************************************************************
- * 			midStart				[internal]
- */
-static DWORD midStart(WORD wDevID)
-{
-    TRACE("(%04X);\n", wDevID);
-
-    if (wDevID >= MIDM_NumDevs) return MMSYSERR_BADDEVICEID;
-    if (MidiInDev[wDevID].state == -1) return MIDIERR_NODEVICE;
-
-    MidiInDev[wDevID].state = 1;
-    MidiInDev[wDevID].startTime = GetTickCount();
-    return MMSYSERR_NOERROR;
-}
-
-/**************************************************************************
- *			midStop					[internal]
- */
-static DWORD midStop(WORD wDevID)
-{
-    TRACE("(%04X);\n", wDevID);
-
-    if (wDevID >= MIDM_NumDevs) return MMSYSERR_BADDEVICEID;
-    if (MidiInDev[wDevID].state == -1) return MIDIERR_NODEVICE;
-
-    MidiInDev[wDevID].state = 0;
-    return MMSYSERR_NOERROR;
-}
-
 /*======================================================================*
  *                  	    MIDI entry points 				*
  *======================================================================*/
@@ -545,6 +366,7 @@ DWORD WINAPI ALSA_midMessage(UINT wDevID, UINT wMsg, DWORD_PTR dwUser,
 			    DWORD_PTR dwParam1, DWORD_PTR dwParam2)
 {
     struct midi_in_message_params params;
+    struct notify_context notify;
     UINT err;
 
     TRACE("(%04X, %04X, %08lX, %08lX, %08lX);\n",
@@ -557,12 +379,6 @@ DWORD WINAPI ALSA_midMessage(UINT wDevID, UINT wMsg, DWORD_PTR dwUser,
 	return midOpen(wDevID, (LPMIDIOPENDESC)dwParam1, dwParam2);
     case MIDM_CLOSE:
 	return midClose(wDevID);
-    case MIDM_RESET:
-	return midReset(wDevID);
-    case MIDM_START:
-	return midStart(wDevID);
-    case MIDM_STOP:
-	return midStop(wDevID);
     }
 
     params.dev_id = wDevID;
@@ -571,8 +387,13 @@ DWORD WINAPI ALSA_midMessage(UINT wDevID, UINT wMsg, DWORD_PTR dwUser,
     params.param_1 = dwParam1;
     params.param_2 = dwParam2;
     params.err = &err;
+    params.notify = &notify;
 
-    ALSA_CALL(midi_in_message, &params);
+    do
+    {
+        ALSA_CALL(midi_in_message, &params);
+        if ((!err || err == ERROR_RETRY) && notify.send_notify) notify_client(&notify);
+    } while (err == ERROR_RETRY);
 
     return err;
 }
@@ -611,18 +432,37 @@ DWORD WINAPI ALSA_modMessage(UINT wDevID, UINT wMsg, DWORD_PTR dwUser,
     return err;
 }
 
+static DWORD WINAPI notify_thread(void *p)
+{
+    struct midi_notify_wait_params params;
+    struct notify_context notify;
+    BOOL quit;
+
+    params.notify = &notify;
+    params.quit = &quit;
+
+    while (1)
+    {
+        ALSA_CALL(midi_notify_wait, &params);
+        if (quit) break;
+        if (notify.send_notify) notify_client(&notify);
+    }
+    return 0;
+}
+
 /**************************************************************************
  * 				DriverProc (WINEALSA.@)
  */
 LRESULT CALLBACK ALSA_DriverProc(DWORD_PTR dwDevID, HDRVR hDriv, UINT wMsg,
                                  LPARAM dwParam1, LPARAM dwParam2)
 {
-/* EPP     TRACE("(%08lX, %04X, %08lX, %08lX, %08lX)\n",  */
-/* EPP 	  dwDevID, hDriv, wMsg, dwParam1, dwParam2); */
-
     switch(wMsg) {
     case DRV_LOAD:
+        CloseHandle(CreateThread(NULL, 0, notify_thread, NULL, 0, NULL));
+        return 1;
     case DRV_FREE:
+        ALSA_CALL(midi_release, NULL);
+        return 1;
     case DRV_OPEN:
     case DRV_CLOSE:
     case DRV_ENABLE:

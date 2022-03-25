@@ -2445,10 +2445,12 @@ unixlib_entry_t __wine_unix_call_funcs[] =
     is_started,
     get_prop_value,
     midi_init,
+    midi_release,
     midi_out_message,
     midi_in_message,
+    midi_notify_wait,
 
     midi_seq_lock, /* temporary */
-    midi_in_lock,
     midi_seq_open,
+    midi_handle_event,
 };

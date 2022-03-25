@@ -107,6 +107,9 @@ static int (*pgnutls_pubkey_import_dsa_raw)(gnutls_pubkey_t, const gnutls_datum_
 static int (*pgnutls_pubkey_import_privkey)(gnutls_pubkey_t, gnutls_privkey_t, unsigned int, unsigned int);
 
 /* Not present in gnutls version < 3.3.0 */
+static int (*pgnutls_pubkey_export_dsa_raw)(gnutls_pubkey_t, gnutls_datum_t *, gnutls_datum_t *, gnutls_datum_t *,
+                                            gnutls_datum_t *);
+static int (*pgnutls_pubkey_export_rsa_raw)(gnutls_pubkey_t, gnutls_datum_t *, gnutls_datum_t *);
 static int (*pgnutls_privkey_export_ecc_raw)(gnutls_privkey_t, gnutls_ecc_curve_t *,
                                              gnutls_datum_t *, gnutls_datum_t *, gnutls_datum_t *);
 static int (*pgnutls_privkey_export_rsa_raw)(gnutls_privkey_t, gnutls_datum_t *, gnutls_datum_t *, gnutls_datum_t *,
@@ -162,6 +165,17 @@ static int compat_gnutls_pubkey_import_ecc_raw(gnutls_pubkey_t key, gnutls_ecc_c
 
 static int compat_gnutls_pubkey_export_ecc_raw(gnutls_pubkey_t key, gnutls_ecc_curve_t *curve,
                                                gnutls_datum_t *x, gnutls_datum_t *y)
+{
+    return GNUTLS_E_UNKNOWN_PK_ALGORITHM;
+}
+
+static int compat_gnutls_pubkey_export_dsa_raw(gnutls_pubkey_t key, gnutls_datum_t *p, gnutls_datum_t *q,
+                                               gnutls_datum_t *g, gnutls_datum_t *y)
+{
+    return GNUTLS_E_UNKNOWN_PK_ALGORITHM;
+}
+
+static int compat_gnutls_pubkey_export_rsa_raw(gnutls_pubkey_t key, gnutls_datum_t *m, gnutls_datum_t *e)
 {
     return GNUTLS_E_UNKNOWN_PK_ALGORITHM;
 }
@@ -299,8 +313,10 @@ static NTSTATUS gnutls_process_attach( void *args )
 
     LOAD_FUNCPTR_OPT(gnutls_cipher_tag)
     LOAD_FUNCPTR_OPT(gnutls_cipher_add_auth)
-    LOAD_FUNCPTR_OPT(gnutls_pubkey_import_ecc_raw)
+    LOAD_FUNCPTR_OPT(gnutls_pubkey_export_dsa_raw)
     LOAD_FUNCPTR_OPT(gnutls_pubkey_export_ecc_raw)
+    LOAD_FUNCPTR_OPT(gnutls_pubkey_export_rsa_raw)
+    LOAD_FUNCPTR_OPT(gnutls_pubkey_import_ecc_raw)
     LOAD_FUNCPTR_OPT(gnutls_privkey_export_rsa_raw)
     LOAD_FUNCPTR_OPT(gnutls_privkey_export_ecc_raw)
     LOAD_FUNCPTR_OPT(gnutls_privkey_import_ecc_raw)
@@ -633,7 +649,14 @@ static NTSTATUS key_export_rsa_public( struct key *key, UCHAR *buf, ULONG len, U
     UCHAR *dst;
     int ret;
 
-    if ((ret = pgnutls_privkey_export_rsa_raw( key_data(key)->a.privkey, &m, &e, NULL, NULL, NULL, NULL, NULL, NULL )))
+    if (key_data(key)->a.pubkey)
+        ret = pgnutls_pubkey_export_rsa_raw( key_data(key)->a.pubkey, &m, &e );
+    else if (key_data(key)->a.privkey)
+        ret = pgnutls_privkey_export_rsa_raw( key_data(key)->a.privkey, &m, &e, NULL, NULL, NULL, NULL, NULL, NULL );
+    else
+        return STATUS_INVALID_PARAMETER;
+
+    if (ret)
     {
         pgnutls_perror( ret );
         return STATUS_INTERNAL_ERROR;
@@ -726,7 +749,14 @@ static NTSTATUS key_export_dsa_public( struct key *key, UCHAR *buf, ULONG len, U
     UCHAR *dst;
     int ret;
 
-    if ((ret = pgnutls_privkey_export_dsa_raw( key_data(key)->a.privkey, &p, &q, &g, &y, NULL )))
+    if (key_data(key)->a.pubkey)
+        ret = pgnutls_pubkey_export_dsa_raw( key_data(key)->a.pubkey, &p, &q, &g, &y );
+    else if (key_data(key)->a.privkey)
+        ret = pgnutls_privkey_export_dsa_raw( key_data(key)->a.privkey, &p, &q, &g, &y, NULL );
+    else
+        return STATUS_INVALID_PARAMETER;
+
+    if (ret)
     {
         pgnutls_perror( ret );
         return STATUS_INTERNAL_ERROR;
@@ -791,7 +821,14 @@ static NTSTATUS key_export_dsa_capi_public( struct key *key, UCHAR *buf, ULONG l
         return STATUS_NOT_IMPLEMENTED;
     }
 
-    if ((ret = pgnutls_privkey_export_dsa_raw( key_data(key)->a.privkey, &p, &q, &g, &y, NULL )))
+    if (key_data(key)->a.pubkey)
+        ret = pgnutls_pubkey_export_dsa_raw( key_data(key)->a.pubkey, &p, &q, &g, &y );
+    else if (key_data(key)->a.privkey)
+        ret = pgnutls_privkey_export_dsa_raw( key_data(key)->a.privkey, &p, &q, &g, &y, NULL );
+    else
+        return STATUS_INVALID_PARAMETER;
+
+    if (ret)
     {
         pgnutls_perror( ret );
         return STATUS_INTERNAL_ERROR;
@@ -1017,6 +1054,8 @@ static NTSTATUS key_export_rsa( struct key *key, ULONG flags, UCHAR *buf, ULONG 
     UCHAR *dst;
     int ret;
 
+    if (!key_data(key)->a.privkey) return STATUS_INVALID_PARAMETER;
+
     if ((ret = pgnutls_privkey_export_rsa_raw( key_data(key)->a.privkey, &m, &e, &d, &p, &q, &u, &e1, &e2 )))
     {
         pgnutls_perror( ret );
@@ -1106,6 +1145,8 @@ static NTSTATUS key_export_dsa_capi( struct key *key, UCHAR *buf, ULONG len, ULO
     gnutls_datum_t p, q, g, y, x;
     UCHAR *dst;
     int ret, size;
+
+    if (!key_data(key)->a.privkey) return STATUS_INVALID_PARAMETER;
 
     if ((ret = pgnutls_privkey_export_dsa_raw( key_data(key)->a.privkey, &p, &q, &g, &y, &x )))
     {
@@ -1765,11 +1806,13 @@ static NTSTATUS key_asymmetric_duplicate( void *args )
     const struct key_asymmetric_duplicate_params *params = args;
     struct key *key_orig = params->key_orig;
     struct key *key_copy = params->key_copy;
+    gnutls_privkey_t privkey;
+    gnutls_pubkey_t pubkey;
     int ret;
 
     if (!key_data(key_orig)->a.privkey) return STATUS_SUCCESS;
 
-    if ((ret = pgnutls_privkey_init( &key_data(key_copy)->a.privkey )))
+    if ((ret = pgnutls_privkey_init( &privkey )))
     {
         pgnutls_perror( ret );
         return STATUS_INTERNAL_ERROR;
@@ -1786,7 +1829,7 @@ static NTSTATUS key_asymmetric_duplicate( void *args )
             pgnutls_perror( ret );
             return STATUS_INTERNAL_ERROR;
         }
-        ret = pgnutls_privkey_import_rsa_raw( key_data(key_copy)->a.privkey, &m, &e, &d, &p, &q, &u, &e1, &e2 );
+        ret = pgnutls_privkey_import_rsa_raw( privkey, &m, &e, &d, &p, &q, &u, &e1, &e2 );
         free( m.data ); free( e.data ); free( d.data ); free( p.data ); free( q.data ); free( u.data );
         free( e1.data ); free( e2.data );
         if (ret)
@@ -1804,13 +1847,14 @@ static NTSTATUS key_asymmetric_duplicate( void *args )
             pgnutls_perror( ret );
             return STATUS_INTERNAL_ERROR;
         }
-        ret = pgnutls_privkey_import_dsa_raw( key_data(key_copy)->a.privkey, &p, &q, &g, &y, &x );
+        ret = pgnutls_privkey_import_dsa_raw( privkey, &p, &q, &g, &y, &x );
         free( p.data ); free( q.data ); free( g.data ); free( y.data ); free( x.data );
         if (ret)
         {
             pgnutls_perror( ret );
             return STATUS_INTERNAL_ERROR;
         }
+        key_copy->u.a.dss_seed = key_orig->u.a.dss_seed;
         break;
     }
     case ALG_ID_ECDH_P256:
@@ -1824,7 +1868,7 @@ static NTSTATUS key_asymmetric_duplicate( void *args )
             pgnutls_perror( ret );
             return STATUS_INTERNAL_ERROR;
         }
-        ret = pgnutls_privkey_import_ecc_raw( key_data(key_copy)->a.privkey, curve, &x, &y, &k );
+        ret = pgnutls_privkey_import_ecc_raw( privkey, curve, &x, &y, &k );
         free( x.data ); free( y.data ); free( k.data );
         if (ret)
         {
@@ -1838,6 +1882,25 @@ static NTSTATUS key_asymmetric_duplicate( void *args )
         return STATUS_INTERNAL_ERROR;
     }
 
+    if (key_data(key_orig)->a.pubkey)
+    {
+        if ((ret = pgnutls_pubkey_init( &pubkey )))
+        {
+            pgnutls_perror( ret );
+            pgnutls_privkey_deinit( privkey );
+            return STATUS_INTERNAL_ERROR;
+        }
+        if ((ret = pgnutls_pubkey_import_privkey( pubkey, key_data(key_orig)->a.privkey, 0, 0 )))
+        {
+            pgnutls_perror( ret );
+            pgnutls_pubkey_deinit( pubkey );
+            pgnutls_privkey_deinit( privkey );
+            return STATUS_INTERNAL_ERROR;
+        }
+        key_data(key_copy)->a.pubkey = pubkey;
+    }
+
+    key_data(key_copy)->a.privkey = privkey;
     return STATUS_SUCCESS;
 }
 

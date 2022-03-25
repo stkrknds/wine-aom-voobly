@@ -2212,7 +2212,7 @@ static void test_RSA_SIGN(void)
     BCRYPT_RSAKEY_BLOB *rsablob;
     NTSTATUS ret;
     ULONG size, size2;
-    BYTE *buf;
+    BYTE *buf, buf2[sizeof(BCRYPT_RSAKEY_BLOB) + sizeof(rsaPublicBlob)];
 
     ret = BCryptOpenAlgorithmProvider(&alg, BCRYPT_RSA_SIGN_ALGORITHM, NULL, 0);
     if (ret)
@@ -2223,6 +2223,22 @@ static void test_RSA_SIGN(void)
 
     ret = BCryptImportKeyPair(alg, NULL, BCRYPT_RSAPUBLIC_BLOB, &key, rsaPublicBlob, sizeof(rsaPublicBlob), 0);
     ok(!ret, "BCryptImportKeyPair failed: %#lx\n", ret);
+
+    memset(buf2, 0xcc, sizeof(buf2));
+    ret = BCryptExportKey(key, NULL, BCRYPT_RSAPUBLIC_BLOB, buf2, sizeof(buf2), &size, 0);
+    ok(!ret, "got %#lx\n", ret);
+    rsablob = (BCRYPT_RSAKEY_BLOB *)buf2;
+    ok(rsablob->Magic == BCRYPT_RSAPUBLIC_MAGIC, "got %#lx\n", rsablob->Magic);
+    ok(rsablob->BitLength == 2048, "got %lu\n", rsablob->BitLength);
+    ok(rsablob->cbPublicExp == 3, "got %lu\n", rsablob->cbPublicExp);
+    ok(rsablob->cbModulus == 256, "got %lu\n", rsablob->cbModulus);
+    ok(rsablob->cbPrime1 == 0, "got %lu\n", rsablob->cbPrime1);
+    ok(rsablob->cbPrime2 == 0, "got %lu\n", rsablob->cbPrime2);
+    size2 = sizeof(*rsablob) + rsablob->cbPublicExp + rsablob->cbModulus + rsablob->cbPrime1 + rsablob->cbPrime2;
+    ok(size == size2, "got %lu expected %lu\n", size2, size);
+
+    ret = BCryptExportKey(key, NULL, BCRYPT_RSAPRIVATE_BLOB, buf2, sizeof(buf2), &size, 0);
+    ok(ret == STATUS_INVALID_PARAMETER, "got %#lx\n", ret);
 
     pad.pszAlgId = BCRYPT_SHA1_ALGORITHM;
     ret = BCryptVerifySignature(key, &pad, rsaHash, sizeof(rsaHash), rsaSignature, sizeof(rsaSignature), BCRYPT_PAD_PKCS1);
@@ -2886,7 +2902,7 @@ static void test_DSA(void)
     UCHAR sig[40], schemes;
     ULONG len, size;
     NTSTATUS ret;
-    BYTE *buf;
+    BYTE *buf, buf2[sizeof(BCRYPT_DSA_KEY_BLOB) + sizeof(dsaPublicBlob)];
 
     ret = BCryptOpenAlgorithmProvider(&alg, BCRYPT_DSA_ALGORITHM, NULL, 0);
     ok(!ret, "got %#lx\n", ret);
@@ -2900,6 +2916,17 @@ static void test_DSA(void)
 
     ret = BCryptImportKeyPair(alg, NULL, BCRYPT_DSA_PUBLIC_BLOB, &key, dsaPublicBlob, sizeof(dsaPublicBlob), 0);
     ok(!ret, "got %#lx\n", ret);
+
+    memset(buf2, 0xcc, sizeof(buf2));
+    ret = BCryptExportKey(key, NULL, BCRYPT_DSA_PUBLIC_BLOB, buf2, sizeof(buf2), &size, 0);
+    ok(!ret, "got %#lx\n", ret);
+    dsablob = (BCRYPT_DSA_KEY_BLOB *)buf2;
+    ok(dsablob->dwMagic == BCRYPT_DSA_PUBLIC_MAGIC, "got %#lx\n", dsablob->dwMagic);
+    ok(dsablob->cbKey == 64, "got %lu\n", dsablob->cbKey);
+    ok(size == sizeof(*dsablob) + dsablob->cbKey * 3, "got %lu\n", size);
+
+    ret = BCryptExportKey(key, NULL, BCRYPT_DSA_PRIVATE_BLOB, buf2, sizeof(buf2), &size, 0);
+    todo_wine ok(ret == STATUS_INVALID_PARAMETER, "got %#lx\n", ret);
 
     ret = BCryptVerifySignature(key, NULL, dsaHash, sizeof(dsaHash), dsaSignature, sizeof(dsaSignature), 0);
     ok(!ret, "got %#lx\n", ret);

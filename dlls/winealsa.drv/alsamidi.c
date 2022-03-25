@@ -69,6 +69,13 @@ static snd_seq_t *midi_seq;
 static unsigned int seq_refs;
 static int port_in = -1;
 
+static pthread_mutex_t notify_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t notify_cond = PTHREAD_COND_INITIALIZER;
+static BOOL notify_quit;
+#define NOTIFY_BUFFER_SIZE 64 + 1 /* + 1 for the sentinel */
+static struct notify_context notify_buffer[NOTIFY_BUFFER_SIZE];
+static struct notify_context *notify_read = notify_buffer, *notify_write = notify_buffer;
+
 static void seq_lock(void)
 {
     pthread_mutex_lock(&seq_mutex);
@@ -97,12 +104,67 @@ static void in_buffer_unlock(void)
     pthread_mutex_unlock(&in_buffer_mutex);
 }
 
-NTSTATUS midi_in_lock(void *args)
+static void set_in_notify(struct notify_context *notify, struct midi_src *src, WORD dev_id, WORD msg,
+                          UINT_PTR param_1, UINT_PTR param_2)
 {
-    if (args) in_buffer_lock();
-    else in_buffer_unlock();
+    notify->send_notify = TRUE;
+    notify->dev_id = dev_id;
+    notify->msg = msg;
+    notify->param_1 = param_1;
+    notify->param_2 = param_2;
+    notify->callback = src->midiDesc.dwCallback;
+    notify->flags = src->wFlags;
+    notify->device = src->midiDesc.hMidi;
+    notify->instance = src->midiDesc.dwInstance;
+}
 
-    return STATUS_SUCCESS;
+/*
+ * notify buffer: The notification ring buffer is implemented so that
+ * there is always at least one unused sentinel before the current
+ * read position in order to allow detection of the full vs empty
+ * state.
+ */
+static struct notify_context *notify_buffer_next(struct notify_context *notify)
+{
+    if (++notify >= notify_buffer + ARRAY_SIZE(notify_buffer))
+        notify = notify_buffer;
+
+    return notify;
+}
+
+static void notify_buffer_add(struct notify_context *notify)
+{
+    struct notify_context *next = notify_buffer_next(notify_write);
+
+    if (next == notify_read) /* buffer is full - we can't issue a WARN() in a non-Win32 thread */
+        notify_read = notify_buffer_next(notify_read); /* drop the oldest notification */
+    *notify_write = *notify;
+    notify_write = next;
+}
+
+static BOOL notify_buffer_empty(void)
+{
+    return notify_read == notify_write;
+}
+
+static BOOL notify_buffer_remove(struct notify_context *notify)
+{
+    if (notify_buffer_empty()) return FALSE;
+
+    *notify = *notify_read;
+    notify_read = notify_buffer_next(notify_read);
+    return TRUE;
+}
+
+static void notify_post(struct notify_context *notify)
+{
+    pthread_mutex_lock(&notify_mutex);
+
+    if (notify) notify_buffer_add(notify);
+    else notify_quit = TRUE;
+    pthread_cond_signal(&notify_cond);
+
+    pthread_mutex_unlock(&notify_mutex);
 }
 
 static snd_seq_t *seq_open(int *port_in_ret)
@@ -387,6 +449,14 @@ NTSTATUS midi_init(void *args)
     params->srcs = srcs;
 
     TRACE("End\n");
+
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS midi_release(void *args)
+{
+    /* stop the notify_wait thread */
+    notify_post(NULL);
 
     return STATUS_SUCCESS;
 }
@@ -852,6 +922,124 @@ static UINT midi_out_reset(WORD dev_id)
     return MMSYSERR_NOERROR;
 }
 
+static void handle_sysex_event(struct midi_src *src, BYTE *data, UINT len)
+{
+    UINT pos = 0, copy_len, current_time = NtGetTickCount() - src->startTime;
+    struct notify_context notify;
+    MIDIHDR *hdr;
+
+    in_buffer_lock();
+
+    while (len)
+    {
+        hdr = src->lpQueueHdr;
+        if (!hdr) break;
+
+        copy_len = min(len, hdr->dwBufferLength - hdr->dwBytesRecorded);
+        memcpy(hdr->lpData + hdr->dwBytesRecorded, data + pos, copy_len);
+        hdr->dwBytesRecorded += copy_len;
+        len -= copy_len;
+        pos += copy_len;
+
+        if ((hdr->dwBytesRecorded == hdr->dwBufferLength) ||
+            (*(BYTE*)(hdr->lpData + hdr->dwBytesRecorded - 1) == 0xF7))
+        { /* buffer full or end of sysex message */
+            src->lpQueueHdr = hdr->lpNext;
+            hdr->dwFlags &= ~MHDR_INQUEUE;
+            hdr->dwFlags |= MHDR_DONE;
+            set_in_notify(&notify, src, src - srcs, MIM_LONGDATA, (DWORD_PTR)hdr, current_time);
+            notify_post(&notify);
+        }
+    }
+
+    in_buffer_unlock();
+}
+
+static void handle_regular_event(struct midi_src *src, snd_seq_event_t *ev)
+{
+    UINT data = 0, value, current_time = NtGetTickCount() - src->startTime;
+    struct notify_context notify;
+
+    switch (ev->type)
+    {
+    case SND_SEQ_EVENT_NOTEOFF:
+        data = (ev->data.note.velocity << 16) | (ev->data.note.note << 8) | MIDI_CMD_NOTE_OFF | ev->data.control.channel;
+        break;
+    case SND_SEQ_EVENT_NOTEON:
+        data = (ev->data.note.velocity << 16) | (ev->data.note.note << 8) | MIDI_CMD_NOTE_ON | ev->data.control.channel;
+        break;
+    case SND_SEQ_EVENT_KEYPRESS:
+        data = (ev->data.note.velocity << 16) | (ev->data.note.note << 8) | MIDI_CMD_NOTE_PRESSURE | ev->data.control.channel;
+        break;
+    case SND_SEQ_EVENT_CONTROLLER:
+        data = (ev->data.control.value << 16) | (ev->data.control.param << 8) | MIDI_CMD_CONTROL | ev->data.control.channel;
+        break;
+    case SND_SEQ_EVENT_PITCHBEND:
+        value = ev->data.control.value + 0x2000;
+        data = (((value >> 7) & 0x7f) << 16) | ((value & 0x7f) << 8) | MIDI_CMD_BENDER | ev->data.control.channel;
+        break;
+    case SND_SEQ_EVENT_PGMCHANGE:
+        data = ((ev->data.control.value & 0x7f) << 8) | MIDI_CMD_PGM_CHANGE | ev->data.control.channel;
+        break;
+    case SND_SEQ_EVENT_CHANPRESS:
+        data = ((ev->data.control.value & 0x7f) << 8) | MIDI_CMD_CHANNEL_PRESSURE | ev->data.control.channel;
+        break;
+    case SND_SEQ_EVENT_CLOCK:
+        data = 0xF8;
+        break;
+    case SND_SEQ_EVENT_START:
+        data = 0xFA;
+        break;
+    case SND_SEQ_EVENT_CONTINUE:
+        data = 0xFB;
+        break;
+    case SND_SEQ_EVENT_STOP:
+        data = 0xFC;
+        break;
+    case SND_SEQ_EVENT_SONGPOS:
+        data = (((ev->data.control.value >> 7) & 0x7f) << 16) | ((ev->data.control.value & 0x7f) << 8) | MIDI_CMD_COMMON_SONG_POS;
+        break;
+    case SND_SEQ_EVENT_SONGSEL:
+        data = ((ev->data.control.value & 0x7f) << 8) | MIDI_CMD_COMMON_SONG_SELECT;
+        break;
+    case SND_SEQ_EVENT_RESET:
+        data = 0xFF;
+        break;
+    case SND_SEQ_EVENT_QFRAME:
+        data = ((ev->data.control.value & 0x7f) << 8) | MIDI_CMD_COMMON_MTC_QUARTER;
+        break;
+    case SND_SEQ_EVENT_SENSING:
+        /* Noting to do */
+        break;
+    }
+
+    if (data != 0)
+    {
+        set_in_notify(&notify, src, src - srcs, MIM_DATA, data, current_time);
+        notify_post(&notify);
+    }
+}
+
+NTSTATUS midi_handle_event(void *args)
+{
+    snd_seq_event_t *ev = args;
+    struct midi_src *src;
+
+    /* Find the target device */
+    for (src = srcs; src < srcs + num_srcs; src++)
+        if ((ev->source.client == src->addr.client) && (ev->source.port == src->addr.port))
+            break;
+    if ((src == srcs + num_srcs) || (src->state != 1))
+        return STATUS_SUCCESS;
+
+    if (ev->type == SND_SEQ_EVENT_SYSEX)
+        handle_sysex_event(src, ev->data.ext.ptr, ev->data.ext.len);
+    else
+        handle_regular_event(src, ev);
+
+    return STATUS_SUCCESS;
+}
+
 static UINT midi_in_add_buffer(WORD dev_id, MIDIHDR *hdr, UINT hdr_size)
 {
     struct midi_src *src;
@@ -928,6 +1116,65 @@ static UINT midi_in_get_devcaps(WORD dev_id, MIDIINCAPSW *caps, UINT size)
     return MMSYSERR_NOERROR;
 }
 
+static UINT midi_in_start(WORD dev_id)
+{
+    struct midi_src *src;
+
+    TRACE("(%04X);\n", dev_id);
+
+    if (dev_id >= num_srcs) return MMSYSERR_BADDEVICEID;
+    src = srcs + dev_id;
+    if (src->state == -1) return MIDIERR_NODEVICE;
+
+    src->state = 1;
+    src->startTime = NtGetTickCount();
+    return MMSYSERR_NOERROR;
+}
+
+static UINT midi_in_stop(WORD dev_id)
+{
+    struct midi_src *src;
+
+    TRACE("(%04X);\n", dev_id);
+
+    if (dev_id >= num_srcs) return MMSYSERR_BADDEVICEID;
+    src = srcs + dev_id;
+    if (src->state == -1) return MIDIERR_NODEVICE;
+
+    src->state = 0;
+    return MMSYSERR_NOERROR;
+}
+
+static DWORD midi_in_reset(WORD dev_id, struct notify_context *notify)
+{
+    UINT cur_time = NtGetTickCount();
+    UINT err = MMSYSERR_NOERROR;
+    struct midi_src *src;
+    MIDIHDR *hdr;
+
+    TRACE("(%04X);\n", dev_id);
+
+    if (dev_id >= num_srcs) return MMSYSERR_BADDEVICEID;
+    src = srcs + dev_id;
+    if (src->state == -1) return MIDIERR_NODEVICE;
+
+    in_buffer_lock();
+
+    if (src->lpQueueHdr)
+    {
+        hdr = src->lpQueueHdr;
+        src->lpQueueHdr = hdr->lpNext;
+        hdr->dwFlags &= ~MHDR_INQUEUE;
+        hdr->dwFlags |= MHDR_DONE;
+        set_in_notify(notify, src, dev_id, MIM_LONGDATA, (DWORD_PTR)hdr, cur_time - src->startTime);
+        if (src->lpQueueHdr) err = ERROR_RETRY; /* ask the client to call again */
+    }
+
+    in_buffer_unlock();
+
+    return err;
+}
+
 NTSTATUS midi_out_message(void *args)
 {
     struct midi_out_message_params *params = args;
@@ -987,6 +1234,8 @@ NTSTATUS midi_in_message(void *args)
 {
     struct midi_in_message_params *params = args;
 
+    params->notify->send_notify = FALSE;
+
     switch (params->msg)
     {
     case DRVM_EXIT:
@@ -1010,10 +1259,36 @@ NTSTATUS midi_in_message(void *args)
     case MIDM_GETNUMDEVS:
         *params->err = num_srcs;
         break;
+    case MIDM_START:
+        *params->err = midi_in_start(params->dev_id);
+        break;
+    case MIDM_STOP:
+        *params->err = midi_in_stop(params->dev_id);
+        break;
+    case MIDM_RESET:
+        *params->err = midi_in_reset(params->dev_id, params->notify);
+        break;
     default:
         TRACE("Unsupported message\n");
         *params->err = MMSYSERR_NOTSUPPORTED;
     }
+
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS midi_notify_wait(void *args)
+{
+    struct midi_notify_wait_params *params = args;
+
+    pthread_mutex_lock(&notify_mutex);
+
+    while (!notify_quit && notify_buffer_empty())
+        pthread_cond_wait(&notify_cond, &notify_mutex);
+
+    *params->quit = notify_quit;
+    if (!notify_quit) notify_buffer_remove(params->notify);
+
+    pthread_mutex_unlock(&notify_mutex);
 
     return STATUS_SUCCESS;
 }
