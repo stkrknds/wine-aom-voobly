@@ -31,6 +31,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <pthread.h>
+#include <time.h>
 #include <alsa/asoundlib.h>
 
 #include "ntstatus.h"
@@ -59,6 +60,19 @@ struct midi_dest
     int                 port_out;
 };
 
+struct midi_src
+{
+    int                 state; /* -1 disabled, 0 is no recording started, 1 in recording, bit 2 set if in sys exclusive recording */
+    MIDIOPENDESC        midiDesc;
+    WORD                wFlags;
+    MIDIHDR            *lpQueueHdr;
+    UINT                startTime;
+    MIDIINCAPSW         caps;
+    snd_seq_t          *seq;
+    snd_seq_addr_t      addr;
+    int                 port_in;
+};
+
 static pthread_mutex_t seq_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t in_buffer_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -68,6 +82,10 @@ static struct midi_src srcs[MAX_MIDIINDRV];
 static snd_seq_t *midi_seq;
 static unsigned int seq_refs;
 static int port_in = -1;
+
+static unsigned int num_midi_in_started;
+static int rec_cancel_pipe[2];
+static pthread_t rec_thread_id;
 
 static pthread_mutex_t notify_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t notify_cond = PTHREAD_COND_INITIALIZER;
@@ -86,14 +104,6 @@ static void seq_unlock(void)
     pthread_mutex_unlock(&seq_mutex);
 }
 
-NTSTATUS midi_seq_lock(void *args)
-{
-    if (args) seq_lock();
-    else seq_unlock();
-
-    return STATUS_SUCCESS;
-}
-
 static void in_buffer_lock(void)
 {
     pthread_mutex_lock(&in_buffer_mutex);
@@ -102,6 +112,18 @@ static void in_buffer_lock(void)
 static void in_buffer_unlock(void)
 {
     pthread_mutex_unlock(&in_buffer_mutex);
+}
+
+static uint64_t get_time_msec(void)
+{
+    struct timespec now = {0, 0};
+
+#ifdef CLOCK_MONOTONIC_RAW
+    if (!clock_gettime(CLOCK_MONOTONIC_RAW, &now))
+        return (uint64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+#endif
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (uint64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
 }
 
 static void set_in_notify(struct notify_context *notify, struct midi_src *src, WORD dev_id, WORD msg,
@@ -218,18 +240,6 @@ static void seq_close(void)
         midi_seq = NULL;
     }
     seq_unlock();
-}
-
-NTSTATUS midi_seq_open(void *args)
-{
-    struct midi_seq_open_params *params = args;
-
-    if (!params->close)
-        params->seq = seq_open(params->port_in);
-    else
-        seq_close();
-
-    return STATUS_SUCCESS;
 }
 
 static int alsa_to_win_device_type(unsigned int type)
@@ -390,27 +400,22 @@ static void port_add(snd_seq_client_info_t* cinfo, snd_seq_port_info_t* pinfo, u
     }
 }
 
-NTSTATUS midi_init(void *args)
+static UINT midi_init(void)
 {
-    struct midi_init_params *params = args;
     static BOOL init_done;
     snd_seq_client_info_t *cinfo;
     snd_seq_port_info_t *pinfo;
     snd_seq_t *seq;
 
-    if (init_done) {
-        *params->err = ERROR_ALREADY_INITIALIZED;
-        return STATUS_SUCCESS;
-    }
+    if (init_done)
+        return ERROR_ALREADY_INITIALIZED;
 
     TRACE("Initializing the MIDI variables.\n");
     init_done = TRUE;
 
     /* try to open device */
-    if (!(seq = seq_open(NULL))) {
-        *params->err = ERROR_OPEN_FAILED;
-        return STATUS_SUCCESS;
-    }
+    if (!(seq = seq_open(NULL)))
+        return ERROR_OPEN_FAILED;
 
     cinfo = calloc( 1, snd_seq_client_info_sizeof() );
     pinfo = calloc( 1, snd_seq_port_info_sizeof() );
@@ -444,13 +449,9 @@ NTSTATUS midi_init(void *args)
     free( cinfo );
     free( pinfo );
 
-    *params->err = NOERROR;
-    params->num_srcs = num_srcs;
-    params->srcs = srcs;
-
     TRACE("End\n");
 
-    return STATUS_SUCCESS;
+    return NOERROR;
 }
 
 NTSTATUS midi_release(void *args)
@@ -924,7 +925,7 @@ static UINT midi_out_reset(WORD dev_id)
 
 static void handle_sysex_event(struct midi_src *src, BYTE *data, UINT len)
 {
-    UINT pos = 0, copy_len, current_time = NtGetTickCount() - src->startTime;
+    UINT pos = 0, copy_len, current_time = get_time_msec() - src->startTime;
     struct notify_context notify;
     MIDIHDR *hdr;
 
@@ -957,7 +958,7 @@ static void handle_sysex_event(struct midi_src *src, BYTE *data, UINT len)
 
 static void handle_regular_event(struct midi_src *src, snd_seq_event_t *ev)
 {
-    UINT data = 0, value, current_time = NtGetTickCount() - src->startTime;
+    UINT data = 0, value, current_time = get_time_msec() - src->startTime;
     struct notify_context notify;
 
     switch (ev->type)
@@ -1020,9 +1021,8 @@ static void handle_regular_event(struct midi_src *src, snd_seq_event_t *ev)
     }
 }
 
-NTSTATUS midi_handle_event(void *args)
+static void midi_handle_event(snd_seq_event_t *ev)
 {
-    snd_seq_event_t *ev = args;
     struct midi_src *src;
 
     /* Find the target device */
@@ -1030,14 +1030,193 @@ NTSTATUS midi_handle_event(void *args)
         if ((ev->source.client == src->addr.client) && (ev->source.port == src->addr.port))
             break;
     if ((src == srcs + num_srcs) || (src->state != 1))
-        return STATUS_SUCCESS;
+        return;
 
     if (ev->type == SND_SEQ_EVENT_SYSEX)
         handle_sysex_event(src, ev->data.ext.ptr, ev->data.ext.len);
     else
         handle_regular_event(src, ev);
+}
 
-    return STATUS_SUCCESS;
+static void *rec_thread_proc(void *arg)
+{
+    snd_seq_t *midi_seq = (snd_seq_t *)arg;
+    int num_fds;
+    struct pollfd *pollfd;
+    int ret;
+
+    /* Add on one for the read end of the cancel pipe */
+    num_fds = snd_seq_poll_descriptors_count(midi_seq, POLLIN) + 1;
+    pollfd = malloc(num_fds * sizeof(struct pollfd));
+
+    while(1)
+    {
+        pollfd[0].fd = rec_cancel_pipe[0];
+        pollfd[0].events = POLLIN;
+
+        seq_lock();
+        snd_seq_poll_descriptors(midi_seq, pollfd + 1, num_fds - 1, POLLIN);
+        seq_unlock();
+
+        /* Check if an event is present */
+        if (poll(pollfd, num_fds, -1) <= 0)
+            continue;
+
+        if (pollfd[0].revents & POLLIN) /* cancelled */
+            break;
+
+        do
+        {
+            snd_seq_event_t *ev;
+
+            seq_lock();
+            snd_seq_event_input(midi_seq, &ev);
+            seq_unlock();
+
+            if (ev)
+            {
+                midi_handle_event(ev);
+                snd_seq_free_event(ev);
+            }
+
+            seq_lock();
+            ret = snd_seq_event_input_pending(midi_seq, 0);
+            seq_unlock();
+        } while(ret > 0);
+    }
+
+    free(pollfd);
+    return 0;
+}
+
+static UINT midi_in_open(WORD dev_id, MIDIOPENDESC *desc, UINT flags, struct notify_context *notify)
+{
+    struct midi_src *src;
+    int ret = 0, port_in;
+    snd_seq_t *midi_seq;
+
+    TRACE("(%04X, %p, %08X);\n", dev_id, desc, flags);
+
+    if (!desc)
+    {
+        WARN("Invalid Parameter !\n");
+        return MMSYSERR_INVALPARAM;
+    }
+
+    /* FIXME: check that contents of desc are correct */
+
+    if (dev_id >= num_srcs)
+    {
+        WARN("dev_id too large (%u) !\n", dev_id);
+        return MMSYSERR_BADDEVICEID;
+    }
+    src = srcs + dev_id;
+
+    if (src->state == -1)
+    {
+        WARN("device disabled\n");
+        return MIDIERR_NODEVICE;
+    }
+    if (src->midiDesc.hMidi)
+    {
+        WARN("device already open !\n");
+        return MMSYSERR_ALLOCATED;
+    }
+    if (flags & MIDI_IO_STATUS)
+    {
+        WARN("No support for MIDI_IO_STATUS in flags yet, ignoring it\n");
+        flags &= ~MIDI_IO_STATUS;
+    }
+    if (flags & ~CALLBACK_TYPEMASK)
+    {
+        FIXME("Bad flags %08X\n", flags);
+        return MMSYSERR_INVALFLAG;
+    }
+
+    if (!(midi_seq = seq_open(&port_in)))
+        return MMSYSERR_ERROR;
+
+    src->wFlags = HIWORD(flags & CALLBACK_TYPEMASK);
+
+    src->lpQueueHdr = NULL;
+    src->midiDesc = *desc;
+    src->state = 0;
+    src->startTime = 0;
+    src->seq = midi_seq;
+    src->port_in = port_in;
+
+    /* Connect our app port to the device port */
+    seq_lock();
+    ret = snd_seq_connect_from(midi_seq, port_in, src->addr.client, src->addr.port);
+    seq_unlock();
+    if (ret < 0)
+        return MMSYSERR_NOTENABLED;
+
+    TRACE("Input port :%d connected %d:%d\n", port_in, src->addr.client, src->addr.port);
+
+    if (num_midi_in_started++ == 0)
+    {
+        pipe(rec_cancel_pipe);
+        if (pthread_create(&rec_thread_id, NULL, rec_thread_proc, midi_seq))
+        {
+            close(rec_cancel_pipe[0]);
+            close(rec_cancel_pipe[1]);
+            num_midi_in_started = 0;
+            WARN("Couldn't create thread for midi-in\n");
+            seq_close();
+            return MMSYSERR_ERROR;
+        }
+    }
+
+    set_in_notify(notify, src, dev_id, MIM_OPEN, 0, 0);
+    return MMSYSERR_NOERROR;
+}
+
+static UINT midi_in_close(WORD dev_id, struct notify_context *notify)
+{
+    struct midi_src *src;
+
+    TRACE("(%04X);\n", dev_id);
+
+    if (dev_id >= num_srcs)
+    {
+        WARN("dev_id too big (%u) !\n", dev_id);
+        return MMSYSERR_BADDEVICEID;
+    }
+    src = srcs + dev_id;
+    if (!src->midiDesc.hMidi)
+    {
+        WARN("device not opened !\n");
+        return MMSYSERR_ERROR;
+    }
+    if (src->lpQueueHdr)
+        return MIDIERR_STILLPLAYING;
+
+    if (src->seq == NULL)
+    {
+        WARN("ooops !\n");
+        return MMSYSERR_ERROR;
+    }
+    if (--num_midi_in_started == 0)
+    {
+        TRACE("Stopping thread for midi-in\n");
+        write(rec_cancel_pipe[1], "x", 1);
+        pthread_join(rec_thread_id, NULL);
+        close(rec_cancel_pipe[0]);
+        close(rec_cancel_pipe[1]);
+        TRACE("Stopped thread for midi-in\n");
+    }
+
+    seq_lock();
+    snd_seq_disconnect_from(src->seq, src->port_in, src->addr.client, src->addr.port);
+    seq_unlock();
+    seq_close();
+
+    set_in_notify(notify, src, dev_id, MIM_CLOSE, 0, 0);
+    src->midiDesc.hMidi = 0;
+    src->seq = NULL;
+
+    return MMSYSERR_NOERROR;
 }
 
 static UINT midi_in_add_buffer(WORD dev_id, MIDIHDR *hdr, UINT hdr_size)
@@ -1127,7 +1306,7 @@ static UINT midi_in_start(WORD dev_id)
     if (src->state == -1) return MIDIERR_NODEVICE;
 
     src->state = 1;
-    src->startTime = NtGetTickCount();
+    src->startTime = get_time_msec();
     return MMSYSERR_NOERROR;
 }
 
@@ -1147,7 +1326,7 @@ static UINT midi_in_stop(WORD dev_id)
 
 static DWORD midi_in_reset(WORD dev_id, struct notify_context *notify)
 {
-    UINT cur_time = NtGetTickCount();
+    UINT cur_time = get_time_msec();
     UINT err = MMSYSERR_NOERROR;
     struct midi_src *src;
     MIDIHDR *hdr;
@@ -1183,6 +1362,9 @@ NTSTATUS midi_out_message(void *args)
 
     switch (params->msg)
     {
+    case DRVM_INIT:
+        *params->err = midi_init();
+        break;
     case DRVM_EXIT:
     case DRVM_ENABLE:
     case DRVM_DISABLE:
@@ -1238,11 +1420,20 @@ NTSTATUS midi_in_message(void *args)
 
     switch (params->msg)
     {
+    case DRVM_INIT:
+        *params->err = midi_init();
+        break;
     case DRVM_EXIT:
     case DRVM_ENABLE:
     case DRVM_DISABLE:
         /* FIXME: Pretend this is supported */
         *params->err = MMSYSERR_NOERROR;
+        break;
+    case MIDM_OPEN:
+        *params->err = midi_in_open(params->dev_id, (MIDIOPENDESC *)params->param_1, params->param_2, params->notify);
+        break;
+    case MIDM_CLOSE:
+        *params->err = midi_in_close(params->dev_id, params->notify);
         break;
     case MIDM_ADDBUFFER:
         *params->err = midi_in_add_buffer(params->dev_id, (MIDIHDR *)params->param_1, params->param_2);

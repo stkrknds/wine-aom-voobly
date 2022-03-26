@@ -2045,14 +2045,14 @@ static void dump_recv_socket_reply( const struct recv_socket_reply *req )
 static void dump_send_socket_request( const struct send_socket_request *req )
 {
     dump_async_data( " async=", &req->async );
-    fprintf( stderr, ", status=%08x", req->status );
-    fprintf( stderr, ", total=%08x", req->total );
+    fprintf( stderr, ", force_async=%d", req->force_async );
 }
 
 static void dump_send_socket_reply( const struct send_socket_reply *req )
 {
     fprintf( stderr, " wait=%04x", req->wait );
     fprintf( stderr, ", options=%08x", req->options );
+    fprintf( stderr, ", nonblocking=%d", req->nonblocking );
 }
 
 static void dump_get_next_console_request_request( const struct get_next_console_request_request *req )

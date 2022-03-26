@@ -207,29 +207,6 @@ struct get_prop_value_params
     unsigned int *buffer_size;
 };
 
-#include <alsa/asoundlib.h>
-#include "mmddk.h"
-
-typedef struct midi_src
-{
-    int                 state;          /* -1 disabled, 0 is no recording started, 1 in recording, bit 2 set if in sys exclusive recording */
-    MIDIOPENDESC        midiDesc;
-    WORD                wFlags;
-    MIDIHDR            *lpQueueHdr;
-    UINT                startTime;
-    MIDIINCAPSW         caps;
-    snd_seq_t          *seq;
-    snd_seq_addr_t      addr;
-    int                 port_in;
-} WINE_MIDIIN;
-
-struct midi_init_params
-{
-    UINT *err;
-    unsigned int num_srcs;
-    void *srcs;
-};
-
 struct notify_context
 {
     BOOL send_notify;
@@ -271,13 +248,6 @@ struct midi_notify_wait_params
     struct notify_context *notify;
 };
 
-struct midi_seq_open_params
-{
-    int close;
-    snd_seq_t *seq;
-    int *port_in;
-};
-
 enum alsa_funcs
 {
     alsa_get_endpoint_ids,
@@ -303,26 +273,16 @@ enum alsa_funcs
     alsa_set_event_handle,
     alsa_is_started,
     alsa_get_prop_value,
-    alsa_midi_init,
     alsa_midi_release,
     alsa_midi_out_message,
     alsa_midi_in_message,
     alsa_midi_notify_wait,
-
-    alsa_midi_seq_lock, /* temporary */
-    alsa_midi_seq_open,
-    alsa_midi_handle_event,
 };
 
-NTSTATUS midi_init(void *args) DECLSPEC_HIDDEN;
 NTSTATUS midi_release(void *args) DECLSPEC_HIDDEN;
 NTSTATUS midi_out_message(void *args) DECLSPEC_HIDDEN;
 NTSTATUS midi_in_message(void *args) DECLSPEC_HIDDEN;
 NTSTATUS midi_notify_wait(void *args) DECLSPEC_HIDDEN;
-
-NTSTATUS midi_seq_lock(void *args) DECLSPEC_HIDDEN;
-NTSTATUS midi_seq_open(void *args) DECLSPEC_HIDDEN;
-NTSTATUS midi_handle_event(void *args) DECLSPEC_HIDDEN;
 
 extern unixlib_handle_t alsa_handle;
 

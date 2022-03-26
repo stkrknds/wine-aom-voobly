@@ -294,6 +294,92 @@ done:
     return hres;
 }
 
+static HRESULT Object_defineGetter(script_ctx_t *ctx, jsval_t vthis, WORD flags, unsigned argc, jsval_t *argv, jsval_t *r)
+{
+    property_desc_t desc;
+    const WCHAR *name;
+    jsstr_t *name_str;
+    jsdisp_t *jsthis;
+    HRESULT hres;
+
+    TRACE("\n");
+
+    if(!is_object_instance(vthis) || !(jsthis = to_jsdisp(get_object(vthis))))
+        goto done;
+
+    if(argc < 2 || !is_object_instance(argv[1]))
+        return JS_E_FUNCTION_EXPECTED;
+
+    desc.getter = to_jsdisp(get_object(argv[1]));
+    if(!desc.getter) {
+        FIXME("getter is not JS object\n");
+        return E_NOTIMPL;
+    }
+    /* FIXME: Check IsCallable */
+
+    hres = to_flat_string(ctx, argv[0], &name_str, &name);
+    if(FAILED(hres))
+        return hres;
+
+    desc.flags = desc.mask = PROPF_CONFIGURABLE | PROPF_ENUMERABLE;
+    desc.explicit_getter = TRUE;
+    desc.explicit_setter = FALSE;
+    desc.explicit_value  = FALSE;
+    desc.setter = NULL;
+    hres = jsdisp_define_property(jsthis, name, &desc);
+
+    jsstr_release(name_str);
+    if(FAILED(hres))
+        return hres;
+done:
+    if(r)
+        *r = jsval_undefined();
+    return S_OK;
+}
+
+static HRESULT Object_defineSetter(script_ctx_t *ctx, jsval_t vthis, WORD flags, unsigned argc, jsval_t *argv, jsval_t *r)
+{
+    property_desc_t desc;
+    const WCHAR *name;
+    jsstr_t *name_str;
+    jsdisp_t *jsthis;
+    HRESULT hres;
+
+    TRACE("\n");
+
+    if(!is_object_instance(vthis) || !(jsthis = to_jsdisp(get_object(vthis))))
+        goto done;
+
+    if(argc < 2 || !is_object_instance(argv[1]))
+        return JS_E_FUNCTION_EXPECTED;
+
+    desc.setter = to_jsdisp(get_object(argv[1]));
+    if(!desc.setter) {
+        FIXME("setter is not JS object\n");
+        return E_NOTIMPL;
+    }
+    /* FIXME: Check IsCallable */
+
+    hres = to_flat_string(ctx, argv[0], &name_str, &name);
+    if(FAILED(hres))
+        return hres;
+
+    desc.flags = desc.mask = PROPF_CONFIGURABLE | PROPF_ENUMERABLE;
+    desc.explicit_getter = FALSE;
+    desc.explicit_setter = TRUE;
+    desc.explicit_value  = FALSE;
+    desc.getter = NULL;
+    hres = jsdisp_define_property(jsthis, name, &desc);
+
+    jsstr_release(name_str);
+    if(FAILED(hres))
+        return hres;
+done:
+    if(r)
+        *r = jsval_undefined();
+    return S_OK;
+}
+
 HRESULT Object_get_proto_(script_ctx_t *ctx, jsval_t vthis, WORD flags, unsigned argc, jsval_t *argv, jsval_t *r)
 {
     jsdisp_t *jsthis;
@@ -365,6 +451,8 @@ static void Object_destructor(jsdisp_t *dispex)
 }
 
 static const builtin_prop_t Object_props[] = {
+    {L"__defineGetter__",      Object_defineGetter,          PROPF_METHOD|PROPF_ES6|2},
+    {L"__defineSetter__",      Object_defineSetter,          PROPF_METHOD|PROPF_ES6|2},
     {L"hasOwnProperty",        Object_hasOwnProperty,        PROPF_METHOD|1},
     {L"isPrototypeOf",         Object_isPrototypeOf,         PROPF_METHOD|1},
     {L"propertyIsEnumerable",  Object_propertyIsEnumerable,  PROPF_METHOD|1},
@@ -756,21 +844,14 @@ static HRESULT Object_getPrototypeOf(script_ctx_t *ctx, jsval_t vthis, WORD flag
 {
     jsdisp_t *obj;
 
-    if(!argc || !is_object_instance(argv[0])) {
-        FIXME("invalid arguments\n");
-        return E_NOTIMPL;
-    }
+    if(!argc || !is_object_instance(argv[0]))
+        return JS_E_OBJECT_EXPECTED;
 
     TRACE("(%s)\n", debugstr_jsval(argv[0]));
 
     obj = to_jsdisp(get_object(argv[0]));
-    if(!obj) {
-        FIXME("Non-JS object\n");
-        return E_NOTIMPL;
-    }
-
     if(r)
-        *r = obj->prototype
+        *r = obj && obj->prototype
             ? jsval_obj(jsdisp_addref(obj->prototype))
             : jsval_null();
     return S_OK;
@@ -784,10 +865,8 @@ static HRESULT object_keys(script_ctx_t *ctx, jsval_t arg, enum jsdisp_enum_type
     jsstr_t *key;
     HRESULT hres;
 
-    if(!is_object_instance(arg)) {
-        FIXME("invalid arguments %s\n", debugstr_jsval(arg));
-        return E_NOTIMPL;
-    }
+    if(!is_object_instance(arg))
+        return JS_E_OBJECT_EXPECTED;
 
     obj = to_jsdisp(get_object(arg));
     if(!obj) {
@@ -843,10 +922,8 @@ static HRESULT Object_preventExtensions(script_ctx_t *ctx, jsval_t vthis, WORD f
 {
     jsdisp_t *obj;
 
-    if(!argc || !is_object_instance(argv[0])) {
-        FIXME("invalid arguments\n");
-        return E_NOTIMPL;
-    }
+    if(!argc || !is_object_instance(argv[0]))
+        return JS_E_OBJECT_EXPECTED;
 
     TRACE("(%s)\n", debugstr_jsval(argv[0]));
 
