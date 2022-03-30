@@ -896,10 +896,117 @@ static int locale_return_strarray( DWORD pos, WORD idx, LCTYPE type, WCHAR *buff
 }
 
 
+static int locale_return_strarray_concat( DWORD pos, LCTYPE type, WCHAR *buffer, int len )
+{
+    WORD i, count = locale_strings[pos];
+    const DWORD *array = (const DWORD *)(locale_strings + pos + 1);
+    int ret;
+
+    if (type & LOCALE_RETURN_NUMBER)
+    {
+        SetLastError( ERROR_INVALID_FLAGS );
+        return 0;
+    }
+    for (i = 0, ret = 1; i < count; i++) ret += locale_strings[array[i]];
+
+    if (!len) return ret;
+    if (ret > len)
+    {
+        SetLastError( ERROR_INSUFFICIENT_BUFFER );
+        return 0;
+    }
+    for (i = 0; i < count; i++)
+    {
+        memcpy( buffer, locale_strings + array[i] + 1, locale_strings[array[i]] * sizeof(WCHAR) );
+        buffer += locale_strings[array[i]];
+    }
+    *buffer = 0;
+    return ret;
+}
+
+
+/* FIXME: hardcoded, sortname is apparently not available in locale.nls */
+static const WCHAR *get_locale_sortname( LCID lcid )
+{
+    switch (PRIMARYLANGID( lcid ))
+    {
+    case LANG_CHINESE:
+        switch (SORTIDFROMLCID( lcid ))
+        {
+        case SORT_CHINESE_PRCP:
+            switch (SUBLANGID( lcid ))
+            {
+            case SUBLANG_CHINESE_TRADITIONAL:
+            case SUBLANG_CHINESE_HONGKONG:
+            case 0x1f:
+                return L"Stroke Count";
+            default:
+                return L"Pronunciation";
+            }
+        case SORT_CHINESE_UNICODE: return L"Unicode";
+        case SORT_CHINESE_PRC: return L"Stroke Count";
+        case SORT_CHINESE_BOPOMOFO: return L"Bopomofo";
+        case SORT_CHINESE_RADICALSTROKE: return L"Radical/Stroke";
+        case 5: return L"Surname";
+        }
+        break;
+
+    case LANG_GEORGIAN:
+        if (SORTIDFROMLCID( lcid ) == SORT_GEORGIAN_MODERN) return L"Modern";
+        return L"Traditional";
+
+    case LANG_GERMAN:
+        switch (SUBLANGID( lcid ))
+        {
+        case SUBLANG_NEUTRAL:
+        case SUBLANG_DEFAULT:
+            if (SORTIDFROMLCID( lcid ) == SORT_GERMAN_PHONE_BOOK) return L"Phone Book (DIN)";
+            return L"Dictionary";
+        }
+        break;
+
+    case LANG_HUNGARIAN:
+        if (SORTIDFROMLCID( lcid ) == SORT_HUNGARIAN_TECHNICAL) return L"Technical";
+        break;
+
+    case LANG_INVARIANT:
+        if (SORTIDFROMLCID( lcid ) == SORT_INVARIANT_MATH) return L"Default";
+        return L"Maths Alphanumerics";
+
+    case LANG_JAPANESE:
+        switch (SORTIDFROMLCID( lcid ))
+        {
+        case SORT_JAPANESE_XJIS: return L"XJIS";
+        case SORT_JAPANESE_UNICODE: return L"Unicode";
+        case SORT_JAPANESE_RADICALSTROKE: return L"Radical/Stroke";
+        }
+        break;
+
+    case LANG_KOREAN:
+        if (SORTIDFROMLCID( lcid ) == SORT_KOREAN_UNICODE) return L"Unicode";
+        return L"Dictionary";
+
+    case LANG_SPANISH:
+        switch (SUBLANGID( lcid ))
+        {
+        case SUBLANG_NEUTRAL:
+        case SUBLANG_SPANISH_MODERN:
+            return L"International";
+        case SUBLANG_DEFAULT:
+            return L"Traditional";
+        }
+        break;
+    }
+    return L"Default";
+}
+
+
 /* get locale information from the locale.nls file */
 static int get_locale_info( const NLS_LOCALE_DATA *locale, LCID lcid, LCTYPE type,
                             WCHAR *buffer, int len )
 {
+    static const WCHAR spermille[] = { 0x2030, 0 };  /* this one seems hardcoded */
+    const WCHAR *sort;
     UINT val;
 
     if (locale != user_locale) type |= LOCALE_NOUSEROVERRIDE;
@@ -922,7 +1029,7 @@ static int get_locale_info( const NLS_LOCALE_DATA *locale, LCID lcid, LCTYPE typ
         return locale_return_string( locale->snativelangname, type, buffer, len );
 
     case LOCALE_ICOUNTRY:
-        return -1;
+        return locale_return_number( locale->icountry, type, buffer, len );
 
     case LOCALE_SLOCALIZEDCOUNTRYNAME:
         /* FIXME: localization */
@@ -938,7 +1045,7 @@ static int get_locale_info( const NLS_LOCALE_DATA *locale, LCID lcid, LCTYPE typ
         return locale_return_number( locale->idefaultlanguage, type, buffer, len );
 
     case LOCALE_IDEFAULTCOUNTRY:
-        return -1;
+        return locale_return_number( locale->icountry, type, buffer, len );
 
     case LOCALE_IDEFAULTCODEPAGE:
         val = locale->idefaultcodepage == CP_UTF8 ? CP_OEMCP : locale->idefaultcodepage;
@@ -948,7 +1055,7 @@ static int get_locale_info( const NLS_LOCALE_DATA *locale, LCID lcid, LCTYPE typ
         return -1;
 
     case LOCALE_IMEASURE:
-        return -1;
+        return locale_return_number( locale->imeasure, type, buffer, len );
 
     case LOCALE_SDECIMAL:
         return -1;
@@ -966,13 +1073,13 @@ static int get_locale_info( const NLS_LOCALE_DATA *locale, LCID lcid, LCTYPE typ
         return -1;
 
     case LOCALE_SNATIVEDIGITS:
-        return -1;
+        return locale_return_strarray_concat( locale->snativedigits, type, buffer, len );
 
     case LOCALE_SCURRENCY:
-        return -1;
+        return locale_return_string( locale->scurrency, type, buffer, len );
 
     case LOCALE_SINTLSYMBOL:
-        return -1;
+        return locale_return_string( locale->sintlsymbol, type, buffer, len );
 
     case LOCALE_SMONDECIMALSEP:
         return -1;
@@ -1000,10 +1107,10 @@ static int get_locale_info( const NLS_LOCALE_DATA *locale, LCID lcid, LCTYPE typ
         return -1;
 
     case LOCALE_SSHORTDATE:
-        return -1;
+        return locale_return_strarray( locale->sshortdate, 0, type, buffer, len );
 
     case LOCALE_SLONGDATE:
-        return -1;
+        return locale_return_strarray( locale->slongdate, 0, type, buffer, len );
 
     case LOCALE_IDATE:
         return -1;
@@ -1027,10 +1134,10 @@ static int get_locale_info( const NLS_LOCALE_DATA *locale, LCID lcid, LCTYPE typ
         return -1;
 
     case LOCALE_S1159:
-        return -1;
+        return locale_return_string( locale->s1159, type, buffer, len );
 
     case LOCALE_S2359:
-        return -1;
+        return locale_return_string( locale->s2359, type, buffer, len );
 
     case LOCALE_SDAYNAME1:
     case LOCALE_SDAYNAME2:
@@ -1109,7 +1216,8 @@ static int get_locale_info( const NLS_LOCALE_DATA *locale, LCID lcid, LCTYPE typ
         return -1;
 
     case LOCALE_FONTSIGNATURE:
-        return -1;
+        return locale_return_data( locale_strings + locale->fontsignature + 1,
+                                   locale_strings[locale->fontsignature], type, buffer, len );
 
     case LOCALE_SISO639LANGNAME:
         return locale_return_string( locale->siso639langname, type, buffer, len );
@@ -1118,7 +1226,7 @@ static int get_locale_info( const NLS_LOCALE_DATA *locale, LCID lcid, LCTYPE typ
         return locale_return_string( locale->siso3166ctryname, type, buffer, len );
 
     case LOCALE_IGEOID:
-        return -1;
+        return locale_return_number( locale->igeoid, type, buffer, len );
 
     case LOCALE_SNAME:
         if (SORTIDFROMLCID(lcid))  /* custom sort locale */
@@ -1129,7 +1237,7 @@ static int get_locale_info( const NLS_LOCALE_DATA *locale, LCID lcid, LCTYPE typ
         return locale_return_string( locale->sname, type, buffer, len );
 
     case LOCALE_SDURATION:
-        return -1;
+        return locale_return_strarray( locale->sduration, 0, type, buffer, len );
 
     case LOCALE_SKEYBOARDSTOINSTALL:
         return -1;
@@ -1151,13 +1259,13 @@ static int get_locale_info( const NLS_LOCALE_DATA *locale, LCID lcid, LCTYPE typ
         return locale_return_string( locale->siso3166ctryname2, type, buffer, len );
 
     case LOCALE_SNAN:
-        return -1;
+        return locale_return_string( locale->snan, type, buffer, len );
 
     case LOCALE_SPOSINFINITY:
-        return -1;
+        return locale_return_string( locale->sposinfinity, type, buffer, len );
 
     case LOCALE_SNEGINFINITY:
-        return -1;
+        return locale_return_string( locale->sneginfinity, type, buffer, len );
 
     case LOCALE_SSCRIPTS:
         return -1;
@@ -1173,7 +1281,7 @@ static int get_locale_info( const NLS_LOCALE_DATA *locale, LCID lcid, LCTYPE typ
         return locale_return_string( locale->senglanguage, type, buffer, len );
 
     case LOCALE_IREADINGLAYOUT:
-        return -1;
+        return locale_return_number( locale->ireadinglayout, type, buffer, len );
 
     case LOCALE_INEUTRAL:
         return -1;
@@ -1185,40 +1293,40 @@ static int get_locale_info( const NLS_LOCALE_DATA *locale, LCID lcid, LCTYPE typ
         return locale_return_string( locale->snativedisplayname, type, buffer, len );
 
     case LOCALE_INEGATIVEPERCENT:
-        return -1;
+        return locale_return_number( locale->inegativepercent, type, buffer, len );
 
     case LOCALE_IPOSITIVEPERCENT:
-        return -1;
+        return locale_return_number( locale->ipositivepercent, type, buffer, len );
 
     case LOCALE_SPERCENT:
-        return -1;
+        return locale_return_string( locale->spercent, type, buffer, len );
 
     case LOCALE_SPERMILLE:
-        return -1;
+        return locale_return_data( spermille, ARRAY_SIZE(spermille), type, buffer, len );
 
     case LOCALE_SMONTHDAY:
-        return -1;
+        return locale_return_strarray( locale->smonthday, 0, type, buffer, len );
 
     case LOCALE_SSHORTTIME:
-        return -1;
+        return locale_return_strarray( locale->sshorttime, 0, type, buffer, len );
 
     case LOCALE_SOPENTYPELANGUAGETAG:
-        return -1;
+        return locale_return_string( locale->sopentypelanguagetag, type, buffer, len );
 
     case LOCALE_SSORTLOCALE:
         return -1;
 
     case LOCALE_SRELATIVELONGDATE:
-        return -1;
+        return locale_return_string( locale->srelativelongdate, type, buffer, len );
 
     case 0x007d: /* undocumented */
         return -1;
 
     case LOCALE_SSHORTESTAM:
-        return -1;
+        return locale_return_string( locale->sshortestam, type, buffer, len );
 
     case LOCALE_SSHORTESTPM:
-        return -1;
+        return locale_return_string( locale->sshortestpm, type, buffer, len );
 
     case LOCALE_SENGLANGUAGE:
         return locale_return_string( locale->senglanguage, type, buffer, len );
@@ -1227,7 +1335,7 @@ static int get_locale_info( const NLS_LOCALE_DATA *locale, LCID lcid, LCTYPE typ
         return locale_return_string( locale->sengcountry, type, buffer, len );
 
     case LOCALE_STIMEFORMAT:
-        return -1;
+        return locale_return_strarray( locale->stimeformat, 0, type, buffer, len );
 
     case LOCALE_IDEFAULTANSICODEPAGE:
         val = locale->idefaultansicodepage == CP_UTF8 ? CP_ACP : locale->idefaultansicodepage;
@@ -1237,28 +1345,28 @@ static int get_locale_info( const NLS_LOCALE_DATA *locale, LCID lcid, LCTYPE typ
         return -1;
 
     case LOCALE_SYEARMONTH:
-        return -1;
+        return locale_return_strarray( locale->syearmonth, 0, type, buffer, len );
 
     case LOCALE_SENGCURRNAME:
-        return -1;
+        return locale_return_string( locale->sengcurrname, type, buffer, len );
 
     case LOCALE_SNATIVECURRNAME:
-        return -1;
+        return locale_return_string( locale->snativecurrname, type, buffer, len );
 
     case LOCALE_ICALENDARTYPE:
-        return -1;
+        return locale_return_number( locale_strings[locale->scalendartype + 1], type, buffer, len );
 
     case LOCALE_IPAPERSIZE:
-        return -1;
+        return locale_return_number( locale->ipapersize, type, buffer, len );
 
     case LOCALE_IOPTIONALCALENDAR:
-        return -1;
+        return locale_return_number( locale_strings[locale->scalendartype + 2], type, buffer, len );
 
     case LOCALE_IFIRSTDAYOFWEEK:
-        return -1;
+        return locale_return_number( (locale->ifirstdayofweek + 6) % 7, type, buffer, len );
 
     case LOCALE_IFIRSTWEEKOFYEAR:
-        return -1;
+        return locale_return_number( locale->ifirstweekofyear, type, buffer, len );
 
     case LOCALE_SMONTHNAME13:
         return locale_return_strarray( ((type & LOCALE_RETURN_GENITIVE_NAMES) && locale->sgenitivemonth) ?
@@ -1281,10 +1389,11 @@ static int get_locale_info( const NLS_LOCALE_DATA *locale, LCID lcid, LCTYPE typ
         return locale_return_number( locale->idefaultebcdiccodepage, type, buffer, len );
 
     case LOCALE_SSORTNAME:
-        return -1;
+        sort = get_locale_sortname( lcid );
+        return locale_return_data( sort, wcslen(sort) + 1, type, buffer, len );
 
     case LOCALE_IDIGITSUBSTITUTION:
-        return -1;
+        return locale_return_number( locale->idigitsubstitution, type, buffer, len );
     }
     SetLastError( ERROR_INVALID_FLAGS );
     return 0;
