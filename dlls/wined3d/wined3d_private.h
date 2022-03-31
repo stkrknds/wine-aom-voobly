@@ -3087,6 +3087,7 @@ enum wined3d_pci_device
     CARD_NVIDIA_GEFORCE_RTX2070     = 0x1f07,
     CARD_NVIDIA_GEFORCE_RTX2080     = 0x1e87,
     CARD_NVIDIA_GEFORCE_RTX2080TI   = 0x1e07,
+    CARD_NVIDIA_TESLA_T4            = 0x1eb8,
 
     CARD_REDHAT_VIRGL               = 0x1010,
 
@@ -4892,7 +4893,7 @@ enum wined3d_push_constants
 };
 
 #define WINED3D_CS_QUERY_POLL_INTERVAL  10u
-#define WINED3D_CS_QUEUE_SIZE           0x100000u
+#define WINED3D_CS_QUEUE_SIZE           0x400000u
 #define WINED3D_CS_SPIN_COUNT           10000000u
 #define WINED3D_CS_QUEUE_MASK           (WINED3D_CS_QUEUE_SIZE - 1)
 
