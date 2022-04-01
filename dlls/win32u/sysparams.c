@@ -230,6 +230,8 @@ static struct list monitors = LIST_INIT(monitors);
 static INT64 last_query_display_time;
 static pthread_mutex_t display_lock = PTHREAD_MUTEX_INITIALIZER;
 
+BOOL enable_thunk_lock = FALSE;
+
 static struct monitor virtual_monitor =
 {
     .handle = NULLDRV_DEFAULT_HMONITOR,
@@ -1504,6 +1506,14 @@ POINT map_dpi_point( POINT pt, UINT dpi_from, UINT dpi_to )
         pt.y = muldiv( pt.y, dpi_to, dpi_from );
     }
     return pt;
+}
+
+/**********************************************************************
+ *              point_phys_to_win_dpi
+ */
+POINT point_phys_to_win_dpi( HWND hwnd, POINT pt )
+{
+    return map_dpi_point( pt, get_win_monitor_dpi( hwnd ), get_dpi_for_window( hwnd ));
 }
 
 /* map value from system dpi to standard 96 dpi for storing in the registry */
@@ -4634,6 +4644,8 @@ ULONG_PTR WINAPI NtUserCallNoParam( ULONG code )
     /* temporary exports */
     case NtUserExitingThread:
         exiting_thread_id = GetCurrentThreadId();
+    case NtUserProcessSentMessages:
+        process_sent_messages();
         return 0;
     case NtUserThreadDetach:
         thread_detach();
@@ -4659,6 +4671,9 @@ ULONG_PTR WINAPI NtUserCallOneParam( ULONG_PTR arg, ULONG code )
         return dispatch_message( (const MSG *)arg, TRUE );
     case NtUserEnableDC:
         return set_dce_flags( UlongToHandle(arg), DCHF_ENABLEDC );
+    case NtUserEnableThunkLock:
+        enable_thunk_lock = arg;
+        return 0;
     case NtUserGetClipCursor:
         return get_clip_cursor( (RECT *)arg );
     case NtUserGetCursorPos:
@@ -4736,6 +4751,8 @@ ULONG_PTR WINAPI NtUserCallTwoParam( ULONG_PTR arg1, ULONG_PTR arg2, ULONG code 
         return mirror_window_region( UlongToHandle(arg1), UlongToHandle(arg2) );
     case NtUserMonitorFromRect:
         return HandleToUlong( monitor_from_rect( (const RECT *)arg1, arg2, get_thread_dpi() ));
+    case NtUserReplyMessage:
+        return reply_message_result( arg1, (MSG *)arg2 );
     case NtUserSetIconParam:
         return set_icon_param( UlongToHandle(arg1), arg2 );
     case NtUserUnhookWindowsHook:

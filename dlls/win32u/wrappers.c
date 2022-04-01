@@ -903,6 +903,12 @@ INT WINAPI NtUserGetKeyNameText( LONG lparam, WCHAR *buffer, INT size )
     return unix_funcs->pNtUserGetKeyNameText( lparam, buffer, size );
 }
 
+BOOL WINAPI NtUserGetMessage( MSG *msg, HWND hwnd, UINT first, UINT last )
+{
+    if (!unix_funcs) return FALSE;
+    return unix_funcs->pNtUserGetMessage( msg, hwnd, first, last );
+}
+
 BOOL WINAPI NtUserGetUpdateRect( HWND hwnd, RECT *rect, BOOL erase )
 {
     if (!unix_funcs) return FALSE;
@@ -956,6 +962,12 @@ BOOL WINAPI NtUserMessageCall( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 {
     if (!unix_funcs) return 0;
     return unix_funcs->pNtUserMessageCall( hwnd, msg, wparam, lparam, result_info, type, ansi );
+}
+
+BOOL WINAPI NtUserPeekMessage( MSG *msg_out, HWND hwnd, UINT first, UINT last, UINT flags )
+{
+    if (!unix_funcs) return FALSE;
+    return unix_funcs->pNtUserPeekMessage( msg_out, hwnd, first, last, flags );
 }
 
 BOOL WINAPI NtUserRedrawWindow( HWND hwnd, const RECT *rect, HRGN hrgn, UINT flags )

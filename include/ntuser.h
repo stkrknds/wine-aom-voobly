@@ -28,12 +28,14 @@ enum
 {
     /* user32 callbacks */
     NtUserCallEnumDisplayMonitor,
+    NtUserCallSendAsyncCallback,
     NtUserCallWinEventHook,
     NtUserCallWindowProc,
     NtUserCallWindowsHook,
     NtUserLoadDriver,
     /* win16 hooks */
     NtUserCallFreeIcon,
+    NtUserThunkLock,
     /* Vulkan support */
     NtUserCallVulkanDebugReportCallback,
     NtUserCallVulkanDebugUtilsCallback,
@@ -48,6 +50,16 @@ struct enum_display_monitor_params
     HDC hdc;
     RECT rect;
     LPARAM lparam;
+};
+
+/* NtUserCallSendAsyncCallback params */
+struct send_async_params
+{
+    SENDASYNCPROC callback;
+    HWND hwnd;
+    UINT msg;
+    ULONG_PTR data;
+    LRESULT result;
 };
 
 /* NtUserCallWinEventHook params */
@@ -89,6 +101,7 @@ struct win_proc_params
     BOOL ansi;
     BOOL ansi_dst;
     BOOL is_dialog;
+    BOOL needs_unpack;
     enum wm_char_mapping mapping;
     DPI_AWARENESS_CONTEXT dpi_awareness;
     WNDPROC procA;
@@ -127,6 +140,7 @@ enum
     NtUserReleaseCapture,
     /* temporary exports */
     NtUserExitingThread,
+    NtUserProcessSentMessages,
     NtUserThreadDetach,
 };
 
@@ -137,6 +151,7 @@ enum
     NtUserCreateCursorIcon,
     NtUserDispatchMessageA,
     NtUserEnableDC,
+    NtUserEnableThunkLock,
     NtUserGetClipCursor,
     NtUserGetCursorPos,
     NtUserGetIconParam,
@@ -167,6 +182,7 @@ enum
     NtUserGetSystemMetricsForDpi,
     NtUserMirrorRgn,
     NtUserMonitorFromRect,
+    NtUserReplyMessage,
     NtUserSetIconParam,
     NtUserUnhookWindowsHook,
     /* temporary exports */
@@ -310,6 +326,158 @@ enum wine_internal_message
     WM_WINE_LAST_DRIVER_MSG = 0x80001fff
 };
 
+/* the various structures that can be sent in messages, in platform-independent layout */
+struct packed_CREATESTRUCTW
+{
+    ULONGLONG lpCreateParams;
+    ULONGLONG hInstance;
+    UINT      hMenu;
+    DWORD     __pad1;
+    UINT      hwndParent;
+    DWORD     __pad2;
+    INT       cy;
+    INT       cx;
+    INT       y;
+    INT       x;
+    LONG      style;
+    ULONGLONG lpszName;
+    ULONGLONG lpszClass;
+    DWORD     dwExStyle;
+    DWORD     __pad3;
+};
+
+struct packed_DRAWITEMSTRUCT
+{
+    UINT      CtlType;
+    UINT      CtlID;
+    UINT      itemID;
+    UINT      itemAction;
+    UINT      itemState;
+    UINT      hwndItem;
+    DWORD     __pad1;
+    UINT      hDC;
+    DWORD     __pad2;
+    RECT      rcItem;
+    ULONGLONG itemData;
+};
+
+struct packed_MEASUREITEMSTRUCT
+{
+    UINT      CtlType;
+    UINT      CtlID;
+    UINT      itemID;
+    UINT      itemWidth;
+    UINT      itemHeight;
+    ULONGLONG itemData;
+};
+
+struct packed_DELETEITEMSTRUCT
+{
+    UINT      CtlType;
+    UINT      CtlID;
+    UINT      itemID;
+    UINT      hwndItem;
+    DWORD     __pad;
+    ULONGLONG itemData;
+};
+
+struct packed_COMPAREITEMSTRUCT
+{
+    UINT      CtlType;
+    UINT      CtlID;
+    UINT      hwndItem;
+    DWORD     __pad1;
+    UINT      itemID1;
+    ULONGLONG itemData1;
+    UINT      itemID2;
+    ULONGLONG itemData2;
+    DWORD     dwLocaleId;
+    DWORD     __pad2;
+};
+
+struct packed_WINDOWPOS
+{
+    UINT      hwnd;
+    DWORD     __pad1;
+    UINT      hwndInsertAfter;
+    DWORD     __pad2;
+    INT       x;
+    INT       y;
+    INT       cx;
+    INT       cy;
+    UINT      flags;
+    DWORD     __pad3;
+};
+
+struct packed_COPYDATASTRUCT
+{
+    ULONGLONG dwData;
+    DWORD     cbData;
+    ULONGLONG lpData;
+};
+
+struct packed_HELPINFO
+{
+    UINT      cbSize;
+    INT       iContextType;
+    INT       iCtrlId;
+    UINT      hItemHandle;
+    DWORD     __pad;
+    ULONGLONG dwContextId;
+    POINT     MousePos;
+};
+
+struct packed_NCCALCSIZE_PARAMS
+{
+    RECT      rgrc[3];
+    ULONGLONG __pad1;
+    UINT      hwnd;
+    DWORD     __pad2;
+    UINT      hwndInsertAfter;
+    DWORD     __pad3;
+    INT       x;
+    INT       y;
+    INT       cx;
+    INT       cy;
+    UINT      flags;
+    DWORD     __pad4;
+};
+
+struct packed_MSG
+{
+    UINT      hwnd;
+    DWORD     __pad1;
+    UINT      message;
+    ULONGLONG wParam;
+    ULONGLONG lParam;
+    DWORD     time;
+    POINT     pt;
+    DWORD     __pad2;
+};
+
+struct packed_MDINEXTMENU
+{
+    UINT      hmenuIn;
+    DWORD     __pad1;
+    UINT      hmenuNext;
+    DWORD     __pad2;
+    UINT      hwndNext;
+    DWORD     __pad3;
+};
+
+struct packed_MDICREATESTRUCTW
+{
+    ULONGLONG szClass;
+    ULONGLONG szTitle;
+    ULONGLONG hOwner;
+    INT       x;
+    INT       y;
+    INT       cx;
+    INT       cy;
+    DWORD     style;
+    ULONGLONG lParam;
+};
+
 
 HKL     WINAPI NtUserActivateKeyboardLayout( HKL layout, UINT flags );
 BOOL    WINAPI NtUserAddClipboardFormatListener( HWND hwnd );
@@ -391,6 +559,7 @@ UINT    WINAPI NtUserGetKeyboardLayoutList( INT size, HKL *layouts );
 BOOL    WINAPI NtUserGetKeyboardLayoutName( WCHAR *name );
 BOOL    WINAPI NtUserGetKeyboardState( BYTE *state );
 BOOL    WINAPI NtUserGetLayeredWindowAttributes( HWND hwnd, COLORREF *key, BYTE *alpha, DWORD *flags );
+BOOL    WINAPI NtUserGetMessage( MSG *msg, HWND hwnd, UINT first, UINT last );
 int     WINAPI NtUserGetMouseMovePointsEx( UINT size, MOUSEMOVEPOINT *ptin, MOUSEMOVEPOINT *ptout,
                                            int count, DWORD resolution );
 BOOL    WINAPI NtUserGetObjectInformation( HANDLE handle, INT index, void *info,
@@ -422,6 +591,7 @@ HWINSTA WINAPI NtUserOpenWindowStation( OBJECT_ATTRIBUTES *attr, ACCESS_MASK acc
 BOOL    WINAPI NtUserSetObjectInformation( HANDLE handle, INT index, void *info, DWORD len );
 HDESK   WINAPI NtUserOpenDesktop( OBJECT_ATTRIBUTES *attr, DWORD flags, ACCESS_MASK access );
 HDESK   WINAPI NtUserOpenInputDesktop( DWORD flags, BOOL inherit, ACCESS_MASK access );
+BOOL    WINAPI NtUserPeekMessage( MSG *msg_out, HWND hwnd, UINT first, UINT last, UINT flags );
 BOOL    WINAPI NtUserRedrawWindow( HWND hwnd, const RECT *rect, HRGN hrgn, UINT flags );
 ATOM    WINAPI NtUserRegisterClassExWOW( const WNDCLASSEXW *wc, UNICODE_STRING *name, UNICODE_STRING *version,
                                          struct client_menu_name *client_menu_name, DWORD fnid, DWORD flags,

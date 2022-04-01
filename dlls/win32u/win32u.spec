@@ -955,7 +955,7 @@
 @ stub NtUserGetMenuBarInfo
 @ stub NtUserGetMenuIndex
 @ stub NtUserGetMenuItemRect
-@ stub NtUserGetMessage
+@ stdcall NtUserGetMessage(ptr long long long)
 @ stdcall -syscall NtUserGetMouseMovePointsEx(long ptr ptr long long)
 @ stdcall -syscall NtUserGetObjectInformation(long long long long ptr)
 @ stub NtUserGetOemBitmapSize
@@ -1098,7 +1098,7 @@
 @ stub NtUserPaintDesktop
 @ stub NtUserPaintMenuBar
 @ stub NtUserPaintMonitor
-@ stub NtUserPeekMessage
+@ stdcall NtUserPeekMessage(ptr long long long long)
 @ stub NtUserPerMonitorDPIPhysicalToLogicalPoint
 @ stub NtUserPhysicalToLogicalDpiPointForWindow
 @ stub NtUserPhysicalToLogicalPoint

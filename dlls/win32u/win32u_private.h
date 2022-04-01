@@ -228,6 +228,7 @@ struct unix_funcs
                                            UNICODE_STRING *res_name, DWORD *bpp, LONG unk );
     INT      (WINAPI *pNtUserGetKeyNameText)( LONG lparam, WCHAR *buffer, INT size );
     UINT     (WINAPI *pNtUserGetKeyboardLayoutList)( INT size, HKL *layouts );
+    BOOL     (WINAPI *pNtUserGetMessage)( MSG *msg, HWND hwnd, UINT first, UINT last );
     INT      (WINAPI *pNtUserGetPriorityClipboardFormat)( UINT *list, INT count );
     DWORD    (WINAPI *pNtUserGetQueueStatus)( UINT flags );
     BOOL     (WINAPI *pNtUserGetUpdateRect)( HWND hwnd, RECT *rect, BOOL erase );
@@ -238,6 +239,7 @@ struct unix_funcs
     BOOL     (WINAPI *pNtUserMessageCall)( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
                                            ULONG_PTR result_info, DWORD type, BOOL ansi );
     BOOL     (WINAPI *pNtUserMoveWindow)( HWND hwnd, INT x, INT y, INT cx, INT cy, BOOL repaint );
+    BOOL     (WINAPI *pNtUserPeekMessage)( MSG *msg_out, HWND hwnd, UINT first, UINT last, UINT flags );
     BOOL     (WINAPI *pNtUserRedrawWindow)( HWND hwnd, const RECT *rect, HRGN hrgn, UINT flags );
     ATOM     (WINAPI *pNtUserRegisterClassExWOW)( const WNDCLASSEXW *wc, UNICODE_STRING *name,
                                                   UNICODE_STRING *version,
@@ -344,9 +346,12 @@ extern HMENU get_menu( HWND hwnd ) DECLSPEC_HIDDEN;
 extern LRESULT dispatch_message( const MSG *msg, BOOL ansi ) DECLSPEC_HIDDEN;
 extern BOOL kill_system_timer( HWND hwnd, UINT_PTR id ) DECLSPEC_HIDDEN;
 extern LRESULT post_message( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam ) DECLSPEC_HIDDEN;
+extern void process_sent_messages(void) DECLSPEC_HIDDEN;
+extern BOOL reply_message_result( LRESULT result, MSG *msg ) DECLSPEC_HIDDEN;
 extern LRESULT send_message( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam ) DECLSPEC_HIDDEN;
 
 /* sysparams.c */
+extern BOOL enable_thunk_lock DECLSPEC_HIDDEN;
 extern RECT get_display_rect( const WCHAR *display ) DECLSPEC_HIDDEN;
 extern UINT get_monitor_dpi( HMONITOR monitor ) DECLSPEC_HIDDEN;
 extern BOOL get_monitor_info( HMONITOR handle, MONITORINFO *info ) DECLSPEC_HIDDEN;
@@ -360,6 +365,7 @@ extern RECT get_virtual_screen_rect( UINT dpi ) DECLSPEC_HIDDEN;
 extern BOOL is_exiting_thread( DWORD tid ) DECLSPEC_HIDDEN;
 extern POINT map_dpi_point( POINT pt, UINT dpi_from, UINT dpi_to ) DECLSPEC_HIDDEN;
 extern RECT map_dpi_rect( RECT rect, UINT dpi_from, UINT dpi_to ) DECLSPEC_HIDDEN;
+extern POINT point_phys_to_win_dpi( HWND hwnd, POINT pt ) DECLSPEC_HIDDEN;
 extern HMONITOR monitor_from_point( POINT pt, DWORD flags, UINT dpi ) DECLSPEC_HIDDEN;
 extern HMONITOR monitor_from_rect( const RECT *rect, DWORD flags, UINT dpi ) DECLSPEC_HIDDEN;
 extern HMONITOR monitor_from_window( HWND hwnd, DWORD flags, UINT dpi ) DECLSPEC_HIDDEN;
