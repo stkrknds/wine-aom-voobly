@@ -61,6 +61,9 @@ DWORD WINAPI GetIfTable(PMIB_IFTABLE pIfTable, PULONG pdwSize, BOOL bOrder);
 DWORD WINAPI GetIpAddrTable(PMIB_IPADDRTABLE pIpAddrTable, PULONG pdwSize,
  BOOL bOrder);
 
+DWORD WINAPI GetIpAddrTable2(PMIB_IPADDRTABLE pIpAddrTable, PULONG pdwSize,
+ BOOL bOrder);
+
 DWORD WINAPI GetIpNetTable(PMIB_IPNETTABLE pIpNetTable, PULONG pdwSize,
  BOOL bOrder);
 
