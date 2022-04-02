@@ -100,6 +100,7 @@
 @ stdcall GetInterfaceInfo( ptr ptr )
 #@ stub GetInvertedIfStackTable
 @ stdcall GetIpAddrTable( ptr ptr long )
+@ stdcall GetIpAddrTable2( ptr ptr long )
 @ stub GetIpAddrTableFromStack
 #@ stub GetIpErrorString
 #@ stub GetIpForwardEntry2
