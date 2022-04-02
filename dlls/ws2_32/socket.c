@@ -2287,7 +2287,7 @@ INT WINAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in_buff, DWORD in_size, LPVOID 
         SetLastError( ret );
         return ret ? -1 : 0;
     }
-
+            
     case SIO_ROUTING_INTERFACE_QUERY:
     {
         struct sockaddr *daddr = (struct sockaddr *)in_buff;
@@ -2310,14 +2310,14 @@ INT WINAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in_buff, DWORD in_size, LPVOID 
             SetLastError( WSAEAFNOSUPPORT );
             return -1;
         }
-        size = 76;
-        if (GetBestRoute( daddr_in->sin_addr.S_un.S_addr, 0, &row ) != NOERROR)
+        if (GetBestRoute( daddr_in->sin_addr.S_un.S_addr, 0, &row ) != NOERROR ||
+            GetIpAddrTable2( NULL, &size, FALSE ) != ERROR_INSUFFICIENT_BUFFER)
         {
             SetLastError( WSAEFAULT );
             return -1;
         }
         ipAddrTable = malloc( size );
-        if (GetIpAddrTable( ipAddrTable, &size, FALSE ))
+        if (GetIpAddrTable2( ipAddrTable, &size, FALSE ))
         {
             free( ipAddrTable );
             SetLastError( WSAEFAULT );
@@ -2331,7 +2331,10 @@ INT WINAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in_buff, DWORD in_size, LPVOID 
         }
         if (found_index == ipAddrTable->dwNumEntries)
         {
-            found_index -= 1;
+            ERR( "no matching IP address for interface %lu\n", row.dwForwardIfIndex );
+            free( ipAddrTable );
+            SetLastError( WSAEFAULT );
+            return -1;
         }
         saddr_in->sin_family = AF_INET;
         saddr_in->sin_addr.S_un.S_addr = ipAddrTable->table[found_index].dwAddr;
