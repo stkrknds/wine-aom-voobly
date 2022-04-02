@@ -169,7 +169,6 @@ enum
     NtUserGetDeskPattern,
     NtUserGetWinProcPtr,
     NtUserHandleInternalMessage,
-    NtUserIncrementKeyStateCounter,
     NtUserLock,
     NtUserSetCallbacks,
     NtUserSpyGetVKeyName,
@@ -586,6 +585,8 @@ UINT    WINAPI NtUserMapVirtualKeyEx( UINT code, UINT type, HKL layout );
 BOOL    WINAPI NtUserMessageCall( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
                                   ULONG_PTR result_info, DWORD type, BOOL ansi );
 BOOL    WINAPI NtUserMoveWindow( HWND hwnd, INT x, INT y, INT cx, INT cy, BOOL repaint );
+DWORD   WINAPI NtUserMsgWaitForMultipleObjectsEx( DWORD count, const HANDLE *handles,
+                                                  DWORD timeout, DWORD mask, DWORD flags );
 void    WINAPI NtUserNotifyWinEvent( DWORD event, HWND hwnd, LONG object_id, LONG child_id );
 HWINSTA WINAPI NtUserOpenWindowStation( OBJECT_ATTRIBUTES *attr, ACCESS_MASK access );
 BOOL    WINAPI NtUserSetObjectInformation( HANDLE handle, INT index, void *info, DWORD len );
@@ -603,6 +604,7 @@ HANDLE  WINAPI NtUserRemoveProp( HWND hwnd, const WCHAR *str );
 BOOL    WINAPI NtUserScrollDC( HDC hdc, INT dx, INT dy, const RECT *scroll, const RECT *clip,
                                HRGN ret_update_rgn, RECT *update_rect );
 HPALETTE WINAPI NtUserSelectPalette( HDC hdc, HPALETTE palette, WORD force_background );
+UINT     WINAPI NtUserSendInput( UINT count, INPUT *inputs, int size );
 HWND     WINAPI NtUserSetActiveWindow( HWND hwnd );
 HWND     WINAPI NtUserSetCapture( HWND hwnd );
 DWORD    WINAPI NtUserSetClassLong( HWND hwnd, INT offset, LONG newval, BOOL ansi );

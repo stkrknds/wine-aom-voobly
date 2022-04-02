@@ -38,22 +38,22 @@ struct user_callbacks
     BOOL (WINAPI *pEndMenu)(void);
     BOOL (WINAPI *pHideCaret)( HWND hwnd );
     BOOL (WINAPI *pPostMessageW)( HWND, UINT, WPARAM, LPARAM );
-    UINT (WINAPI *pSendInput)( UINT count, INPUT *inputs, int size );
     LRESULT (WINAPI *pSendMessageTimeoutW)( HWND, UINT, WPARAM, LPARAM, UINT, UINT, PDWORD_PTR );
     LRESULT (WINAPI *pSendMessageA)( HWND, UINT, WPARAM, LPARAM );
     LRESULT (WINAPI *pSendMessageW)( HWND, UINT, WPARAM, LPARAM );
     BOOL (WINAPI *pSendNotifyMessageW)( HWND, UINT, WPARAM, LPARAM );
     BOOL (WINAPI *pSetSystemMenu)( HWND hwnd, HMENU menu );
     BOOL (WINAPI *pShowCaret)( HWND hwnd );
-    DWORD (WINAPI *pWaitForInputIdle)( HANDLE, DWORD );
     void (CDECL *free_menu_items)( void *ptr );
     void (CDECL *free_win_ptr)( struct tagWND *win );
     HWND (CDECL *is_menu_active)(void);
     void (CDECL *notify_ime)( HWND hwnd, UINT param );
+    BOOL (CDECL *post_dde_message)( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, DWORD dest_tid,
+                                    DWORD type );
     BOOL (CDECL *process_hardware_message)( MSG *msg, UINT hw_id, const struct hardware_msg_data *msg_data,
                                             HWND hwnd_filter, UINT first, UINT last, BOOL remove );
+    BOOL (CDECL *rawinput_device_get_usages)(HANDLE handle, USHORT *usage_page, USHORT *usage);
     void (CDECL *register_builtin_classes)(void);
-    LRESULT (WINAPI *send_ll_message)( DWORD, DWORD, UINT, WPARAM, LPARAM, UINT, UINT, PDWORD_PTR );
     BOOL (CDECL *set_menu)( HWND hwnd, HMENU menu );
     void (WINAPI *set_standard_scroll_painted)( HWND hwnd, INT bar, BOOL visible );
     void (CDECL *set_user_driver)( void *, UINT );

@@ -239,6 +239,8 @@ struct unix_funcs
     BOOL     (WINAPI *pNtUserMessageCall)( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
                                            ULONG_PTR result_info, DWORD type, BOOL ansi );
     BOOL     (WINAPI *pNtUserMoveWindow)( HWND hwnd, INT x, INT y, INT cx, INT cy, BOOL repaint );
+    DWORD    (WINAPI *pNtUserMsgWaitForMultipleObjectsEx)( DWORD count, const HANDLE *handles,
+                                                           DWORD timeout, DWORD mask, DWORD flags );
     BOOL     (WINAPI *pNtUserPeekMessage)( MSG *msg_out, HWND hwnd, UINT first, UINT last, UINT flags );
     BOOL     (WINAPI *pNtUserRedrawWindow)( HWND hwnd, const RECT *rect, HRGN hrgn, UINT flags );
     ATOM     (WINAPI *pNtUserRegisterClassExWOW)( const WNDCLASSEXW *wc, UNICODE_STRING *name,
@@ -250,6 +252,7 @@ struct unix_funcs
     BOOL     (WINAPI *pNtUserScrollDC)( HDC hdc, INT dx, INT dy, const RECT *scroll, const RECT *clip,
                                         HRGN ret_update_rgn, RECT *update_rect );
     HPALETTE (WINAPI *pNtUserSelectPalette)( HDC hdc, HPALETTE hpal, WORD bkg );
+    UINT     (WINAPI *pNtUserSendInput)( UINT count, INPUT *inputs, int size );
     HWND     (WINAPI *pNtUserSetActiveWindow)( HWND hwnd );
     HWND     (WINAPI *pNtUserSetCapture)( HWND hwnd );
     DWORD    (WINAPI *pNtUserSetClassLong)( HWND hwnd, INT offset, LONG newval, BOOL ansi );
@@ -284,6 +287,7 @@ struct unix_funcs
                                                    COLORREF key, const BLENDFUNCTION *blend,
                                                    DWORD flags, const RECT *dirty );
     WORD     (WINAPI *pNtUserVkKeyScanEx)( WCHAR chr, HKL layout );
+    DWORD    (WINAPI *pNtUserWaitForInputIdle)( HANDLE process, DWORD timeout, BOOL wow );
     HWND     (WINAPI *pNtUserWindowFromPoint)( LONG x, LONG y );
 
     /* Wine-specific functions */
@@ -295,6 +299,7 @@ struct unix_funcs
     BOOL (CDECL *get_icm_profile)( HDC hdc, BOOL allow_default, DWORD *size, WCHAR *filename );
     const struct vulkan_funcs * (CDECL *get_vulkan_driver)( UINT version );
     struct opengl_funcs * (CDECL *get_wgl_driver)( HDC hdc, UINT version );
+    BOOL (CDECL *wine_send_input)( HWND hwnd, const INPUT *input, const RAWINPUT *rawinput );
     void (CDECL *set_display_driver)( struct user_driver_funcs *funcs, UINT version );
 };
 
@@ -348,6 +353,11 @@ extern BOOL kill_system_timer( HWND hwnd, UINT_PTR id ) DECLSPEC_HIDDEN;
 extern LRESULT post_message( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam ) DECLSPEC_HIDDEN;
 extern void process_sent_messages(void) DECLSPEC_HIDDEN;
 extern BOOL reply_message_result( LRESULT result, MSG *msg ) DECLSPEC_HIDDEN;
+extern NTSTATUS send_hardware_message( HWND hwnd, const INPUT *input, const RAWINPUT *rawinput,
+                                       UINT flags ) DECLSPEC_HIDDEN;
+extern LRESULT send_internal_message_timeout( DWORD dest_pid, DWORD dest_tid, UINT msg, WPARAM wparam,
+                                              LPARAM lparam, UINT flags, UINT timeout,
+                                              PDWORD_PTR res_ptr ) DECLSPEC_HIDDEN;
 extern LRESULT send_message( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam ) DECLSPEC_HIDDEN;
 
 /* sysparams.c */

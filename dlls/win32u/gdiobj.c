@@ -1191,6 +1191,7 @@ static struct unix_funcs unix_funcs =
     NtUserMapVirtualKeyEx,
     NtUserMessageCall,
     NtUserMoveWindow,
+    NtUserMsgWaitForMultipleObjectsEx,
     NtUserPeekMessage,
     NtUserRedrawWindow,
     NtUserRegisterClassExWOW,
@@ -1198,6 +1199,7 @@ static struct unix_funcs unix_funcs =
     NtUserReleaseDC,
     NtUserScrollDC,
     NtUserSelectPalette,
+    NtUserSendInput,
     NtUserSetActiveWindow,
     NtUserSetCapture,
     NtUserSetClassLong,
@@ -1225,6 +1227,7 @@ static struct unix_funcs unix_funcs =
     NtUserUnregisterHotKey,
     NtUserUpdateLayeredWindow,
     NtUserVkKeyScanEx,
+    NtUserWaitForInputIdle,
     NtUserWindowFromPoint,
 
     SetDIBits,
@@ -1233,6 +1236,7 @@ static struct unix_funcs unix_funcs =
     __wine_get_icm_profile,
     __wine_get_vulkan_driver,
     __wine_get_wgl_driver,
+    __wine_send_input,
     __wine_set_display_driver,
 };
 

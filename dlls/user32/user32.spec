@@ -544,7 +544,7 @@
 @ stdcall MonitorFromWindow(long long)
 @ stdcall MoveWindow(long long long long long long) NtUserMoveWindow
 @ stdcall MsgWaitForMultipleObjects(long ptr long long long)
-@ stdcall MsgWaitForMultipleObjectsEx(long ptr long long long)
+@ stdcall MsgWaitForMultipleObjectsEx(long ptr long long long) NtUserMsgWaitForMultipleObjectsEx
 @ stdcall NotifyWinEvent(long long long long) NtUserNotifyWinEvent
 @ stdcall OemKeyScan(long)
 @ stdcall OemToCharA(str ptr)
@@ -635,7 +635,7 @@
 @ stdcall SendDlgItemMessageW(long long long long long)
 @ stdcall SendIMEMessageExA(long long)
 @ stdcall SendIMEMessageExW(long long)
-@ stdcall SendInput(long ptr long)
+@ stdcall SendInput(long ptr long) NtUserSendInput
 @ stdcall SendMessageA(long long long long)
 @ stdcall SendMessageCallbackA(long long long long ptr long)
 @ stdcall SendMessageCallbackW(long long long long ptr long)
@@ -838,6 +838,5 @@
 # All functions must be prefixed with '__wine_' (for internal functions)
 # or 'wine_' (for user-visible functions) to avoid namespace conflicts.
 #
-@ cdecl __wine_send_input(long ptr ptr)
 @ cdecl __wine_set_pixel_format(long long)
 @ cdecl __wine_set_user_driver(ptr long)

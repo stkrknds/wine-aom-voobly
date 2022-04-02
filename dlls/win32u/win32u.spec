@@ -1085,7 +1085,7 @@
 @ stub NtUserModifyUserStartupInfoFlags
 @ stub NtUserModifyWindowTouchCapability
 @ stdcall NtUserMoveWindow(long long long long long long)
-@ stub NtUserMsgWaitForMultipleObjectsEx
+@ stdcall NtUserMsgWaitForMultipleObjectsEx(long ptr long long long)
 @ stub NtUserNavigateFocus
 @ stub NtUserNotifyIMEStatus
 @ stub NtUserNotifyProcessCreate
@@ -1159,7 +1159,7 @@
 @ stub NtUserScrollWindowEx
 @ stdcall NtUserSelectPalette(long long long)
 @ stub NtUserSendEventMessage
-@ stub NtUserSendInput
+@ stdcall NtUserSendInput(long ptr long)
 @ stub NtUserSendInteractiveControlHapticsReport
 @ stub NtUserSetActivationFilter
 @ stub NtUserSetActiveProcessForMonitor
@@ -1305,7 +1305,7 @@
 @ stdcall NtUserVkKeyScanEx(long long)
 @ stub NtUserWOWCleanup
 @ stub NtUserWaitAvailableMessageEx
-@ stub NtUserWaitForInputIdle
+@ stdcall NtUserWaitForInputIdle(long long long)
 @ stub NtUserWaitForMsgAndEvent
 @ stub NtUserWaitForRedirectionStartComplete
 @ stub NtUserWaitMessage
@@ -1321,6 +1321,7 @@
 # Wine internal extensions
 
 # Graphics drivers
+@ cdecl __wine_send_input(long ptr ptr)
 @ cdecl __wine_set_display_driver(ptr long)
 
 # OpenGL

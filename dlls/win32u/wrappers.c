@@ -964,6 +964,13 @@ BOOL WINAPI NtUserMessageCall( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
     return unix_funcs->pNtUserMessageCall( hwnd, msg, wparam, lparam, result_info, type, ansi );
 }
 
+DWORD WINAPI NtUserMsgWaitForMultipleObjectsEx( DWORD count, const HANDLE *handles,
+                                                DWORD timeout, DWORD mask, DWORD flags )
+{
+    if (!unix_funcs) return 0;
+    return unix_funcs->pNtUserMsgWaitForMultipleObjectsEx( count, handles, timeout, mask, flags );
+}
+
 BOOL WINAPI NtUserPeekMessage( MSG *msg_out, HWND hwnd, UINT first, UINT last, UINT flags )
 {
     if (!unix_funcs) return FALSE;
@@ -1007,6 +1014,12 @@ HPALETTE WINAPI NtUserSelectPalette( HDC hdc, HPALETTE hpal, WORD bkg )
 {
     if (!unix_funcs) return 0;
     return unix_funcs->pNtUserSelectPalette( hdc, hpal, bkg );
+}
+
+UINT WINAPI NtUserSendInput( UINT count, INPUT *inputs, int size )
+{
+    if (!unix_funcs) return 0;
+    return unix_funcs->pNtUserSendInput( count, inputs, size );
 }
 
 HWND WINAPI NtUserSetActiveWindow( HWND hwnd )
@@ -1177,6 +1190,12 @@ WORD WINAPI NtUserVkKeyScanEx( WCHAR chr, HKL layout )
     return unix_funcs->pNtUserVkKeyScanEx( chr, layout );
 }
 
+DWORD WINAPI NtUserWaitForInputIdle( HANDLE process, DWORD timeout, BOOL wow )
+{
+    if (!unix_funcs) return 0;
+    return unix_funcs->pNtUserWaitForInputIdle( process, timeout, wow );
+}
+
 HWND WINAPI NtUserWindowFromPoint( LONG x, LONG y )
 {
     if (!unix_funcs) return 0;
@@ -1219,6 +1238,12 @@ struct opengl_funcs * CDECL __wine_get_wgl_driver( HDC hdc, UINT version )
 {
     if (!unix_funcs) return NULL;
     return unix_funcs->get_wgl_driver( hdc, version );
+}
+
+BOOL CDECL __wine_send_input( HWND hwnd, const INPUT *input, const RAWINPUT *rawinput )
+{
+    if (!unix_funcs) return FALSE;
+    return unix_funcs->wine_send_input( hwnd, input, rawinput );
 }
 
 /***********************************************************************

@@ -1543,16 +1543,37 @@ void init_locale( HMODULE module )
     void *sort_ptr;
     WCHAR bufferW[LOCALE_NAME_MAX_LENGTH];
     DYNAMIC_TIME_ZONE_INFORMATION timezone;
+    const WCHAR *user_locale_name;
     DWORD count;
     SIZE_T size;
     HKEY hkey;
 
+    kernelbase_handle = module;
     load_locale_nls();
+
     NtQueryDefaultLocale( FALSE, &system_lcid );
     NtQueryDefaultLocale( FALSE, &user_lcid );
-    system_locale = get_locale_by_id( &system_lcid, 0 );
-    user_locale = get_locale_by_id( &user_lcid, 0 );
-    kernelbase_handle = module;
+    if (!(system_locale = get_locale_by_id( &system_lcid, 0 )))
+    {
+        if (GetEnvironmentVariableW( L"WINELOCALE", bufferW, ARRAY_SIZE(bufferW) ))
+        {
+            system_locale = get_locale_by_name( bufferW, &system_lcid );
+            if (system_lcid == LOCALE_CUSTOM_UNSPECIFIED) system_lcid = LOCALE_CUSTOM_DEFAULT;
+        }
+    }
+    if (!(user_locale = get_locale_by_id( &user_lcid, 0 )))
+    {
+        if (GetEnvironmentVariableW( L"WINEUSERLOCALE", bufferW, ARRAY_SIZE(bufferW) ))
+        {
+            user_locale = get_locale_by_name( bufferW, &user_lcid );
+            if (user_lcid == LOCALE_CUSTOM_UNSPECIFIED) user_lcid = LOCALE_CUSTOM_DEFAULT;
+        }
+        else
+        {
+            user_locale = system_locale;
+            user_lcid = system_lcid;
+        }
+    }
 
     if (GetEnvironmentVariableW( L"WINEUNIXCP", bufferW, ARRAY_SIZE(bufferW) ))
         unix_cp = wcstoul( bufferW, NULL, 10 );
@@ -1601,13 +1622,15 @@ void init_locale( HMODULE module )
     /* Update registry contents if the user locale has changed.
      * This simulates the action of the Windows control panel. */
 
+    user_locale_name = locale_strings + user_locale->sname + 1;
     count = sizeof(bufferW);
-    if (!RegQueryValueExW( intl_key, L"Locale", NULL, NULL, (BYTE *)bufferW, &count ))
+    if (!RegQueryValueExW( intl_key, L"LocaleName", NULL, NULL, (BYTE *)bufferW, &count ))
     {
-        if (wcstoul( bufferW, NULL, 16 ) == user_lcid) return;  /* already set correctly */
-        TRACE( "updating registry, locale changed %s -> %08lx\n", debugstr_w(bufferW), user_lcid );
+        if (!wcscmp( bufferW, user_locale_name )) return; /* unchanged */
+        TRACE( "updating registry, locale changed %s -> %s\n",
+               debugstr_w(bufferW), debugstr_w(user_locale_name) );
     }
-    else TRACE( "updating registry, locale changed none -> %08lx\n", user_lcid );
+    else TRACE( "updating registry, locale changed none -> %s\n", debugstr_w(user_locale_name) );
 
     update_locale_registry();
 

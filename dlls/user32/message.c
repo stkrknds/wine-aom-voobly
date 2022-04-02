@@ -1184,22 +1184,21 @@ static HGLOBAL dde_get_pair(HGLOBAL shm)
  *
  * Post a DDE message
  */
-static BOOL post_dde_message( struct packed_message *data, const struct send_message_info *info )
+BOOL post_dde_message( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, DWORD dest_tid, DWORD type )
 {
     void*       ptr = NULL;
     int         size = 0;
     UINT_PTR    uiLo, uiHi;
     LPARAM      lp;
     HGLOBAL     hunlock = 0;
-    int         i;
     DWORD       res;
     ULONGLONG   hpack;
 
-    if (!UnpackDDElParam( info->msg, info->lparam, &uiLo, &uiHi ))
+    if (!UnpackDDElParam( msg, lparam, &uiLo, &uiHi ))
         return FALSE;
 
-    lp = info->lparam;
-    switch (info->msg)
+    lp = lparam;
+    switch (msg)
     {
         /* DDE messages which don't require packing are:
          * WM_DDE_INITIATE
@@ -1216,7 +1215,8 @@ static BOOL post_dde_message( struct packed_message *data, const struct send_mes
             {
                 hpack = pack_ptr( h );
                 /* send back the value of h on the other side */
-                push_data( data, &hpack, sizeof(hpack) );
+                ptr = &hpack;
+                size = sizeof(hpack);
                 lp = uiLo;
                 TRACE( "send dde-ack %lx %08lx => %p\n", uiLo, uiHi, h );
             }
@@ -1231,17 +1231,15 @@ static BOOL post_dde_message( struct packed_message *data, const struct send_mes
     case WM_DDE_ADVISE:
     case WM_DDE_DATA:
     case WM_DDE_POKE:
-        size = 0;
         if (uiLo)
         {
             size = GlobalSize( (HGLOBAL)uiLo ) ;
-            if ((info->msg == WM_DDE_ADVISE && size < sizeof(DDEADVISE)) ||
-                (info->msg == WM_DDE_DATA   && size < FIELD_OFFSET(DDEDATA, Value)) ||
-                (info->msg == WM_DDE_POKE   && size < FIELD_OFFSET(DDEPOKE, Value))
-                )
-            return FALSE;
+            if ((msg == WM_DDE_ADVISE && size < sizeof(DDEADVISE)) ||
+                (msg == WM_DDE_DATA   && size < FIELD_OFFSET(DDEDATA, Value)) ||
+                (msg == WM_DDE_POKE   && size < FIELD_OFFSET(DDEPOKE, Value)))
+                return FALSE;
         }
-        else if (info->msg != WM_DDE_DATA) return FALSE;
+        else if (msg != WM_DDE_DATA) return FALSE;
 
         lp = uiHi;
         if (uiLo)
@@ -1252,37 +1250,35 @@ static BOOL post_dde_message( struct packed_message *data, const struct send_mes
                 TRACE("unused %d, fResponse %d, fRelease %d, fDeferUpd %d, fAckReq %d, cfFormat %d\n",
                        dde_data->unused, dde_data->fResponse, dde_data->fRelease,
                        dde_data->reserved, dde_data->fAckReq, dde_data->cfFormat);
-                push_data( data, ptr, size );
                 hunlock = (HGLOBAL)uiLo;
             }
         }
         TRACE( "send ddepack %u %lx\n", size, uiHi );
         break;
     case WM_DDE_EXECUTE:
-        if (info->lparam)
+        if (lparam)
         {
-            if ((ptr = GlobalLock( (HGLOBAL)info->lparam) ))
+            if ((ptr = GlobalLock( (HGLOBAL)lparam) ))
             {
-                push_data(data, ptr, GlobalSize( (HGLOBAL)info->lparam ));
+                size = GlobalSize( (HGLOBAL)lparam );
                 /* so that the other side can send it back on ACK */
-                lp = info->lparam;
-                hunlock = (HGLOBAL)info->lparam;
+                lp = lparam;
+                hunlock = (HGLOBAL)lparam;
             }
         }
         break;
     }
     SERVER_START_REQ( send_message )
     {
-        req->id      = info->dest_tid;
-        req->type    = info->type;
+        req->id      = dest_tid;
+        req->type    = type;
         req->flags   = 0;
-        req->win     = wine_server_user_handle( info->hwnd );
-        req->msg     = info->msg;
-        req->wparam  = info->wparam;
+        req->win     = wine_server_user_handle( hwnd );
+        req->msg     = msg;
+        req->wparam  = wparam;
         req->lparam  = lp;
         req->timeout = TIMEOUT_INFINITE;
-        for (i = 0; i < data->count; i++)
-            wine_server_add_data( req, data->data[i], data->size[i] );
+        if (size) wine_server_add_data( req, ptr, size );
         if ((res = wine_server_call( req )))
         {
             if (res == STATUS_INVALID_PARAMETER)
@@ -1292,7 +1288,7 @@ static BOOL post_dde_message( struct packed_message *data, const struct send_mes
                 SetLastError( RtlNtStatusToDosError(res) );
         }
         else
-            FreeDDElParam(info->msg, info->lparam);
+            FreeDDElParam( msg, lparam );
     }
     SERVER_END_REQ;
     if (hunlock) GlobalUnlock(hunlock);
@@ -1963,42 +1959,6 @@ static void wait_message_reply( UINT flags )
 
 
 /***********************************************************************
- *           wait_objects
- *
- * Wait for multiple objects including the server queue, with specific queue masks.
- */
-static DWORD wait_objects( DWORD count, const HANDLE *handles, DWORD timeout,
-                           DWORD wake_mask, DWORD changed_mask, DWORD flags )
-{
-    struct user_thread_info *thread_info = get_user_thread_info();
-    DWORD ret;
-
-    assert( count );  /* we must have at least the server queue */
-
-    flush_window_surfaces( TRUE );
-
-    if (thread_info->wake_mask != wake_mask || thread_info->changed_mask != changed_mask)
-    {
-        SERVER_START_REQ( set_queue_mask )
-        {
-            req->wake_mask    = wake_mask;
-            req->changed_mask = changed_mask;
-            req->skip_wait    = 0;
-            wine_server_call( req );
-        }
-        SERVER_END_REQ;
-        thread_info->wake_mask = wake_mask;
-        thread_info->changed_mask = changed_mask;
-    }
-
-    ret = wow_handlers.wait_message( count, handles, timeout, changed_mask, flags );
-
-    if (ret != WAIT_TIMEOUT) thread_info->wake_mask = thread_info->changed_mask = 0;
-    return ret;
-}
-
-
-/***********************************************************************
  *		put_message_in_queue
  *
  * Put a sent message into the destination queue.
@@ -2046,7 +2006,8 @@ static BOOL put_message_in_queue( const struct send_message_info *info, size_t *
     }
     else if (info->type == MSG_POSTED && info->msg >= WM_DDE_FIRST && info->msg <= WM_DDE_LAST)
     {
-        return post_dde_message( &data, info );
+        return post_dde_message( info->hwnd, info->msg, info->wparam, info->lparam,
+                                 info->dest_tid, info->type );
     }
 
     SERVER_START_REQ( send_message )
@@ -2211,164 +2172,6 @@ static BOOL send_message( struct send_message_info *info, DWORD_PTR *res_ptr, BO
 
     SPY_ExitMessage( SPY_RESULT_OK, info->hwnd, info->msg, result, info->wparam, info->lparam );
     thread_info->msg_source = prev_source;
-    if (ret && res_ptr) *res_ptr = result;
-    return ret;
-}
-
-
-/***********************************************************************
- *		send_hardware_message
- */
-NTSTATUS send_hardware_message( HWND hwnd, const INPUT *input, const RAWINPUT *rawinput, UINT flags )
-{
-    struct user_key_state_info *key_state_info = get_user_thread_info()->key_state;
-    struct send_message_info info;
-    int prev_x, prev_y, new_x, new_y;
-    INT counter = NtUserCallOneParam( 0, NtUserIncrementKeyStateCounter );
-    USAGE hid_usage_page, hid_usage;
-    NTSTATUS ret;
-    BOOL wait;
-
-    info.type     = MSG_HARDWARE;
-    info.dest_tid = 0;
-    info.hwnd     = hwnd;
-    info.flags    = 0;
-    info.timeout  = 0;
-
-    if (input->type == INPUT_HARDWARE && rawinput->header.dwType == RIM_TYPEHID)
-    {
-        if (input->u.hi.uMsg == WM_INPUT_DEVICE_CHANGE)
-        {
-            hid_usage_page = ((USAGE *)rawinput->data.hid.bRawData)[0];
-            hid_usage = ((USAGE *)rawinput->data.hid.bRawData)[1];
-        }
-        if (input->u.hi.uMsg == WM_INPUT)
-        {
-            if (!rawinput_device_get_usages( rawinput->header.hDevice, &hid_usage_page, &hid_usage ))
-            {
-                WARN( "unable to get HID usages for device %p\n", rawinput->header.hDevice );
-                return STATUS_INVALID_HANDLE;
-            }
-        }
-    }
-
-    SERVER_START_REQ( send_hardware_message )
-    {
-        req->win        = wine_server_user_handle( hwnd );
-        req->flags      = flags;
-        req->input.type = input->type;
-        switch (input->type)
-        {
-        case INPUT_MOUSE:
-            req->input.mouse.x     = input->u.mi.dx;
-            req->input.mouse.y     = input->u.mi.dy;
-            req->input.mouse.data  = input->u.mi.mouseData;
-            req->input.mouse.flags = input->u.mi.dwFlags;
-            req->input.mouse.time  = input->u.mi.time;
-            req->input.mouse.info  = input->u.mi.dwExtraInfo;
-            break;
-        case INPUT_KEYBOARD:
-            req->input.kbd.vkey  = input->u.ki.wVk;
-            req->input.kbd.scan  = input->u.ki.wScan;
-            req->input.kbd.flags = input->u.ki.dwFlags;
-            req->input.kbd.time  = input->u.ki.time;
-            req->input.kbd.info  = input->u.ki.dwExtraInfo;
-            break;
-        case INPUT_HARDWARE:
-            req->input.hw.msg    = input->u.hi.uMsg;
-            req->input.hw.lparam = MAKELONG( input->u.hi.wParamL, input->u.hi.wParamH );
-            switch (input->u.hi.uMsg)
-            {
-            case WM_INPUT:
-            case WM_INPUT_DEVICE_CHANGE:
-                req->input.hw.rawinput.type = rawinput->header.dwType;
-                switch (rawinput->header.dwType)
-                {
-                case RIM_TYPEHID:
-                    req->input.hw.rawinput.hid.device = HandleToUlong( rawinput->header.hDevice );
-                    req->input.hw.rawinput.hid.param = rawinput->header.wParam;
-                    req->input.hw.rawinput.hid.usage_page = hid_usage_page;
-                    req->input.hw.rawinput.hid.usage = hid_usage;
-                    req->input.hw.rawinput.hid.count = rawinput->data.hid.dwCount;
-                    req->input.hw.rawinput.hid.length = rawinput->data.hid.dwSizeHid;
-                    wine_server_add_data( req, rawinput->data.hid.bRawData,
-                                          rawinput->data.hid.dwCount * rawinput->data.hid.dwSizeHid );
-                    break;
-                default:
-                    assert( 0 );
-                    break;
-                }
-            }
-            break;
-        }
-        if (key_state_info) wine_server_set_reply( req, key_state_info->state,
-                                                   sizeof(key_state_info->state) );
-        ret = wine_server_call( req );
-        wait = reply->wait;
-        prev_x = reply->prev_x;
-        prev_y = reply->prev_y;
-        new_x  = reply->new_x;
-        new_y  = reply->new_y;
-    }
-    SERVER_END_REQ;
-
-    if (!ret)
-    {
-        if (key_state_info)
-        {
-            key_state_info->time    = GetTickCount();
-            key_state_info->counter = counter;
-        }
-        if ((flags & SEND_HWMSG_INJECTED) && (prev_x != new_x || prev_y != new_y))
-            USER_Driver->pSetCursorPos( new_x, new_y );
-    }
-
-    if (wait)
-    {
-        LRESULT ignored;
-        wait_message_reply( 0 );
-        retrieve_reply( &info, 0, &ignored );
-    }
-    return ret;
-}
-
-
-/***********************************************************************
- *		MSG_SendInternalMessageTimeout
- *
- * Same as SendMessageTimeoutW but sends the message to a specific thread
- * without requiring a window handle. Only works for internal Wine messages.
- */
-LRESULT WINAPI MSG_SendInternalMessageTimeout( DWORD dest_pid, DWORD dest_tid,
-                                               UINT msg, WPARAM wparam, LPARAM lparam,
-                                               UINT flags, UINT timeout, PDWORD_PTR res_ptr )
-{
-    struct send_message_info info;
-    LRESULT ret, result;
-
-    assert( msg & 0x80000000 );  /* must be an internal Wine message */
-
-    info.type     = MSG_UNICODE;
-    info.dest_tid = dest_tid;
-    info.hwnd     = 0;
-    info.msg      = msg;
-    info.wparam   = wparam;
-    info.lparam   = lparam;
-    info.flags    = flags;
-    info.timeout  = timeout;
-
-    if (USER_IsExitingThread( dest_tid )) return 0;
-
-    if (dest_tid == GetCurrentThreadId())
-    {
-        result = handle_internal_message( 0, msg, wparam, lparam );
-        ret = 1;
-    }
-    else
-    {
-        if (dest_pid != GetCurrentProcessId()) info.type = MSG_OTHER_PROCESS;
-        ret = send_inter_thread_message( &info, &result );
-    }
     if (ret && res_ptr) *res_ptr = result;
     return ret;
 }
@@ -2992,31 +2795,7 @@ BOOL WINAPI GetCurrentInputMessageSource( INPUT_MESSAGE_SOURCE *source )
  */
 BOOL WINAPI WaitMessage(void)
 {
-    return (MsgWaitForMultipleObjectsEx( 0, NULL, INFINITE, QS_ALLINPUT, 0 ) != WAIT_FAILED);
-}
-
-
-/***********************************************************************
- *		MsgWaitForMultipleObjectsEx   (USER32.@)
- */
-DWORD WINAPI MsgWaitForMultipleObjectsEx( DWORD count, const HANDLE *pHandles,
-                                          DWORD timeout, DWORD mask, DWORD flags )
-{
-    HANDLE handles[MAXIMUM_WAIT_OBJECTS];
-    DWORD i;
-
-    if (count > MAXIMUM_WAIT_OBJECTS-1)
-    {
-        SetLastError( ERROR_INVALID_PARAMETER );
-        return WAIT_FAILED;
-    }
-
-    /* add the queue to the handle list */
-    for (i = 0; i < count; i++) handles[i] = pHandles[i];
-    handles[count] = get_server_queue_handle();
-
-    return wait_objects( count+1, handles, timeout,
-                         (flags & MWMO_INPUTAVAILABLE) ? mask : 0, mask, flags );
+    return NtUserMsgWaitForMultipleObjectsEx( 0, NULL, INFINITE, QS_ALLINPUT, 0 ) != WAIT_FAILED;
 }
 
 
@@ -3026,61 +2805,17 @@ DWORD WINAPI MsgWaitForMultipleObjectsEx( DWORD count, const HANDLE *pHandles,
 DWORD WINAPI MsgWaitForMultipleObjects( DWORD count, const HANDLE *handles,
                                         BOOL wait_all, DWORD timeout, DWORD mask )
 {
-    return MsgWaitForMultipleObjectsEx( count, handles, timeout, mask,
-                                        wait_all ? MWMO_WAITALL : 0 );
+    return NtUserMsgWaitForMultipleObjectsEx( count, handles, timeout, mask,
+                                              wait_all ? MWMO_WAITALL : 0 );
 }
 
 
 /***********************************************************************
  *		WaitForInputIdle (USER32.@)
  */
-DWORD WINAPI WaitForInputIdle( HANDLE hProcess, DWORD dwTimeOut )
+DWORD WINAPI WaitForInputIdle( HANDLE process, DWORD timeout )
 {
-    DWORD start_time, elapsed, ret;
-    HANDLE handles[2];
-
-    handles[0] = hProcess;
-    SERVER_START_REQ( get_process_idle_event )
-    {
-        req->handle = wine_server_obj_handle( hProcess );
-        wine_server_call_err( req );
-        handles[1] = wine_server_ptr_handle( reply->event );
-    }
-    SERVER_END_REQ;
-    if (!handles[1]) return WAIT_FAILED;  /* no event to wait on */
-
-    start_time = GetTickCount();
-    elapsed = 0;
-
-    TRACE("waiting for %p\n", handles[1] );
-    do
-    {
-        ret = MsgWaitForMultipleObjects ( 2, handles, FALSE, dwTimeOut - elapsed, QS_SENDMESSAGE );
-        switch (ret)
-        {
-        case WAIT_OBJECT_0:
-            return 0;
-        case WAIT_OBJECT_0+2:
-            process_sent_messages();
-            break;
-        case WAIT_TIMEOUT:
-        case WAIT_FAILED:
-            TRACE("timeout or error\n");
-            return ret;
-        default:
-            TRACE("finished\n");
-            return 0;
-        }
-        if (dwTimeOut != INFINITE)
-        {
-            elapsed = GetTickCount() - start_time;
-            if (elapsed > dwTimeOut)
-                break;
-        }
-    }
-    while (1);
-
-    return WAIT_TIMEOUT;
+    return NtUserWaitForInputIdle( process, timeout, FALSE );
 }
 
 
