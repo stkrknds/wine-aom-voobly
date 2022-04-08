@@ -2007,16 +2007,16 @@ DWORD WINAPI GetIpAddrTable( MIB_IPADDRTABLE *table, ULONG *size, BOOL sort )
     err = NsiAllocateAndGetTable( 1, &NPI_MS_IPV4_MODULEID, NSI_IP_UNICAST_TABLE, (void **)&keys, sizeof(*keys),
                                   (void **)&rw, sizeof(*rw), NULL, 0, NULL, 0, &count, 0 );
     if (err) return err;
-    
+
     needed = FIELD_OFFSET( MIB_IPADDRTABLE, table[count] );
-    
+
     if (!table || *size < needed)
     {
         *size = needed;
         err = ERROR_INSUFFICIENT_BUFFER;
         goto err;
     }
-    
+
     table->dwNumEntries = count;
 
     for (loopback = 0; loopback < 2; loopback++) /* Move the loopback addresses to the end */
