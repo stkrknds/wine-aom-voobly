@@ -1,5 +1,7 @@
 # Wine for AoM & Voobly
 
+Credits and thanks to **kaidelorenzo**, for providing a better solution.
+
 Working with Voobly and AoM. **ONLY USE THIS WINE FOR PLAYING AoM THROUGH VOOBLY. CREATE A UNIQUE PREFIX FOR THIS WINE.**
 
 Make sure you can run the latest version of wine-staging(i386), before using this wine(make sure you have all the runtime depedencies installed).
