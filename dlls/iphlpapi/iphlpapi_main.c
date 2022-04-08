@@ -1931,6 +1931,55 @@ static int ipaddrrow_cmp( const void *a, const void *b )
     return DWORD_cmp(RtlUlongByteSwap( rowA->dwAddr ), RtlUlongByteSwap( rowB->dwAddr ));
 }
 
+DWORD WINAPI GetIpAddrTable2( MIB_IPADDRTABLE *table, ULONG *size, BOOL sort ){
+    DWORD err, count, needed, i, loopback, row_num = 0;
+    struct nsi_ipv4_unicast_key *keys;
+    struct nsi_ip_unicast_rw *rw;
+
+    TRACE( "table %p, size %p, sort %d\n", table, size, sort );
+    if (!size) return ERROR_INVALID_PARAMETER;
+
+    err = NsiAllocateAndGetTable( 1, &NPI_MS_IPV4_MODULEID, NSI_IP_UNICAST_TABLE, (void **)&keys, sizeof(*keys),
+                                  (void **)&rw, sizeof(*rw), NULL, 0, NULL, 0, &count, 0 );
+    if (err) return err;
+
+    needed = FIELD_OFFSET( MIB_IPADDRTABLE, table[count] );
+
+    if (!table || *size < needed)
+    {
+        *size = needed;
+        err = ERROR_INSUFFICIENT_BUFFER;
+        goto err;
+    }
+
+    table->dwNumEntries = count;
+
+    for (loopback = 0; loopback < 2; loopback++) /* Move the loopback addresses to the end */
+    {
+        for (i = 0; i < count; i++)
+        {
+            MIB_IPADDRROW *row = table->table + row_num;
+
+            if (!!loopback != (keys[i].luid.Info.IfType == MIB_IF_TYPE_LOOPBACK)) continue;
+
+            row->dwAddr = keys[i].addr.s_addr;
+            ConvertInterfaceLuidToIndex( &keys[i].luid, &row->dwIndex );
+            ConvertLengthToIpv4Mask( rw[i].on_link_prefix, &row->dwMask );
+            row->dwBCastAddr = 1;
+            row->dwReasmSize = 0xffff;
+            row->unused1 = 0;
+            row->wType = MIB_IPADDR_PRIMARY;
+            row_num++;
+        }
+    }
+
+    if (sort) qsort( table->table, count, sizeof(MIB_IPADDRROW), ipaddrrow_cmp );
+err:
+    NsiFreeTable( keys, rw, NULL, NULL );
+
+    return err;
+}
+
 /******************************************************************
  *    GetIpAddrTable (IPHLPAPI.@)
  *

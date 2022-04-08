@@ -2287,7 +2287,7 @@ INT WINAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in_buff, DWORD in_size, LPVOID 
         SetLastError( ret );
         return ret ? -1 : 0;
     }
-
+            
     case SIO_ROUTING_INTERFACE_QUERY:
     {
         struct sockaddr *daddr = (struct sockaddr *)in_buff;
@@ -2310,14 +2310,14 @@ INT WINAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in_buff, DWORD in_size, LPVOID 
             SetLastError( WSAEAFNOSUPPORT );
             return -1;
         }
-        size = 76;
-        if (GetBestRoute( daddr_in->sin_addr.S_un.S_addr, 0, &row ) != NOERROR)
+        if (GetBestRoute( daddr_in->sin_addr.S_un.S_addr, 0, &row ) != NOERROR ||
+            GetIpAddrTable2( NULL, &size, FALSE ) != ERROR_INSUFFICIENT_BUFFER)
         {
             SetLastError( WSAEFAULT );
             return -1;
         }
         ipAddrTable = malloc( size );
-        if (GetIpAddrTable( ipAddrTable, &size, FALSE ))
+        if (GetIpAddrTable2( ipAddrTable, &size, FALSE ))
         {
             free( ipAddrTable );
             SetLastError( WSAEFAULT );
