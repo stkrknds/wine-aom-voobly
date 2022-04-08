@@ -655,7 +655,7 @@ BOOL WINAPI OpenClipboard( HWND hwnd )
 
     TRACE( "%p\n", hwnd );
 
-    USER_Driver->pUpdateClipboard();
+    NtUserCallNoParam( NtUserUpdateClipboard );
 
     EnterCriticalSection( &clipboard_cs );
 
@@ -670,31 +670,6 @@ BOOL WINAPI OpenClipboard( HWND hwnd )
     if (ret && !WIN_IsCurrentProcess( owner )) invalidate_memory_formats();
 
     LeaveCriticalSection( &clipboard_cs );
-    return ret;
-}
-
-
-/**************************************************************************
- *		CloseClipboard (USER32.@)
- */
-BOOL WINAPI CloseClipboard(void)
-{
-    HWND viewer = 0, owner = 0;
-    BOOL ret;
-
-    TRACE( "\n" );
-
-    SERVER_START_REQ( close_clipboard )
-    {
-        if ((ret = !wine_server_call_err( req )))
-        {
-            viewer = wine_server_ptr_handle( reply->viewer );
-            owner = wine_server_ptr_handle( reply->owner );
-        }
-    }
-    SERVER_END_REQ;
-
-    if (viewer) SendNotifyMessageW( viewer, WM_DRAWCLIPBOARD, (WPARAM)owner, 0 );
     return ret;
 }
 

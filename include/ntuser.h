@@ -140,8 +140,8 @@ enum
     NtUserReleaseCapture,
     /* temporary exports */
     NtUserExitingThread,
-    NtUserProcessSentMessages,
     NtUserThreadDetach,
+    NtUserUpdateClipboard,
 };
 
 /* NtUserCallOneParam codes, not compatible with Windows */
@@ -199,6 +199,7 @@ enum
     NtUserGetWindowDpiAwarenessContext,
     NtUserGetWindowTextLength,
     NtUserIsWindow,
+    NtUserIsWindowEnabled,
     NtUserIsWindowUnicode,
     NtUserIsWindowVisible,
 };
@@ -239,12 +240,28 @@ enum
 /* NtUserMessageCall codes */
 enum
 {
-    FNID_CALLWNDPROC        = 0x02ab,
-    FNID_SENDMESSAGE        = 0x02b1,
-    FNID_SENDNOTIFYMESSAGE  = 0x02b7,
+    FNID_DEFWINDOWPROC        = 0x029e,
+    FNID_CALLWNDPROC          = 0x02ab,
+    FNID_SENDMESSAGE          = 0x02b1,
+    FNID_SENDMESSAGEWTOOPTION = 0x02b3,
+    FNID_SENDNOTIFYMESSAGE    = 0x02b7,
+    FNID_SENDMESSAGECALLBACK  = 0x02b8,
     /* Wine-specific exports */
-    FNID_SPYENTER           = 0x0300,
-    FNID_SPYEXIT            = 0x0301,
+    FNID_SPYENTER             = 0x0300,
+    FNID_SPYEXIT              = 0x0301,
+};
+
+struct send_message_timeout_params
+{
+    UINT flags;
+    UINT timeout;
+    DWORD_PTR result;
+};
+
+struct send_message_callback_params
+{
+    SENDASYNCPROC callback;
+    ULONG_PTR data;
 };
 
 /* color index used to retrieve system 55aa brush */
@@ -493,6 +510,7 @@ ULONG_PTR WINAPI NtUserCallTwoParam( ULONG_PTR arg1, ULONG_PTR arg2, ULONG code 
 LONG    WINAPI NtUserChangeDisplaySettings( UNICODE_STRING *devname, DEVMODEW *devmode, HWND hwnd,
                                             DWORD flags, void *lparam );
 BOOL    WINAPI NtUserClipCursor( const RECT *rect );
+BOOL    WINAPI NtUserCloseClipboard(void);
 BOOL    WINAPI NtUserCloseDesktop( HDESK handle );
 BOOL    WINAPI NtUserCloseWindowStation( HWINSTA handle );
 INT     WINAPI NtUserCopyAcceleratorTable( HACCEL src, ACCEL *dst, INT count );
@@ -582,8 +600,8 @@ INT     WINAPI NtUserInternalGetWindowText( HWND hwnd, WCHAR *text, INT count );
 BOOL    WINAPI NtUserIsClipboardFormatAvailable( UINT format );
 BOOL    WINAPI NtUserKillTimer( HWND hwnd, UINT_PTR id );
 UINT    WINAPI NtUserMapVirtualKeyEx( UINT code, UINT type, HKL layout );
-BOOL    WINAPI NtUserMessageCall( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
-                                  ULONG_PTR result_info, DWORD type, BOOL ansi );
+LRESULT WINAPI NtUserMessageCall( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
+                                  void *result_info, DWORD type, BOOL ansi );
 BOOL    WINAPI NtUserMoveWindow( HWND hwnd, INT x, INT y, INT cx, INT cy, BOOL repaint );
 DWORD   WINAPI NtUserMsgWaitForMultipleObjectsEx( DWORD count, const HANDLE *handles,
                                                   DWORD timeout, DWORD mask, DWORD flags );
@@ -593,6 +611,8 @@ BOOL    WINAPI NtUserSetObjectInformation( HANDLE handle, INT index, void *info,
 HDESK   WINAPI NtUserOpenDesktop( OBJECT_ATTRIBUTES *attr, DWORD flags, ACCESS_MASK access );
 HDESK   WINAPI NtUserOpenInputDesktop( DWORD flags, BOOL inherit, ACCESS_MASK access );
 BOOL    WINAPI NtUserPeekMessage( MSG *msg_out, HWND hwnd, UINT first, UINT last, UINT flags );
+BOOL    WINAPI NtUserPostMessage( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam );
+BOOL    WINAPI NtUserPostThreadMessage( DWORD thread, UINT msg, WPARAM wparam, LPARAM lparam );
 BOOL    WINAPI NtUserRedrawWindow( HWND hwnd, const RECT *rect, HRGN hrgn, UINT flags );
 ATOM    WINAPI NtUserRegisterClassExWOW( const WNDCLASSEXW *wc, UNICODE_STRING *name, UNICODE_STRING *version,
                                          struct client_menu_name *client_menu_name, DWORD fnid, DWORD flags,

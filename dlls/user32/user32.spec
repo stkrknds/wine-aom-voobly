@@ -73,7 +73,7 @@
 @ stub ClientThreadSetup
 @ stdcall ClientToScreen(long ptr)
 @ stdcall -import ClipCursor(ptr) NtUserClipCursor
-@ stdcall CloseClipboard()
+@ stdcall CloseClipboard() NtUserCloseClipboard
 @ stdcall CloseDesktop(long) NtUserCloseDesktop
 @ stdcall CloseTouchInputHandle(long)
 @ stdcall CloseWindow(long)
@@ -571,7 +571,7 @@
 @ stdcall PostMessageW(long long long long)
 @ stdcall PostQuitMessage(long)
 @ stdcall PostThreadMessageA(long long long long)
-@ stdcall PostThreadMessageW(long long long long)
+@ stdcall PostThreadMessageW(long long long long) NtUserPostThreadMessage
 @ stdcall PrintWindow(long long long)
 @ stdcall PrivateExtractIconExA(str long ptr ptr long)
 @ stdcall PrivateExtractIconExW(wstr long ptr ptr long)
@@ -839,4 +839,3 @@
 # or 'wine_' (for user-visible functions) to avoid namespace conflicts.
 #
 @ cdecl __wine_set_pixel_format(long long)
-@ cdecl __wine_set_user_driver(ptr long)

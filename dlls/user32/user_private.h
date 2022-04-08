@@ -29,7 +29,6 @@
 #include "winreg.h"
 #include "winternl.h"
 #include "hidusage.h"
-#include "wine/gdi_driver.h"
 #include "wine/heap.h"
 
 #define GET_WORD(ptr)  (*(const WORD *)(ptr))
@@ -38,12 +37,6 @@
 
 #define WINE_MOUSE_HANDLE       ((HANDLE)1)
 #define WINE_KEYBOARD_HANDLE    ((HANDLE)2)
-
-struct window_surface;
-
-extern const struct user_driver_funcs *USER_Driver DECLSPEC_HIDDEN;
-
-extern void USER_unload_driver(void) DECLSPEC_HIDDEN;
 
 struct received_message_info;
 
@@ -85,8 +78,8 @@ extern void rawinput_update_device_list(void);
 
 extern BOOL post_dde_message( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, DWORD dest_tid,
                               DWORD type ) DECLSPEC_HIDDEN;
-extern BOOL process_hardware_message( MSG *msg, UINT hw_id, const struct hardware_msg_data *msg_data,
-                                      HWND hwnd_filter, UINT first, UINT last, BOOL remove ) DECLSPEC_HIDDEN;
+extern BOOL process_rawinput_message( MSG *msg, UINT hw_id,
+                                      const struct hardware_msg_data *msg_data ) DECLSPEC_HIDDEN;
 extern BOOL unpack_dde_message( HWND hwnd, UINT message, WPARAM *wparam, LPARAM *lparam,
                                 void **buffer, size_t size ) DECLSPEC_HIDDEN;
 
