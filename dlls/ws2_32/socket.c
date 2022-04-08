@@ -2331,10 +2331,7 @@ INT WINAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in_buff, DWORD in_size, LPVOID 
         }
         if (found_index == ipAddrTable->dwNumEntries)
         {
-            ERR( "no matching IP address for interface %lu\n", row.dwForwardIfIndex );
-            free( ipAddrTable );
-            SetLastError( WSAEFAULT );
-            return -1;
+            found_index -= 1;
         }
         saddr_in->sin_family = AF_INET;
         saddr_in->sin_addr.S_un.S_addr = ipAddrTable->table[found_index].dwAddr;
