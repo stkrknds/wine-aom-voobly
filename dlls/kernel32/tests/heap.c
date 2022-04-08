@@ -31,6 +31,7 @@
 #include "wine/test.h"
 
 /* some undocumented flags (names are made up) */
+#define HEAP_PRIVATE          0x00001000
 #define HEAP_PAGE_ALLOCS      0x01000000
 #define HEAP_VALIDATE         0x10000000
 #define HEAP_VALIDATE_ALL     0x20000000
@@ -39,204 +40,308 @@
 /* use function pointers to avoid warnings for invalid parameter tests */
 static LPVOID (WINAPI *pHeapAlloc)(HANDLE,DWORD,SIZE_T);
 static LPVOID (WINAPI *pHeapReAlloc)(HANDLE,DWORD,LPVOID,SIZE_T);
-static BOOL (WINAPI *pHeapQueryInformation)(HANDLE, HEAP_INFORMATION_CLASS, PVOID, SIZE_T, PSIZE_T);
-static BOOL (WINAPI *pGetPhysicallyInstalledSystemMemory)(ULONGLONG *);
-static ULONG (WINAPI *pRtlGetNtGlobalFlags)(void);
+static BOOL (WINAPI *pGetPhysicallyInstalledSystemMemory)( ULONGLONG * );
 
-struct heap_layout
+#define MAKE_FUNC(f) static typeof(f) *p ## f
+MAKE_FUNC( HeapQueryInformation );
+MAKE_FUNC( GlobalFlags );
+MAKE_FUNC( RtlGetNtGlobalFlags );
+#undef MAKE_FUNC
+
+static void load_functions(void)
 {
-    DWORD_PTR unknown[2];
-    DWORD pattern;
-    DWORD flags;
-    DWORD force_flags;
+    HMODULE kernel32 = GetModuleHandleW( L"kernel32.dll" );
+    HMODULE ntdll = GetModuleHandleW( L"ntdll.dll" );
+
+#define LOAD_FUNC(m, f) p ## f = (void *)GetProcAddress( m, #f );
+    LOAD_FUNC( kernel32, HeapAlloc );
+    LOAD_FUNC( kernel32, HeapReAlloc );
+    LOAD_FUNC( kernel32, HeapQueryInformation );
+    LOAD_FUNC( kernel32, GetPhysicallyInstalledSystemMemory );
+    LOAD_FUNC( kernel32, GlobalFlags );
+    LOAD_FUNC( ntdll, RtlGetNtGlobalFlags );
+#undef LOAD_FUNC
+}
+
+struct heap
+{
+    UINT_PTR unknown1[2];
+    UINT     ffeeffee;
+    UINT     auto_flags;
+    UINT_PTR unknown2[7];
+    UINT     unknown3[2];
+    UINT_PTR unknown4[3];
+    UINT     flags;
+    UINT     force_flags;
 };
-
-static SIZE_T resize_9x(SIZE_T size)
-{
-    DWORD dwSizeAligned = (size + 3) & ~3;
-    return max(dwSizeAligned, 12); /* at least 12 bytes */
-}
-
-static void test_sized_HeapAlloc(int nbytes)
-{
-    BOOL success;
-    char *buf = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, nbytes);
-    ok(buf != NULL, "allocate failed\n");
-    ok(buf[0] == 0, "buffer not zeroed\n");
-    success = HeapFree(GetProcessHeap(), 0, buf);
-    ok(success, "free failed\n");
-}
-
-static void test_sized_HeapReAlloc(int nbytes1, int nbytes2)
-{
-    BOOL success;
-    char *buf = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, nbytes1);
-    ok(buf != NULL, "allocate failed\n");
-    ok(buf[0] == 0, "buffer not zeroed\n");
-    buf = HeapReAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, buf, nbytes2);
-    ok(buf != NULL, "reallocate failed\n");
-    ok(buf[nbytes2-1] == 0, "buffer not zeroed\n");
-    success = HeapFree(GetProcessHeap(), 0, buf);
-    ok(success, "free failed\n");
-}
-
-static void test_heap(void)
-{
-    LPVOID  mem;
-    LPVOID  msecond;
-    SIZE_T size;
-
-    /* Heap*() functions */
-    mem = HeapAlloc(GetProcessHeap(), 0, 0);
-    ok(mem != NULL, "memory not allocated for size 0\n");
-    HeapFree(GetProcessHeap(), 0, mem);
-
-    mem = HeapReAlloc(GetProcessHeap(), 0, NULL, 10);
-    ok(mem == NULL, "memory allocated by HeapReAlloc\n");
-
-    for (size = 0; size <= 256; size++)
-    {
-        SIZE_T heap_size;
-        mem = HeapAlloc(GetProcessHeap(), 0, size);
-        heap_size = HeapSize(GetProcessHeap(), 0, mem);
-        ok(heap_size == size || heap_size == resize_9x(size), 
-            "HeapSize returned %Iu instead of %Iu or %Iu\n", heap_size, size, resize_9x(size));
-        HeapFree(GetProcessHeap(), 0, mem);
-    }
-
-    /* test some border cases of HeapAlloc and HeapReAlloc */
-    mem = HeapAlloc(GetProcessHeap(), 0, 0);
-    ok(mem != NULL, "memory not allocated for size 0\n");
-    msecond = pHeapReAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, mem, ~(SIZE_T)0 - 7);
-    ok(msecond == NULL, "HeapReAlloc(~0 - 7) should have failed\n");
-    msecond = pHeapReAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, mem, ~(SIZE_T)0);
-    ok(msecond == NULL, "HeapReAlloc(~0) should have failed\n");
-    HeapFree(GetProcessHeap(), 0, mem);
-    mem = pHeapAlloc(GetProcessHeap(), 0, ~(SIZE_T)0);
-    ok(mem == NULL, "memory allocated for size ~0\n");
-    mem = HeapAlloc(GetProcessHeap(), 0, 17);
-    msecond = HeapReAlloc(GetProcessHeap(), 0, mem, 0);
-    ok(msecond != NULL, "HeapReAlloc(0) should have succeeded\n");
-    size = HeapSize(GetProcessHeap(), 0, msecond);
-    ok(size == 0 || broken(size == 1) /* some vista and win7 */,
-       "HeapSize should have returned 0 instead of %Iu\n", size);
-    HeapFree(GetProcessHeap(), 0, msecond);
-
-    /* large blocks must be 16-byte aligned */
-    mem = HeapAlloc(GetProcessHeap(), 0, 512 * 1024);
-    ok( mem != NULL, "failed for size 512K\n" );
-    ok( (ULONG_PTR)mem % 16 == 0 || broken((ULONG_PTR)mem % 16) /* win9x */,
-        "512K block not 16-byte aligned\n" );
-    HeapFree(GetProcessHeap(), 0, mem);
-}
 
 
 static void test_HeapCreate(void)
 {
-    SYSTEM_INFO sysInfo;
-    ULONG memchunk;
-    HANDLE heap;
-    LPVOID mem1,mem1a,mem3;
-    UCHAR *mem2,*mem2a;
-    UINT i;
-    BOOL error;
-    DWORD dwSize;
+    SIZE_T alloc_size = 0x8000 * sizeof(void *), size, i;
+    BYTE *ptr, *ptr1, *ptrs[128];
+    HANDLE heap, heap1;
+    UINT_PTR align;
+    BOOL ret;
 
-    /* Retrieve the page size for this system */
-    GetSystemInfo(&sysInfo);
-    ok(sysInfo.dwPageSize>0,"GetSystemInfo should return a valid page size\n");
+    /* check heap alignment */
 
-    /* Create a Heap with a minimum and maximum size */
-    /* Note that Windows and Wine seem to behave a bit differently with respect
-       to memory allocation.  In Windows, you can't access all the memory
-       specified in the heap (due to overhead), so choosing a reasonable maximum
-       size for the heap was done mostly by trial-and-error on Win2k.  It may need
-       more tweaking for otherWindows variants.
-    */
-    memchunk=10*sysInfo.dwPageSize;
-    heap=HeapCreate(0,2*memchunk,5*memchunk);
-    ok( !((ULONG_PTR)heap & 0xffff), "heap %p not 64K aligned\n", heap );
+    heap = HeapCreate( 0, 0, 0 );
+    ok( !!heap, "HeapCreate failed, error %lu\n", GetLastError() );
+    ok( !((ULONG_PTR)heap & 0xffff), "wrong heap alignment\n" );
+    heap1 = HeapCreate( 0, 0, 0 );
+    ok( !!heap, "HeapCreate failed, error %lu\n", GetLastError() );
+    ok( !((ULONG_PTR)heap1 & 0xffff), "wrong heap alignment\n" );
+    ret = HeapDestroy( heap1 );
+    ok( ret, "HeapDestroy failed, error %lu\n", GetLastError() );
+    ret = HeapDestroy( heap );
+    ok( ret, "HeapDestroy failed, error %lu\n", GetLastError() );
 
-    /* Check that HeapCreate allocated the right amount of ram */
-    mem1=HeapAlloc(heap,0,5*memchunk+1);
-    ok(mem1==NULL,"HeapCreate allocated more Ram than it should have\n");
-    HeapFree(heap,0,mem1);
+    /* growable heap */
 
-    /* Check that a normal alloc works */
-    mem1=HeapAlloc(heap,0,memchunk);
-    ok(mem1!=NULL,"HeapAlloc failed\n");
-    if(mem1) {
-      ok(HeapSize(heap,0,mem1)>=memchunk, "HeapAlloc should return a big enough memory block\n");
+    heap = HeapCreate( 0, 0, 0 );
+    ok( !!heap, "HeapCreate failed, error %lu\n", GetLastError() );
+    ok( !((ULONG_PTR)heap & 0xffff), "wrong heap alignment\n" );
+
+    /* test some border cases */
+
+    ret = HeapFree( heap, 0, NULL );
+    ok( ret, "HeapFree failed, error %lu\n", GetLastError() );
+
+    SetLastError( 0xdeadbeef );
+    ptr = HeapReAlloc( heap, 0, NULL, 1 );
+    ok( !ptr, "HeapReAlloc succeeded\n" );
+    todo_wine
+    ok( GetLastError() == NO_ERROR, "got error %lu\n", GetLastError() );
+
+    ptr = HeapAlloc( heap, 0, 0 );
+    ok( !!ptr, "HeapAlloc failed, error %lu\n", GetLastError() );
+    size = HeapSize( heap, 0, ptr );
+    ok( size == 0, "HeapSize returned %#Ix, error %lu\n", size, GetLastError() );
+    ptr1 = pHeapReAlloc( heap, 0, ptr, ~(SIZE_T)0 - 7 );
+    ok( !ptr1, "HeapReAlloc succeeded\n" );
+    ptr1 = pHeapReAlloc( heap, 0, ptr, ~(SIZE_T)0 );
+    ok( !ptr1, "HeapReAlloc succeeded\n" );
+    ret = HeapFree( heap, 0, ptr );
+    ok( ret, "HeapFree failed, error %lu\n", GetLastError() );
+
+    ptr = pHeapAlloc( heap, 0, ~(SIZE_T)0 );
+    ok( !ptr, "HeapAlloc succeeded\n" );
+
+    ptr = HeapAlloc( heap, 0, 1 );
+    ok( !!ptr, "HeapAlloc failed, error %lu\n", GetLastError() );
+    ptr1 = HeapReAlloc( heap, 0, ptr, 0 );
+    ok( !!ptr1, "HeapReAlloc failed, error %lu\n", GetLastError() );
+    size = HeapSize( heap, 0, ptr1 );
+    ok( size == 0, "HeapSize returned %#Ix, error %lu\n", size, GetLastError() );
+    ret = HeapFree( heap, 0, ptr );
+    ok( ret, "HeapFree failed, error %lu\n", GetLastError() );
+
+    ptr = HeapAlloc( heap, 0, 5 * alloc_size + 1 );
+    ok( !!ptr, "HeapAlloc failed, error %lu\n", GetLastError() );
+    ret = HeapFree( heap, 0, ptr );
+    ok( ret, "HeapFree failed, error %lu\n", GetLastError() );
+
+    ptr = HeapAlloc( heap, 0, alloc_size );
+    ok( !!ptr, "HeapAlloc failed, error %lu\n", GetLastError() );
+    size = HeapSize( heap, 0, ptr );
+    ok( size == alloc_size, "HeapSize returned %#Ix, error %lu\n", size, GetLastError() );
+    ptr1 = HeapAlloc( heap, 0, 4 * alloc_size );
+    ok( !!ptr1, "HeapAlloc failed, error %lu\n", GetLastError() );
+    ret = HeapFree( heap, 0, ptr1 );
+    ok( ret, "HeapFree failed, error %lu\n", GetLastError() );
+    ret = HeapFree( heap, 0, ptr );
+    ok( ret, "HeapFree failed, error %lu\n", GetLastError() );
+
+    /* test pointer alignment */
+
+    align = 0;
+    for (i = 0; i < ARRAY_SIZE(ptrs); ++i)
+    {
+        ptrs[i] = HeapAlloc( heap, 0, alloc_size );
+        ok( !!ptrs[i], "HeapAlloc failed, error %lu\n", GetLastError() );
+        align |= (UINT_PTR)ptrs[i];
+    }
+    ok( !(align & (2 * sizeof(void *) - 1)), "got wrong alignment\n" );
+    ok( align & (2 * sizeof(void *)), "got wrong alignment\n" );
+    for (i = 0; i < ARRAY_SIZE(ptrs); ++i)
+    {
+        ret = HeapFree( heap, 0, ptrs[i] );
+        ok( ret, "HeapFree failed, error %lu\n", GetLastError() );
     }
 
-    /* Check that a 'zeroing' alloc works */
-    mem2=HeapAlloc(heap,HEAP_ZERO_MEMORY,memchunk);
-    ok(mem2!=NULL,"HeapAlloc failed\n");
-    if(mem2) {
-      ok(HeapSize(heap,0,mem2)>=memchunk,"HeapAlloc should return a big enough memory block\n");
-      error=FALSE;
-      for(i=0;i<memchunk;i++) {
-        if(mem2[i]!=0) {
-          error=TRUE;
-        }
-      }
-      ok(!error,"HeapAlloc should have zeroed out its allocated memory\n");
+    align = 0;
+    for (i = 0; i < ARRAY_SIZE(ptrs); ++i)
+    {
+        ptrs[i] = HeapAlloc( heap, 0, 4 * alloc_size );
+        ok( !!ptrs[i], "HeapAlloc failed, error %lu\n", GetLastError() );
+        align |= (UINT_PTR)ptrs[i];
+    }
+    todo_wine_if( sizeof(void *) == 8 )
+    ok( !(align & (8 * sizeof(void *) - 1)), "got wrong alignment\n" );
+    todo_wine_if( sizeof(void *) == 8 )
+    ok( align & (8 * sizeof(void *)), "got wrong alignment\n" );
+    for (i = 0; i < ARRAY_SIZE(ptrs); ++i)
+    {
+        ret = HeapFree( heap, 0, ptrs[i] );
+        ok( ret, "HeapFree failed, error %lu\n", GetLastError() );
     }
 
-    /* Check that HeapAlloc returns NULL when requested way too much memory */
-    mem3=HeapAlloc(heap,0,5*memchunk);
-    ok(mem3==NULL,"HeapAlloc should return NULL\n");
-    if(mem3) {
-      ok(HeapFree(heap,0,mem3),"HeapFree didn't pass successfully\n");
-    }
+    /* test HEAP_ZERO_MEMORY */
 
-    /* Check that HeapReAlloc works */
-    mem2a=HeapReAlloc(heap,HEAP_ZERO_MEMORY,mem2,memchunk+5*sysInfo.dwPageSize);
-    ok(mem2a!=NULL,"HeapReAlloc failed\n");
-    if(mem2a) {
-      ok(HeapSize(heap,0,mem2a)>=memchunk+5*sysInfo.dwPageSize,"HeapReAlloc failed\n");
-      error=FALSE;
-      for(i=0;i<5*sysInfo.dwPageSize;i++) {
-        if(mem2a[memchunk+i]!=0) {
-          error=TRUE;
-        }
-      }
-      ok(!error,"HeapReAlloc should have zeroed out its allocated memory\n");
-    }
+    ptr = HeapAlloc( heap, HEAP_ZERO_MEMORY, 1 );
+    ok( !!ptr, "HeapAlloc failed, error %lu\n", GetLastError() );
+    size = HeapSize( heap, 0, ptr );
+    ok( size == 1, "HeapSize returned %#Ix, error %lu\n", size, GetLastError() );
+    while (size) if (ptr[--size]) break;
+    ok( !size && !ptr[0], "memory wasn't zeroed\n" );
+    ret = HeapFree( heap, 0, ptr );
+    ok( ret, "HeapFree failed, error %lu\n", GetLastError() );
 
-    /* Check that HeapReAlloc honours HEAP_REALLOC_IN_PLACE_ONLY */
-    error=FALSE;
-    mem1a=HeapReAlloc(heap,HEAP_REALLOC_IN_PLACE_ONLY,mem1,memchunk+sysInfo.dwPageSize);
-    if(mem1a!=NULL) {
-      if(mem1a!=mem1) {
-        error=TRUE;
-      }
-    }
-    ok(mem1a==NULL || !error,"HeapReAlloc didn't honour HEAP_REALLOC_IN_PLACE_ONLY\n");
+    ptr = HeapAlloc( heap, HEAP_ZERO_MEMORY, (1 << 20) );
+    ok( !!ptr, "HeapAlloc failed, error %lu\n", GetLastError() );
+    size = HeapSize( heap, 0, ptr );
+    ok( size == (1 << 20), "HeapSize returned %#Ix, error %lu\n", size, GetLastError() );
+    while (size) if (ptr[--size]) break;
+    ok( !size && !ptr[0], "memory wasn't zeroed\n" );
+    ret = HeapFree( heap, 0, ptr );
+    ok( ret, "HeapFree failed, error %lu\n", GetLastError() );
 
-    /* Check that HeapFree works correctly */
-   if(mem1a) {
-     ok(HeapFree(heap,0,mem1a),"HeapFree failed\n");
-   } else {
-     ok(HeapFree(heap,0,mem1),"HeapFree failed\n");
-   }
-   if(mem2a) {
-     ok(HeapFree(heap,0,mem2a),"HeapFree failed\n");
-   } else {
-     ok(HeapFree(heap,0,mem2),"HeapFree failed\n");
-   }
+    ptr = HeapAlloc( heap, HEAP_ZERO_MEMORY, alloc_size );
+    ok( !!ptr, "HeapAlloc failed, error %lu\n", GetLastError() );
+    size = HeapSize( heap, 0, ptr );
+    ok( size == alloc_size, "HeapSize returned %#Ix, error %lu\n", size, GetLastError() );
+    while (size) if (ptr[--size]) break;
+    ok( !size && !ptr[0], "memory wasn't zeroed\n" );
 
-   /* 0-length buffer */
-   mem1 = HeapAlloc(heap, 0, 0);
-   ok(mem1 != NULL, "Reserved memory\n");
+    ptr = HeapReAlloc( heap, HEAP_ZERO_MEMORY, ptr, 3 * alloc_size );
+    ok( !!ptr, "HeapReAlloc failed, error %lu\n", GetLastError() );
+    size = HeapSize( heap, 0, ptr );
+    ok( size == 3 * alloc_size, "HeapSize returned %#Ix, error %lu\n", size, GetLastError() );
+    while (size) if (ptr[--size]) break;
+    ok( !size && !ptr[0], "memory wasn't zeroed\n" );
 
-   dwSize = HeapSize(heap, 0, mem1);
-   /* should work with 0-length buffer */
-   ok(dwSize < 0xFFFFFFFF, "The size of the 0-length buffer\n");
-   ok(HeapFree(heap, 0, mem1), "Freed the 0-length buffer\n");
+    /* shrinking a small-ish block in place and growing back is okay */
+    ptr1 = HeapReAlloc( heap, HEAP_REALLOC_IN_PLACE_ONLY, ptr, alloc_size * 3 / 2 );
+    ok( ptr1 == ptr, "HeapReAlloc HEAP_REALLOC_IN_PLACE_ONLY failed, error %lu\n", GetLastError() );
+    ptr1 = HeapReAlloc( heap, HEAP_REALLOC_IN_PLACE_ONLY, ptr, 2 * alloc_size );
+    ok( ptr1 == ptr, "HeapReAlloc HEAP_REALLOC_IN_PLACE_ONLY failed, error %lu\n", GetLastError() );
 
-   /* Check that HeapDestroy works */
-   ok(HeapDestroy(heap),"HeapDestroy failed\n");
+    ptr = HeapReAlloc( heap, HEAP_ZERO_MEMORY, ptr, 1 );
+    ok( !!ptr, "HeapReAlloc failed, error %lu\n", GetLastError() );
+    size = HeapSize( heap, 0, ptr );
+    ok( size == 1, "HeapSize returned %#Ix, error %lu\n", size, GetLastError() );
+    while (size) if (ptr[--size]) break;
+    ok( !size && !ptr[0], "memory wasn't zeroed\n" );
+
+    ptr = HeapReAlloc( heap, HEAP_ZERO_MEMORY, ptr, (1 << 20) );
+    ok( !!ptr, "HeapReAlloc failed, error %lu\n", GetLastError() );
+    size = HeapSize( heap, 0, ptr );
+    ok( size == (1 << 20), "HeapSize returned %#Ix, error %lu\n", size, GetLastError() );
+    while (size) if (ptr[--size]) break;
+    ok( !size && !ptr[0], "memory wasn't zeroed\n" );
+
+    /* shrinking a very large block decommits pages and fail to grow in place */
+    ptr1 = HeapReAlloc( heap, HEAP_REALLOC_IN_PLACE_ONLY, ptr, alloc_size * 3 / 2 );
+    ok( ptr1 == ptr, "HeapReAlloc HEAP_REALLOC_IN_PLACE_ONLY failed, error %lu\n", GetLastError() );
+    ptr1 = HeapReAlloc( heap, HEAP_REALLOC_IN_PLACE_ONLY, ptr, 2 * alloc_size );
+    todo_wine
+    ok( ptr1 != ptr, "HeapReAlloc HEAP_REALLOC_IN_PLACE_ONLY succeeded\n" );
+    ok( GetLastError() == ERROR_NOT_ENOUGH_MEMORY, "got error %lu\n", GetLastError() );
+
+    ret = HeapFree( heap, 0, ptr1 );
+    ok( ret, "HeapFree failed, error %lu\n", GetLastError() );
+
+    ret = HeapDestroy( heap );
+    ok( ret, "HeapDestroy failed, error %lu\n", GetLastError() );
+
+
+    /* fixed size heaps */
+
+    heap = HeapCreate( 0, alloc_size, alloc_size );
+    ok( !!heap, "HeapCreate failed, error %lu\n", GetLastError() );
+    ok( !((ULONG_PTR)heap & 0xffff), "wrong heap alignment\n" );
+
+    ptr = HeapAlloc( heap, 0, alloc_size - (0x400 + 0x80 * sizeof(void *)) );
+    ok( !!ptr, "HeapAlloc failed, error %lu\n", GetLastError() );
+    size = HeapSize( heap, 0, ptr );
+    ok( size == alloc_size - (0x400 + 0x80 * sizeof(void *)),
+        "HeapSize returned %#Ix, error %lu\n", size, GetLastError() );
+    ret = HeapFree( heap, 0, ptr );
+    ok( ret, "HeapFree failed, error %lu\n", GetLastError() );
+
+    SetLastError( 0xdeadbeef );
+    ptr1 = HeapAlloc( heap, 0, alloc_size - (0x200 + 0x80 * sizeof(void *)) );
+    todo_wine
+    ok( !ptr1, "HeapAlloc succeeded\n" );
+    todo_wine
+    ok( GetLastError() == ERROR_NOT_ENOUGH_MEMORY, "got error %lu\n", GetLastError() );
+    ret = HeapFree( heap, 0, ptr1 );
+    ok( ret, "HeapFree failed, error %lu\n", GetLastError() );
+
+    ret = HeapDestroy( heap );
+    ok( ret, "HeapDestroy failed, error %lu\n", GetLastError() );
+
+
+    heap = HeapCreate( 0, 2 * alloc_size, 5 * alloc_size );
+    ok( !!heap, "HeapCreate failed, error %lu\n", GetLastError() );
+    ok( !((ULONG_PTR)heap & 0xffff), "wrong heap alignment\n" );
+
+    ptr = HeapAlloc( heap, 0, 0 );
+    ok( !!ptr, "HeapAlloc failed, error %lu\n", GetLastError() );
+    size = HeapSize( heap, 0, ptr );
+    ok( size == 0, "HeapSize returned %#Ix, error %lu\n", size, GetLastError() );
+    ret = HeapFree( heap, 0, ptr );
+    ok( ret, "HeapFree failed, error %lu\n", GetLastError() );
+
+    /* cannot allocate large blocks from fixed size heap */
+
+    SetLastError( 0xdeadbeef );
+    ptr1 = HeapAlloc( heap, 0, 3 * alloc_size );
+    todo_wine
+    ok( !ptr1, "HeapAlloc succeeded\n" );
+    todo_wine
+    ok( GetLastError() == ERROR_NOT_ENOUGH_MEMORY, "got error %lu\n", GetLastError() );
+    ret = HeapFree( heap, 0, ptr1 );
+    ok( ret, "HeapFree failed, error %lu\n", GetLastError() );
+
+    ptr = HeapAlloc( heap, 0, alloc_size );
+    ok( !!ptr, "HeapAlloc failed, error %lu\n", GetLastError() );
+    size = HeapSize( heap, 0, ptr );
+    ok( size == alloc_size, "HeapSize returned %#Ix, error %lu\n", size, GetLastError() );
+    SetLastError( 0xdeadbeef );
+    ptr1 = HeapAlloc( heap, 0, 4 * alloc_size );
+    ok( !ptr1, "HeapAlloc succeeded\n" );
+    todo_wine
+    ok( GetLastError() == ERROR_NOT_ENOUGH_MEMORY, "got error %lu\n", GetLastError() );
+    ret = HeapFree( heap, 0, ptr1 );
+    ok( ret, "HeapFree failed, error %lu\n", GetLastError() );
+    ret = HeapFree( heap, 0, ptr );
+    ok( ret, "HeapFree failed, error %lu\n", GetLastError() );
+
+    ptr = HeapAlloc( heap, HEAP_ZERO_MEMORY, alloc_size );
+    ok( !!ptr, "HeapAlloc failed, error %lu\n", GetLastError() );
+    size = HeapSize( heap, 0, ptr );
+    ok( size == alloc_size, "HeapSize returned %#Ix, error %lu\n", size, GetLastError() );
+    while (size) if (ptr[--size]) break;
+    ok( !size && !ptr[0], "memory wasn't zeroed\n" );
+
+    ptr = HeapReAlloc( heap, HEAP_ZERO_MEMORY, ptr, 2 * alloc_size );
+    ok( !!ptr, "HeapReAlloc failed, error %lu\n", GetLastError() );
+    size = HeapSize( heap, 0, ptr );
+    ok( size == 2 * alloc_size, "HeapSize returned %#Ix, error %lu\n", size, GetLastError() );
+    while (size) if (ptr[--size]) break;
+    ok( !size && !ptr[0], "memory wasn't zeroed\n" );
+
+    ptr1 = HeapReAlloc( heap, HEAP_REALLOC_IN_PLACE_ONLY, ptr, alloc_size * 3 / 2 );
+    ok( ptr1 == ptr, "HeapReAlloc HEAP_REALLOC_IN_PLACE_ONLY failed, error %lu\n", GetLastError() );
+    ptr1 = HeapReAlloc( heap, HEAP_REALLOC_IN_PLACE_ONLY, ptr, 2 * alloc_size );
+    ok( ptr1 == ptr, "HeapReAlloc HEAP_REALLOC_IN_PLACE_ONLY failed, error %lu\n", GetLastError() );
+    ret = HeapFree( heap, 0, ptr1 );
+    ok( ret, "HeapFree failed, error %lu\n", GetLastError() );
+
+    ret = HeapDestroy( heap );
+    ok( ret, "HeapDestroy failed, error %lu\n", GetLastError() );
 }
 
 
@@ -334,7 +439,6 @@ static void test_GlobalAlloc(void)
     ok( size == 0, "GlobalSize returned %Iu\n", size );
     ret = HeapValidate( GetProcessHeap(), 0, entry );
     ok( !ret, "HeapValidate succeeded\n" );
-    todo_wine
     ok( entry->flags == 0xf, "got unexpected flags %#Ix\n", entry->flags );
     ok( !entry->ptr, "got unexpected ptr %p\n", entry->ptr );
     mem = GlobalFree( mem );
@@ -347,7 +451,6 @@ static void test_GlobalAlloc(void)
     ok( size == 0, "GlobalSize returned %Iu\n", size );
     ret = HeapValidate( GetProcessHeap(), 0, entry );
     ok( !ret, "HeapValidate succeeded\n" );
-    todo_wine
     ok( entry->flags == 0xb, "got unexpected flags %#Ix\n", entry->flags );
     ok( !entry->ptr, "got unexpected ptr %p\n", entry->ptr );
     mem = GlobalFree( mem );
@@ -368,9 +471,7 @@ static void test_GlobalAlloc(void)
 
         mem = GlobalAlloc( GMEM_MOVEABLE, alloc_size );
         ok( !!mem, "GlobalAlloc failed, error %lu\n", GetLastError() );
-        todo_wine
         ok( ((UINT_PTR)mem & sizeof(void *)), "got unexpected entry align\n" );
-        todo_wine
         ok( !((UINT_PTR)mem & (sizeof(void *) - 1)), "got unexpected entry align\n" );
 
         entry = mem_entry_from_HANDLE( mem );
@@ -391,14 +492,12 @@ static void test_GlobalAlloc(void)
         ok( !((UINT_PTR)ptr & (sizeof(void *) - 1)), "got unexpected ptr align\n" );
         for (i = 1; i < 0xff; ++i)
         {
-            todo_wine
             ok( entry->flags == ((i<<16)|3), "got unexpected flags %#Ix\n", entry->flags );
             ptr = GlobalLock( mem );
             ok( !!ptr, "GlobalLock failed, error %lu\n", GetLastError() );
         }
         ptr = GlobalLock( mem );
         ok( !!ptr, "GlobalLock failed, error %lu\n", GetLastError() );
-        todo_wine
         ok( entry->flags == 0xff0003, "got unexpected flags %#Ix\n", entry->flags );
         for (i = 1; i < 0xff; ++i)
         {
@@ -407,22 +506,18 @@ static void test_GlobalAlloc(void)
         }
         ret = GlobalUnlock( mem );
         ok( !ret, "GlobalUnlock succeeded, error %lu\n", GetLastError() );
-        todo_wine
         ok( entry->flags == 0x3, "got unexpected flags %#Ix\n", entry->flags );
 
         tmp_mem = GlobalFree( mem );
         ok( !tmp_mem, "GlobalFree failed, error %lu\n", GetLastError() );
         ok( !!entry->flags, "got unexpected flags %#Ix\n", entry->flags );
         ok( !((UINT_PTR)entry->flags & sizeof(void *)), "got unexpected ptr align\n" );
-        todo_wine_if(sizeof(void *) == 4)
         ok( !((UINT_PTR)entry->flags & (sizeof(void *) - 1)), "got unexpected ptr align\n" );
-        todo_wine
         ok( !entry->ptr, "got unexpected ptr %p\n", entry->ptr );
 
         mem = GlobalAlloc( GMEM_MOVEABLE | GMEM_DISCARDABLE, 0 );
         ok( !!mem, "GlobalAlloc failed, error %lu\n", GetLastError() );
         entry = mem_entry_from_HANDLE( mem );
-        todo_wine
         ok( entry->flags == 0xf, "got unexpected flags %#Ix\n", entry->flags );
         ok( !entry->ptr, "got unexpected ptr %p\n", entry->ptr );
         flags = GlobalFlags( mem );
@@ -433,7 +528,6 @@ static void test_GlobalAlloc(void)
         mem = GlobalAlloc( GMEM_MOVEABLE | GMEM_DISCARDABLE, 1 );
         ok( !!mem, "GlobalAlloc failed, error %lu\n", GetLastError() );
         entry = mem_entry_from_HANDLE( mem );
-        todo_wine
         ok( entry->flags == 0x7, "got unexpected flags %#Ix\n", entry->flags );
         ok( !!entry->ptr, "got unexpected ptr %p\n", entry->ptr );
         flags = GlobalFlags( mem );
@@ -444,7 +538,6 @@ static void test_GlobalAlloc(void)
         mem = GlobalAlloc( GMEM_MOVEABLE | GMEM_DISCARDABLE | GMEM_DDESHARE, 1 );
         ok( !!mem, "GlobalAlloc failed, error %lu\n", GetLastError() );
         entry = mem_entry_from_HANDLE( mem );
-        todo_wine
         ok( entry->flags == 0x8007, "got unexpected flags %#Ix\n", entry->flags );
         ok( !!entry->ptr, "got unexpected ptr %p\n", entry->ptr );
         flags = GlobalFlags( mem );
@@ -543,29 +636,24 @@ static void test_GlobalAlloc(void)
     ok( GetLastError() == ERROR_INVALID_HANDLE, "got error %lu\n", GetLastError() );
     SetLastError( 0xdeadbeef );
     flags = GlobalFlags( invalid_mem );
-    todo_wine
     ok( flags == GMEM_INVALID_HANDLE, "GlobalFlags succeeded\n" );
-    todo_wine
     ok( GetLastError() == ERROR_INVALID_HANDLE, "got error %lu\n", GetLastError() );
     SetLastError( 0xdeadbeef );
     size = GlobalSize( invalid_mem );
     ok( size == 0, "GlobalSize succeeded\n" );
-    todo_wine
     ok( GetLastError() == ERROR_INVALID_HANDLE, "got error %lu\n", GetLastError() );
     SetLastError( 0xdeadbeef );
     ptr = GlobalLock( invalid_mem );
     ok( !ptr, "GlobalLock succeeded\n" );
-    todo_wine
     ok( GetLastError() == ERROR_INVALID_HANDLE, "got error %lu\n", GetLastError() );
     SetLastError( 0xdeadbeef );
     ret = GlobalUnlock( invalid_mem );
-    ok( ret, "GlobalUnlock failed, error %lu\n", GetLastError() );
     todo_wine
+    ok( ret, "GlobalUnlock failed, error %lu\n", GetLastError() );
     ok( GetLastError() == ERROR_INVALID_HANDLE, "got error %lu\n", GetLastError() );
     SetLastError( 0xdeadbeef );
     tmp_mem = GlobalReAlloc( invalid_mem, 0, GMEM_MOVEABLE );
     ok( !tmp_mem, "GlobalReAlloc succeeded\n" );
-    todo_wine
     ok( GetLastError() == ERROR_INVALID_HANDLE, "got error %lu\n", GetLastError() );
 
     /* invalid pointers are caught */
@@ -889,29 +977,23 @@ static void test_LocalAlloc(void)
     ok( GetLastError() == ERROR_INVALID_HANDLE, "got error %lu\n", GetLastError() );
     SetLastError( 0xdeadbeef );
     flags = LocalFlags( invalid_mem );
-    todo_wine
     ok( flags == LMEM_INVALID_HANDLE, "LocalFlags succeeded\n" );
-    todo_wine
     ok( GetLastError() == ERROR_INVALID_HANDLE, "got error %lu\n", GetLastError() );
     SetLastError( 0xdeadbeef );
     size = LocalSize( invalid_mem );
     ok( size == 0, "LocalSize succeeded\n" );
-    todo_wine
     ok( GetLastError() == ERROR_INVALID_HANDLE, "got error %lu\n", GetLastError() );
     SetLastError( 0xdeadbeef );
     ptr = LocalLock( invalid_mem );
     ok( !ptr, "LocalLock succeeded\n" );
-    todo_wine
     ok( GetLastError() == ERROR_INVALID_HANDLE, "got error %lu\n", GetLastError() );
     SetLastError( 0xdeadbeef );
     ret = LocalUnlock( invalid_mem );
     ok( !ret, "LocalUnlock succeeded\n" );
-    todo_wine
     ok( GetLastError() == ERROR_INVALID_HANDLE, "got error %lu\n", GetLastError() );
     SetLastError( 0xdeadbeef );
     tmp_mem = LocalReAlloc( invalid_mem, 0, LMEM_MOVEABLE );
     ok( !tmp_mem, "LocalReAlloc succeeded\n" );
-    todo_wine
     ok( GetLastError() == ERROR_INVALID_HANDLE, "got error %lu\n", GetLastError() );
 
     /* invalid pointers are caught */
@@ -1097,7 +1179,6 @@ static void test_HeapQueryInformation(void)
     SIZE_T size;
     BOOL ret;
 
-    pHeapQueryInformation = (void *)GetProcAddress(GetModuleHandleA("kernel32.dll"), "HeapQueryInformation");
     if (!pHeapQueryInformation)
     {
         win_skip("HeapQueryInformation is not available\n");
@@ -1150,7 +1231,6 @@ static void test_heap_checks( DWORD flags )
     SIZE_T i, size, large_size = 3000 * 1024 + 37;
 
     if (flags & HEAP_PAGE_ALLOCS) return;  /* no tests for that case yet */
-    trace( "testing heap flags %08lx\n", flags );
 
     p = pHeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, 17 );
     ok( p != NULL, "HeapAlloc failed\n" );
@@ -1371,78 +1451,120 @@ static DWORD heap_flags_from_global_flag( DWORD flag )
     if (flag & FLG_HEAP_ENABLE_FREE_CHECK)
         ret |= HEAP_FREE_CHECKING_ENABLED;
     if (flag & FLG_HEAP_VALIDATE_PARAMETERS)
-        ret |= HEAP_VALIDATE_PARAMS | HEAP_VALIDATE | HEAP_TAIL_CHECKING_ENABLED | HEAP_FREE_CHECKING_ENABLED;
+        ret |= HEAP_VALIDATE_PARAMS | HEAP_TAIL_CHECKING_ENABLED | HEAP_FREE_CHECKING_ENABLED;
     if (flag & FLG_HEAP_VALIDATE_ALL)
-        ret |= HEAP_VALIDATE_ALL | HEAP_VALIDATE | HEAP_TAIL_CHECKING_ENABLED | HEAP_FREE_CHECKING_ENABLED;
+        ret |= HEAP_VALIDATE_ALL | HEAP_TAIL_CHECKING_ENABLED | HEAP_FREE_CHECKING_ENABLED;
     if (flag & FLG_HEAP_DISABLE_COALESCING)
         ret |= HEAP_DISABLE_COALESCE_ON_FREE;
     if (flag & FLG_HEAP_PAGE_ALLOCS)
-        ret |= HEAP_PAGE_ALLOCS | HEAP_GROWABLE;
+        ret |= HEAP_PAGE_ALLOCS;
     return ret;
+}
+
+static void test_heap_layout( HANDLE handle, DWORD global_flag, DWORD heap_flags )
+{
+    DWORD force_flags = heap_flags & ~(HEAP_SHARED|HEAP_DISABLE_COALESCE_ON_FREE);
+    struct heap *heap = handle;
+
+    if (global_flag & FLG_HEAP_ENABLE_TAGGING) heap_flags |= HEAP_SHARED;
+    if (!(global_flag & FLG_HEAP_PAGE_ALLOCS)) force_flags &= ~(HEAP_GROWABLE|HEAP_PRIVATE);
+
+    todo_wine_if( force_flags & (HEAP_PRIVATE|HEAP_NO_SERIALIZE) )
+    ok( heap->force_flags == force_flags, "got force_flags %#x\n", heap->force_flags );
+    todo_wine_if( heap_flags & (HEAP_VALIDATE_ALL|HEAP_VALIDATE_PARAMS|HEAP_SHARED|HEAP_PRIVATE) )
+    ok( heap->flags == heap_flags, "got flags %#x\n", heap->flags );
+
+    if (heap->flags & HEAP_PAGE_ALLOCS)
+    {
+        struct heap expect_heap;
+        memset( &expect_heap, 0xee, sizeof(expect_heap) );
+        expect_heap.force_flags = heap->force_flags;
+        expect_heap.flags = heap->flags;
+        todo_wine
+        ok( !memcmp( heap, &expect_heap, sizeof(expect_heap) ), "got unexpected data\n" );
+    }
+    else
+    {
+        todo_wine
+        ok( heap->ffeeffee == 0xffeeffee, "got ffeeffee %#x\n", heap->ffeeffee );
+        ok( heap->auto_flags == (heap_flags & HEAP_GROWABLE) || !heap->auto_flags,
+            "got auto_flags %#x\n", heap->auto_flags );
+    }
 }
 
 static void test_child_heap( const char *arg )
 {
-    struct heap_layout *heap = GetProcessHeap();
-    DWORD expected = strtoul( arg, 0, 16 );
-    DWORD expect_heap;
+    char buffer[32];
+    DWORD global_flags = strtoul( arg, 0, 16 ), type, size = sizeof(buffer);
+    DWORD heap_flags;
+    HANDLE heap;
+    HKEY hkey;
+    BOOL ret;
 
-    if (expected == 0xdeadbeef)  /* expected value comes from Session Manager global flags */
+    if (global_flags == 0xdeadbeef)  /* global_flags value comes from Session Manager global flags */
     {
-        HKEY hkey;
-        expected = 0;
-        if (!RegOpenKeyA( HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Control\\Session Manager", &hkey ))
+        ret = RegOpenKeyA( HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Control\\Session Manager", &hkey );
+        if (!ret)
         {
-            char buffer[32];
-            DWORD type, size = sizeof(buffer);
-
-            if (!RegQueryValueExA( hkey, "GlobalFlag", 0, &type, (BYTE *)buffer, &size ))
-            {
-                if (type == REG_DWORD) expected = *(DWORD *)buffer;
-                else if (type == REG_SZ) expected = strtoul( buffer, 0, 16 );
-            }
-            RegCloseKey( hkey );
+            skip( "Session Manager flags not set\n" );
+            return;
         }
+
+        ret = RegQueryValueExA( hkey, "GlobalFlag", 0, &type, (BYTE *)buffer, &size );
+        ok( ret, "RegQueryValueExA failed, error %lu\n", GetLastError() );
+
+        if (type == REG_DWORD) global_flags = *(DWORD *)buffer;
+        else if (type == REG_SZ) global_flags = strtoul( buffer, 0, 16 );
+
+        ret = RegCloseKey( hkey );
+        ok( ret, "RegCloseKey failed, error %lu\n", GetLastError() );
     }
-    if (expected && !pRtlGetNtGlobalFlags())  /* not working on NT4 */
+    if (global_flags && !pRtlGetNtGlobalFlags())  /* not working on NT4 */
     {
         win_skip( "global flags not set\n" );
         return;
     }
 
-    ok( pRtlGetNtGlobalFlags() == expected,
-        "%s: got global flags %08lx expected %08lx\n", arg, pRtlGetNtGlobalFlags(), expected );
+    heap_flags = heap_flags_from_global_flag( global_flags );
+    trace( "testing global flags %#lx, heap flags %08lx\n", global_flags, heap_flags );
 
-    expect_heap = heap_flags_from_global_flag( expected );
+    ok( pRtlGetNtGlobalFlags() == global_flags, "got global flags %#lx\n", pRtlGetNtGlobalFlags() );
 
-    if (!(heap->flags & HEAP_GROWABLE) || heap->pattern == 0xffeeffee)  /* vista layout */
-    {
-        ok( (heap->flags & ~HEAP_GROWABLE) == 0, "%s: got heap flags %08lx\n", arg, heap->flags );
-    }
-    else if (heap->pattern == 0xeeeeeeee && heap->flags == 0xeeeeeeee)
-    {
-        ok( expected & FLG_HEAP_PAGE_ALLOCS, "%s: got heap flags 0xeeeeeeee without page alloc\n", arg );
-    }
-    else
-    {
-        ok( heap->flags == (expect_heap | HEAP_GROWABLE),
-            "%s: got heap flags %08lx expected %08lx\n", arg, heap->flags, expect_heap );
-        ok( heap->force_flags == (expect_heap & ~0x18000080),
-            "%s: got heap force flags %08lx expected %08lx\n", arg, heap->force_flags, expect_heap );
-        expect_heap = heap->flags;
-    }
+    test_heap_layout( GetProcessHeap(), global_flags, heap_flags|HEAP_GROWABLE );
 
-    test_heap_checks( expect_heap );
+    heap = HeapCreate( 0, 0, 0 );
+    ok( heap != GetProcessHeap(), "got unexpected heap\n" );
+    test_heap_layout( heap, global_flags, heap_flags|HEAP_GROWABLE|HEAP_PRIVATE );
+    ret = HeapDestroy( heap );
+    ok( ret, "HeapDestroy failed, error %lu\n", GetLastError() );
+
+    heap = HeapCreate( HEAP_NO_SERIALIZE, 0, 0 );
+    ok( heap != GetProcessHeap(), "got unexpected heap\n" );
+    test_heap_layout( heap, global_flags, heap_flags|HEAP_NO_SERIALIZE|HEAP_GROWABLE|HEAP_PRIVATE );
+    ret = HeapDestroy( heap );
+    ok( ret, "HeapDestroy failed, error %lu\n", GetLastError() );
+
+    heap = HeapCreate( 0, 0x1000, 0x10000 );
+    ok( heap != GetProcessHeap(), "got unexpected heap\n" );
+    test_heap_layout( heap, global_flags, heap_flags|HEAP_PRIVATE );
+    ret = HeapDestroy( heap );
+    ok( ret, "HeapDestroy failed, error %lu\n", GetLastError() );
+
+    heap = HeapCreate( HEAP_SHARED, 0, 0 );
+    ok( heap != GetProcessHeap(), "got unexpected heap\n" );
+    test_heap_layout( heap, global_flags, heap_flags|HEAP_GROWABLE|HEAP_PRIVATE );
+    ret = HeapDestroy( heap );
+    ok( ret, "HeapDestroy failed, error %lu\n", GetLastError() );
+
+    test_heap_checks( heap_flags );
 }
 
 static void test_GetPhysicallyInstalledSystemMemory(void)
 {
-    HMODULE kernel32 = GetModuleHandleA("kernel32.dll");
     MEMORYSTATUSEX memstatus;
     ULONGLONG total_memory;
     BOOL ret;
 
-    pGetPhysicallyInstalledSystemMemory = (void *)GetProcAddress(kernel32, "GetPhysicallyInstalledSystemMemory");
     if (!pGetPhysicallyInstalledSystemMemory)
     {
         win_skip("GetPhysicallyInstalledSystemMemory is not available\n");
@@ -1528,8 +1650,12 @@ static void test_GlobalMemoryStatus(void)
     ok( memex.ullAvailExtendedVirtual == 0, "got ullAvailExtendedVirtual %#I64x\n", memex.ullAvailExtendedVirtual );
 
     ok( mem.dwMemoryLoad == memex.dwMemoryLoad, "got dwMemoryLoad %lu\n", mem.dwMemoryLoad );
-    ok( mem.dwTotalPhys == min( ~(SIZE_T)0 >> 1, memex.ullTotalPhys ), "got dwTotalPhys %#Ix\n", mem.dwTotalPhys );
-    ok( IS_WITHIN_RANGE( mem.dwAvailPhys, min( ~(SIZE_T)0 >> 1, memex.ullAvailPhys ) ), "got dwAvailPhys %#Ix\n", mem.dwAvailPhys );
+    ok( mem.dwTotalPhys == min( ~(SIZE_T)0 >> 1, memex.ullTotalPhys ) ||
+        broken( mem.dwTotalPhys == ~(SIZE_T)0 ) /* Win <= 8.1 with RAM size > 4GB */,
+        "got dwTotalPhys %#Ix\n", mem.dwTotalPhys );
+    ok( IS_WITHIN_RANGE( mem.dwAvailPhys, min( ~(SIZE_T)0 >> 1, memex.ullAvailPhys ) ) ||
+        broken( mem.dwAvailPhys == ~(SIZE_T)0 ) /* Win <= 8.1 with RAM size > 4GB */,
+        "got dwAvailPhys %#Ix\n", mem.dwAvailPhys );
 #ifndef _WIN64
     todo_wine_if(memex.ullTotalPageFile > 0xfff7ffff)
 #endif
@@ -1546,10 +1672,7 @@ START_TEST(heap)
     int argc;
     char **argv;
 
-    pHeapAlloc = (void *)GetProcAddress( GetModuleHandleA("kernel32"), "HeapAlloc" );
-    pHeapReAlloc = (void *)GetProcAddress( GetModuleHandleA("kernel32"), "HeapReAlloc" );
-
-    pRtlGetNtGlobalFlags = (void *)GetProcAddress( GetModuleHandleA("ntdll.dll"), "RtlGetNtGlobalFlags" );
+    load_functions();
 
     argc = winetest_get_mainargs( &argv );
     if (argc >= 3)
@@ -1558,18 +1681,9 @@ START_TEST(heap)
         return;
     }
 
-    test_heap();
     test_HeapCreate();
     test_GlobalAlloc();
     test_LocalAlloc();
-
-    /* Test both short and very long blocks */
-    test_sized_HeapAlloc(1);
-    test_sized_HeapAlloc(1 << 20);
-    test_sized_HeapReAlloc(1, 100);
-    test_sized_HeapReAlloc(1, (1 << 20));
-    test_sized_HeapReAlloc((1 << 20), (2 << 20));
-    test_sized_HeapReAlloc((1 << 20), 1);
 
     test_HeapQueryInformation();
     test_GetPhysicallyInstalledSystemMemory();

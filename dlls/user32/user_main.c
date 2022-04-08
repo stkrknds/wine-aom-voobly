@@ -153,7 +153,6 @@ static void WINAPI unregister_imm( HWND hwnd )
 
 static void CDECL free_win_ptr( WND *win )
 {
-    HeapFree( GetProcessHeap(), 0, win->text );
     HeapFree( GetProcessHeap(), 0, win->pScroll );
 }
 
@@ -164,11 +163,7 @@ static const struct user_callbacks user_funcs =
     DestroyCaret,
     EndMenu,
     HideCaret,
-    PostMessageW,
-    SendMessageTimeoutW,
-    SendMessageA,
-    SendMessageW,
-    SendNotifyMessageW,
+    ImmProcessKey,
     SetSystemMenu,
     ShowCaret,
     free_menu_items,
@@ -176,12 +171,11 @@ static const struct user_callbacks user_funcs =
     MENU_IsMenuActive,
     notify_ime,
     post_dde_message,
-    process_hardware_message,
+    process_rawinput_message,
     rawinput_device_get_usages,
     register_builtin_classes,
     MENU_SetMenu,
     SCROLL_SetStandardScrollPainted,
-    (void *)__wine_set_user_driver,
     unpack_dde_message,
     register_imm,
     unregister_imm,
@@ -275,7 +269,6 @@ BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, LPVOID reserved )
         thread_detach();
         break;
     case DLL_PROCESS_DETACH:
-        USER_unload_driver();
         FreeLibrary(imm32_module);
         break;
     }
@@ -377,5 +370,6 @@ void SPY_EnterMessage( INT flag, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 
 void SPY_ExitMessage( INT flag, HWND hwnd, UINT msg, LRESULT lreturn, WPARAM wparam, LPARAM lparam )
 {
-    if (TRACE_ON(message)) NtUserMessageCall( hwnd, msg, wparam, lparam, lreturn, FNID_SPYEXIT, flag );
+    if (TRACE_ON(message)) NtUserMessageCall( hwnd, msg, wparam, lparam, (void *)lreturn,
+                                              FNID_SPYEXIT, flag );
 }

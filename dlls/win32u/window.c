@@ -344,7 +344,7 @@ DWORD get_window_thread( HWND hwnd, DWORD *process )
 }
 
 /* see GetParent */
-static HWND get_parent( HWND hwnd )
+HWND get_parent( HWND hwnd )
 {
     HWND retval = 0;
     WND *win;
@@ -479,7 +479,7 @@ HWND WINAPI NtUserSetParent( HWND hwnd, HWND parent )
 }
 
 /* see GetWindow */
-static HWND get_window_relative( HWND hwnd, UINT rel )
+HWND get_window_relative( HWND hwnd, UINT rel )
 {
     HWND retval = 0;
 
@@ -805,6 +805,17 @@ BOOL is_window_unicode( HWND hwnd )
         SERVER_END_REQ;
     }
     return ret;
+}
+
+/* see IsWindowEnabled */
+BOOL is_window_enabled( HWND hwnd )
+{
+    LONG ret;
+
+    SetLastError( NO_ERROR );
+    ret = get_window_long( hwnd, GWL_STYLE );
+    if (!ret && GetLastError() != NO_ERROR) return FALSE;
+    return !(ret & WS_DISABLED);
 }
 
 /* see GetWindowDpiAwarenessContext */
@@ -2189,7 +2200,7 @@ static HWND *list_children_from_point( HWND hwnd, POINT pt )
  *
  * Find the window and hittest for a given point.
  */
-static HWND window_from_point( HWND hwnd, POINT pt, INT *hittest )
+HWND window_from_point( HWND hwnd, POINT pt, INT *hittest )
 {
     int i, res;
     HWND ret, *list;
@@ -2588,7 +2599,7 @@ other_process:  /* one of the parents may belong to another process, do it the h
 }
 
 /* see ScreenToClient */
-static BOOL screen_to_client( HWND hwnd, POINT *pt )
+BOOL screen_to_client( HWND hwnd, POINT *pt )
 {
     POINT offset;
     BOOL mirrored;
@@ -3902,7 +3913,7 @@ void update_window_state( HWND hwnd )
 
     if (!is_current_thread_window( hwnd ))
     {
-        post_message( hwnd, WM_WINE_UPDATEWINDOWSTATE, 0, 0 );
+        NtUserPostMessage( hwnd, WM_WINE_UPDATEWINDOWSTATE, 0, 0 );
         return;
     }
 
@@ -4272,6 +4283,7 @@ static void free_window_handle( HWND hwnd )
         SERVER_END_REQ;
         user_unlock();
         if (user_callbacks) user_callbacks->free_win_ptr( win );
+        free( win->text );
         free( win );
     }
 }
@@ -4475,6 +4487,7 @@ void destroy_thread_windows(void)
             window_surface_release( win->surface );
         }
         if (user_callbacks) user_callbacks->free_win_ptr( win );
+        free( win->text );
         free( win );
     }
 }
@@ -4667,7 +4680,6 @@ HWND WINAPI NtUserCreateWindowEx( DWORD ex_style, UNICODE_STRING *class_name,
     DPI_AWARENESS_CONTEXT context;
     HWND hwnd, owner = 0;
     INT sw = SW_SHOW;
-    LRESULT result;
     RECT rect;
     WND *win;
 
@@ -4846,8 +4858,7 @@ HWND WINAPI NtUserCreateWindowEx( DWORD ex_style, UNICODE_STRING *class_name,
 
     TRACE( "hwnd %p cs %d,%d %dx%d %s\n", hwnd, cs.x, cs.y, cs.cx, cs.cy, wine_dbgstr_rect(&rect) );
     *client_cs = cs;
-    if (!NtUserMessageCall( hwnd, WM_NCCREATE, 0, (LPARAM)client_cs, (ULONG_PTR)&result,
-                            FNID_SENDMESSAGE, ansi ) || !result)
+    if (!NtUserMessageCall( hwnd, WM_NCCREATE, 0, (LPARAM)client_cs, NULL, FNID_SENDMESSAGE, ansi ))
     {
         WARN( "%p: aborted by WM_NCCREATE\n", hwnd );
         goto failed;
@@ -4879,8 +4890,8 @@ HWND WINAPI NtUserCreateWindowEx( DWORD ex_style, UNICODE_STRING *class_name,
     else goto failed;
 
     /* send WM_CREATE */
-    if (!NtUserMessageCall( hwnd, WM_CREATE, 0, (LPARAM)client_cs, (ULONG_PTR)&result,
-                            FNID_SENDMESSAGE, ansi ) || result == -1) goto failed;
+    if (NtUserMessageCall( hwnd, WM_CREATE, 0, (LPARAM)client_cs, 0, FNID_SENDMESSAGE, ansi ) == -1)
+        goto failed;
     cs = *client_cs;
 
     /* call the driver */
@@ -4925,7 +4936,7 @@ HWND WINAPI NtUserCreateWindowEx( DWORD ex_style, UNICODE_STRING *class_name,
     }
 
     if (parent == get_desktop_window())
-        post_message( parent, WM_PARENTNOTIFY, WM_CREATE, (LPARAM)hwnd );
+        NtUserPostMessage( parent, WM_PARENTNOTIFY, WM_CREATE, (LPARAM)hwnd );
 
     if (cs.style & WS_VISIBLE)
     {
@@ -4979,6 +4990,8 @@ ULONG_PTR WINAPI NtUserCallHwnd( HWND hwnd, DWORD code )
         return get_server_window_text( hwnd, NULL, 0 );
     case NtUserIsWindow:
         return is_window( hwnd );
+    case NtUserIsWindowEnabled:
+        return is_window_enabled( hwnd );
     case NtUserIsWindowUnicode:
         return is_window_unicode( hwnd );
     case NtUserIsWindowVisible:

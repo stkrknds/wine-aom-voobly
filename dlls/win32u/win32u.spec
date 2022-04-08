@@ -793,7 +793,7 @@
 @ stub NtUserChildWindowFromPointEx
 @ stub NtUserClearForeground
 @ stdcall NtUserClipCursor(ptr)
-@ stub NtUserCloseClipboard
+@ stdcall NtUserCloseClipboard()
 @ stdcall -syscall NtUserCloseDesktop(long)
 @ stdcall -syscall NtUserCloseWindowStation(long)
 @ stub NtUserCompositionInputSinkLuidFromPoint
@@ -1103,8 +1103,8 @@
 @ stub NtUserPhysicalToLogicalDpiPointForWindow
 @ stub NtUserPhysicalToLogicalPoint
 @ stub NtUserPostKeyboardInputMessage
-@ stub NtUserPostMessage
-@ stub NtUserPostThreadMessage
+@ stdcall NtUserPostMessage(long long long long)
+@ stdcall NtUserPostThreadMessage(long long long long)
 @ stub NtUserPrintWindow
 @ stub NtUserProcessConnect
 @ stub NtUserProcessInkFeedbackCommand
@@ -1322,7 +1322,7 @@
 
 # Graphics drivers
 @ cdecl __wine_send_input(long ptr ptr)
-@ cdecl __wine_set_display_driver(ptr long)
+@ cdecl __wine_set_user_driver(ptr long)
 
 # OpenGL
 @ cdecl __wine_get_wgl_driver(long long)
