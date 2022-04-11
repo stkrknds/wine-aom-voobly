@@ -219,16 +219,28 @@ void init_registry_display_settings(void)
     }
 }
 
-static BOOL get_display_device_reg_key(const WCHAR *device_name, WCHAR *key, unsigned len)
+static HKEY get_display_device_reg_key( const WCHAR *device_name )
 {
     static const WCHAR display[] = {'\\','\\','.','\\','D','I','S','P','L','A','Y'};
     static const WCHAR video_value_fmt[] = {'\\','D','e','v','i','c','e','\\',
                                             'V','i','d','e','o','%','d',0};
-    static const WCHAR video_key[] = {'H','A','R','D','W','A','R','E','\\',
-                                      'D','E','V','I','C','E','M','A','P','\\',
-                                      'V','I','D','E','O','\\',0};
-    WCHAR value_name[MAX_PATH], buffer[MAX_PATH], *end_ptr;
+    static const WCHAR video_key[] = {
+        '\\','R','e','g','i','s','t','r','y',
+        '\\','M','a','c','h','i','n','e',
+        '\\','H','A','R','D','W','A','R','E',
+        '\\','D','E','V','I','C','E','M','A','P',
+        '\\','V','I','D','E','O'};
+    static const WCHAR current_config_key[] = {
+        '\\','R','e','g','i','s','t','r','y',
+        '\\','M','a','c','h','i','n','e',
+        '\\','S','y','s','t','e','m',
+        '\\','C','u','r','r','e','n','t','C','o','n','t','r','o','l','S','e','t',
+        '\\','H','a','r','d','w','a','r','e',' ','P','r','o','f','i','l','e','s',
+        '\\','C','u','r','r','e','n','t'};
+    WCHAR value_name[MAX_PATH], buffer[4096], *end_ptr;
+    KEY_VALUE_PARTIAL_INFORMATION *value = (void *)buffer;
     DWORD adapter_index, size;
+    HKEY hkey;
 
     /* Device name has to be \\.\DISPLAY%d */
     if (strncmpiW(device_name, display, ARRAY_SIZE(display)))
@@ -240,111 +252,104 @@ static BOOL get_display_device_reg_key(const WCHAR *device_name, WCHAR *key, uns
         return FALSE;
 
     /* Open \Device\Video* in HKLM\HARDWARE\DEVICEMAP\VIDEO\ */
+    if (!(hkey = reg_open_key( NULL, video_key, sizeof(video_key) ))) return FALSE;
     sprintfW(value_name, video_value_fmt, adapter_index);
-    size = sizeof(buffer);
-    if (RegGetValueW(HKEY_LOCAL_MACHINE, video_key, value_name, RRF_RT_REG_SZ, NULL, buffer, &size))
+    size = query_reg_value( hkey, value_name, value, sizeof(buffer) );
+    NtClose( hkey );
+    if (!size || value->Type != REG_SZ) return FALSE;
+
+    /* Replace \Registry\Machine\ prefix with HKEY_CURRENT_CONFIG */
+    memmove( buffer + ARRAYSIZE(current_config_key), (const WCHAR *)value->Data + 17,
+             size - 17 * sizeof(WCHAR) );
+    memcpy( buffer, current_config_key, sizeof(current_config_key) );
+    TRACE( "display device %s registry settings key %s.\n", wine_dbgstr_w(device_name),
+           wine_dbgstr_w(buffer) );
+    return reg_open_key( NULL, buffer, lstrlenW(buffer) * sizeof(WCHAR) );
+}
+
+static BOOL query_display_setting( HKEY hkey, const char *name, DWORD *ret )
+{
+    char buffer[1024];
+    WCHAR nameW[128];
+    KEY_VALUE_PARTIAL_INFORMATION *value = (void *)buffer;
+
+    asciiz_to_unicode( nameW, name );
+    if (query_reg_value( hkey, nameW, value, sizeof(buffer) ) != sizeof(DWORD) ||
+        value->Type != REG_DWORD)
         return FALSE;
 
-    if (len < lstrlenW(buffer + 18) + 1)
-        return FALSE;
-
-    /* Skip \Registry\Machine\ prefix */
-    lstrcpyW(key, buffer + 18);
-    TRACE("display device %s registry settings key %s.\n", wine_dbgstr_w(device_name), wine_dbgstr_w(key));
+    *ret = *(DWORD *)value->Data;
     return TRUE;
 }
 
 static BOOL read_registry_settings(const WCHAR *device_name, DEVMODEW *dm)
 {
-    WCHAR wine_x11_reg_key[MAX_PATH];
     HANDLE mutex;
     HKEY hkey;
-    DWORD type, size;
     BOOL ret = TRUE;
 
     dm->dmFields = 0;
 
     mutex = get_display_device_init_mutex();
-    if (!get_display_device_reg_key(device_name, wine_x11_reg_key, ARRAY_SIZE(wine_x11_reg_key)))
+    if (!(hkey = get_display_device_reg_key( device_name )))
     {
         release_display_device_init_mutex(mutex);
         return FALSE;
     }
 
-    if (RegOpenKeyExW(HKEY_CURRENT_CONFIG, wine_x11_reg_key, 0, KEY_READ, &hkey))
-    {
-        release_display_device_init_mutex(mutex);
-        return FALSE;
-    }
-
-#define query_value(name, data) \
-    size = sizeof(DWORD); \
-    if (RegQueryValueExA(hkey, name, 0, &type, (LPBYTE)(data), &size) || \
-        type != REG_DWORD || size != sizeof(DWORD)) \
-        ret = FALSE
-
-    query_value("DefaultSettings.BitsPerPel", &dm->dmBitsPerPel);
+    ret &= query_display_setting( hkey, "DefaultSettings.BitsPerPel", &dm->dmBitsPerPel );
     dm->dmFields |= DM_BITSPERPEL;
-    query_value("DefaultSettings.XResolution", &dm->dmPelsWidth);
+    ret &= query_display_setting( hkey, "DefaultSettings.XResolution", &dm->dmPelsWidth );
     dm->dmFields |= DM_PELSWIDTH;
-    query_value("DefaultSettings.YResolution", &dm->dmPelsHeight);
+    ret &= query_display_setting( hkey, "DefaultSettings.YResolution", &dm->dmPelsHeight );
     dm->dmFields |= DM_PELSHEIGHT;
-    query_value("DefaultSettings.VRefresh", &dm->dmDisplayFrequency);
+    ret &= query_display_setting( hkey, "DefaultSettings.VRefresh", &dm->dmDisplayFrequency );
     dm->dmFields |= DM_DISPLAYFREQUENCY;
-    query_value("DefaultSettings.Flags", &dm->u2.dmDisplayFlags);
+    ret &= query_display_setting( hkey, "DefaultSettings.Flags", &dm->u2.dmDisplayFlags );
     dm->dmFields |= DM_DISPLAYFLAGS;
-    query_value("DefaultSettings.XPanning", &dm->u1.s2.dmPosition.x);
-    query_value("DefaultSettings.YPanning", &dm->u1.s2.dmPosition.y);
+    ret &= query_display_setting( hkey, "DefaultSettings.XPanning", (DWORD *)&dm->u1.s2.dmPosition.x );
+    ret &= query_display_setting( hkey, "DefaultSettings.YPanning", (DWORD *)&dm->u1.s2.dmPosition.y );
     dm->dmFields |= DM_POSITION;
-    query_value("DefaultSettings.Orientation", &dm->u1.s2.dmDisplayOrientation);
+    ret &= query_display_setting( hkey, "DefaultSettings.Orientation", &dm->u1.s2.dmDisplayOrientation );
     dm->dmFields |= DM_DISPLAYORIENTATION;
-    query_value("DefaultSettings.FixedOutput", &dm->u1.s2.dmDisplayFixedOutput);
+    ret &= query_display_setting( hkey, "DefaultSettings.FixedOutput", &dm->u1.s2.dmDisplayFixedOutput );
 
-#undef query_value
-
-    RegCloseKey(hkey);
+    NtClose( hkey );
     release_display_device_init_mutex(mutex);
     return ret;
 }
 
+static BOOL set_setting_value( HKEY hkey, const char *name, DWORD val )
+{
+    WCHAR nameW[128];
+    UNICODE_STRING str = { asciiz_to_unicode( nameW, name ) - sizeof(WCHAR), sizeof(nameW), nameW };
+    return !NtSetValueKey( hkey, &str, 0, REG_DWORD, &val, sizeof(val) );
+}
+
 static BOOL write_registry_settings(const WCHAR *device_name, const DEVMODEW *dm)
 {
-    WCHAR wine_x11_reg_key[MAX_PATH];
     HANDLE mutex;
     HKEY hkey;
     BOOL ret = TRUE;
 
     mutex = get_display_device_init_mutex();
-    if (!get_display_device_reg_key(device_name, wine_x11_reg_key, ARRAY_SIZE(wine_x11_reg_key)))
+    if (!(hkey = get_display_device_reg_key( device_name )))
     {
         release_display_device_init_mutex(mutex);
         return FALSE;
     }
 
-    if (RegCreateKeyExW(HKEY_CURRENT_CONFIG, wine_x11_reg_key, 0, NULL,
-                        REG_OPTION_VOLATILE, KEY_WRITE, NULL, &hkey, NULL))
-    {
-        release_display_device_init_mutex(mutex);
-        return FALSE;
-    }
+    ret &= set_setting_value( hkey, "DefaultSettings.BitsPerPel", dm->dmBitsPerPel );
+    ret &= set_setting_value( hkey, "DefaultSettings.XResolution", dm->dmPelsWidth );
+    ret &= set_setting_value( hkey, "DefaultSettings.YResolution", dm->dmPelsHeight );
+    ret &= set_setting_value( hkey, "DefaultSettings.VRefresh", dm->dmDisplayFrequency );
+    ret &= set_setting_value( hkey, "DefaultSettings.Flags", dm->u2.dmDisplayFlags );
+    ret &= set_setting_value( hkey, "DefaultSettings.XPanning", dm->u1.s2.dmPosition.x );
+    ret &= set_setting_value( hkey, "DefaultSettings.YPanning", dm->u1.s2.dmPosition.y );
+    ret &= set_setting_value( hkey, "DefaultSettings.Orientation", dm->u1.s2.dmDisplayOrientation );
+    ret &= set_setting_value( hkey, "DefaultSettings.FixedOutput", dm->u1.s2.dmDisplayFixedOutput );
 
-#define set_value(name, data) \
-    if (RegSetValueExA(hkey, name, 0, REG_DWORD, (const BYTE*)(data), sizeof(DWORD))) \
-        ret = FALSE
-
-    set_value("DefaultSettings.BitsPerPel", &dm->dmBitsPerPel);
-    set_value("DefaultSettings.XResolution", &dm->dmPelsWidth);
-    set_value("DefaultSettings.YResolution", &dm->dmPelsHeight);
-    set_value("DefaultSettings.VRefresh", &dm->dmDisplayFrequency);
-    set_value("DefaultSettings.Flags", &dm->u2.dmDisplayFlags);
-    set_value("DefaultSettings.XPanning", &dm->u1.s2.dmPosition.x);
-    set_value("DefaultSettings.YPanning", &dm->u1.s2.dmPosition.y);
-    set_value("DefaultSettings.Orientation", &dm->u1.s2.dmDisplayOrientation);
-    set_value("DefaultSettings.FixedOutput", &dm->u1.s2.dmDisplayFixedOutput);
-
-#undef set_value
-
-    RegCloseKey(hkey);
+    NtClose( hkey );
     release_display_device_init_mutex(mutex);
     return ret;
 }

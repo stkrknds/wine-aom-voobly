@@ -18,6 +18,25 @@
 
 #include "mmdeviceapi.h"
 
+struct oss_stream
+{
+    WAVEFORMATEX *fmt;
+    EDataFlow flow;
+    UINT flags;
+    AUDCLNT_SHAREMODE share;
+    HANDLE event;
+
+    int fd;
+
+    BOOL playing;
+    UINT64 written_frames, last_pos_frames;
+    UINT32 period_us, period_frames, bufsize_frames, held_frames, tmp_buffer_frames, in_oss_frames;
+    UINT32 oss_bufsize_bytes, lcl_offs_frames; /* offs into local_buffer where valid data starts */
+
+    BYTE *local_buffer, *tmp_buffer;
+    INT32 getbuf_last; /* <0 when using tmp_buffer */
+};
+
 /* From <dlls/mmdevapi/mmdevapi.h> */
 enum DriverPriority
 {
@@ -48,10 +67,30 @@ struct get_endpoint_ids_params
     unsigned int default_idx;
 };
 
+struct is_format_supported_params
+{
+    const char *device;
+    EDataFlow flow;
+    AUDCLNT_SHAREMODE share;
+    const WAVEFORMATEX *fmt_in;
+    WAVEFORMATEXTENSIBLE *fmt_out;
+    HRESULT result;
+};
+
+struct get_mix_format_params
+{
+    const char *device;
+    EDataFlow flow;
+    WAVEFORMATEXTENSIBLE *fmt;
+    HRESULT result;
+};
+
 enum oss_funcs
 {
     oss_test_connect,
     oss_get_endpoint_ids,
+    oss_is_format_supported,
+    oss_get_mix_format,
 };
 
 extern unixlib_handle_t oss_handle;
