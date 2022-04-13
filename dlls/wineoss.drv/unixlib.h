@@ -28,13 +28,15 @@ struct oss_stream
 
     int fd;
 
-    BOOL playing;
+    BOOL playing, mute;
     UINT64 written_frames, last_pos_frames;
     UINT32 period_us, period_frames, bufsize_frames, held_frames, tmp_buffer_frames, in_oss_frames;
     UINT32 oss_bufsize_bytes, lcl_offs_frames; /* offs into local_buffer where valid data starts */
 
     BYTE *local_buffer, *tmp_buffer;
     INT32 getbuf_last; /* <0 when using tmp_buffer */
+
+    pthread_mutex_t lock;
 };
 
 /* From <dlls/mmdevapi/mmdevapi.h> */
@@ -67,6 +69,25 @@ struct get_endpoint_ids_params
     unsigned int default_idx;
 };
 
+struct create_stream_params
+{
+    const char *device;
+    EDataFlow flow;
+    AUDCLNT_SHAREMODE share;
+    UINT flags;
+    REFERENCE_TIME duration;
+    REFERENCE_TIME period;
+    const WAVEFORMATEX *fmt;
+    HRESULT result;
+    struct oss_stream **stream;
+};
+
+struct release_stream_params
+{
+    struct oss_stream *stream;
+    HRESULT result;
+};
+
 struct is_format_supported_params
 {
     const char *device;
@@ -89,6 +110,8 @@ enum oss_funcs
 {
     oss_test_connect,
     oss_get_endpoint_ids,
+    oss_create_stream,
+    oss_release_stream,
     oss_is_format_supported,
     oss_get_mix_format,
 };

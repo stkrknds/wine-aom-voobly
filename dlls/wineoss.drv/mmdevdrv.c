@@ -33,6 +33,7 @@
 #include <unistd.h>
 #include <math.h>
 #include <sys/soundcard.h>
+#include <pthread.h>
 
 #include "windef.h"
 #include "winbase.h"
@@ -113,10 +114,7 @@ struct ACImpl {
     UINT32 channel_count;
     struct oss_stream *stream;
 
-    BOOL initted;
     HANDLE timer;
-
-    CRITICAL_SECTION lock;
 
     AudioSession *session;
     AudioSessionWrapper *session_wrapper;
@@ -262,6 +260,26 @@ int WINAPI AUDDRV_GetPriority(void)
     return params.priority;
 }
 
+static HRESULT stream_release(struct oss_stream *stream)
+{
+    struct release_stream_params params;
+
+    params.stream = stream;
+    OSS_CALL(release_stream, &params);
+
+    return params.result;
+}
+
+static void oss_lock(struct oss_stream *stream)
+{
+    pthread_mutex_lock(&stream->lock);
+}
+
+static void oss_unlock(struct oss_stream *stream)
+{
+    pthread_mutex_unlock(&stream->lock);
+}
+
 static void set_device_guid(EDataFlow flow, HKEY drv_key, const WCHAR *key_name,
         GUID *guid)
 {
@@ -334,11 +352,13 @@ static void get_device_guid(EDataFlow flow, const char *device, GUID *guid)
         RegCloseKey(key);
 }
 
-static int open_device(const char *device, EDataFlow flow)
+static void set_stream_volumes(ACImpl *This)
 {
-    int flags = ((flow == eRender) ? O_WRONLY : O_RDONLY) | O_NONBLOCK;
+    struct oss_stream *stream = This->stream;
 
-    return open(device, flags, 0);
+    oss_lock(stream);
+    stream->mute = This->session->mute;
+    oss_unlock(stream);
 }
 
 static const OSSDevice *get_ossdevice_from_guid(const GUID *guid)
@@ -462,9 +482,6 @@ HRESULT WINAPI AUDDRV_GetAudioEndpoint(GUID *guid, IMMDevice *dev,
     This->IAudioClock2_iface.lpVtbl = &AudioClock2_Vtbl;
     This->IAudioStreamVolume_iface.lpVtbl = &AudioStreamVolume_Vtbl;
 
-    InitializeCriticalSection(&This->lock);
-    This->lock.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": ACImpl.lock");
-
     This->parent = dev;
     IMMDevice_AddRef(This->parent);
 
@@ -510,7 +527,6 @@ static ULONG WINAPI AudioClient_AddRef(IAudioClient3 *iface)
 static ULONG WINAPI AudioClient_Release(IAudioClient3 *iface)
 {
     ACImpl *This = impl_from_IAudioClient3(iface);
-    struct oss_stream *stream = This->stream;
     ULONG ref;
 
     ref = InterlockedDecrement(&This->ref);
@@ -530,21 +546,14 @@ static ULONG WINAPI AudioClient_Release(IAudioClient3 *iface)
         IAudioClient3_Stop(iface);
         IMMDevice_Release(This->parent);
         IUnknown_Release(This->pUnkFTMarshal);
-        This->lock.DebugInfo->Spare[0] = 0;
-        DeleteCriticalSection(&This->lock);
-        if(This->initted){
+        if(This->session){
             EnterCriticalSection(&g_sessions_lock);
             list_remove(&This->entry);
             LeaveCriticalSection(&g_sessions_lock);
         }
         HeapFree(GetProcessHeap(), 0, This->vols);
-        if(stream){
-            close(stream->fd);
-            HeapFree(GetProcessHeap(), 0, stream->local_buffer);
-            HeapFree(GetProcessHeap(), 0, stream->tmp_buffer);
-            CoTaskMemFree(stream->fmt);
-            HeapFree(GetProcessHeap(), 0, stream);
-        }
+        if(This->stream)
+            stream_release(This->stream);
         HeapFree(GetProcessHeap(), 0, This);
     }
     return ref;
@@ -582,177 +591,6 @@ static void dump_fmt(const WAVEFORMATEX *fmt)
         TRACE("Samples: %04x\n", fmtex->Samples.wReserved);
         TRACE("SubFormat: %s\n", wine_dbgstr_guid(&fmtex->SubFormat));
     }
-}
-
-static DWORD get_channel_mask(unsigned int channels)
-{
-    switch(channels){
-    case 0:
-        return 0;
-    case 1:
-        return KSAUDIO_SPEAKER_MONO;
-    case 2:
-        return KSAUDIO_SPEAKER_STEREO;
-    case 3:
-        return KSAUDIO_SPEAKER_STEREO | SPEAKER_LOW_FREQUENCY;
-    case 4:
-        return KSAUDIO_SPEAKER_QUAD;    /* not _SURROUND */
-    case 5:
-        return KSAUDIO_SPEAKER_QUAD | SPEAKER_LOW_FREQUENCY;
-    case 6:
-        return KSAUDIO_SPEAKER_5POINT1; /* not 5POINT1_SURROUND */
-    case 7:
-        return KSAUDIO_SPEAKER_5POINT1 | SPEAKER_BACK_CENTER;
-    case 8:
-        return KSAUDIO_SPEAKER_7POINT1_SURROUND; /* Vista deprecates 7POINT1 */
-    }
-    FIXME("Unknown speaker configuration: %u\n", channels);
-    return 0;
-}
-
-static int get_oss_format(const WAVEFORMATEX *fmt)
-{
-    WAVEFORMATEXTENSIBLE *fmtex = (WAVEFORMATEXTENSIBLE*)fmt;
-
-    if(fmt->wFormatTag == WAVE_FORMAT_PCM ||
-            (fmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
-             IsEqualGUID(&fmtex->SubFormat, &KSDATAFORMAT_SUBTYPE_PCM))){
-        switch(fmt->wBitsPerSample){
-        case 8:
-            return AFMT_U8;
-        case 16:
-            return AFMT_S16_LE;
-        case 24:
-            return AFMT_S24_LE;
-        case 32:
-            return AFMT_S32_LE;
-        }
-        return -1;
-    }
-
-#ifdef AFMT_FLOAT
-    if(fmt->wFormatTag == WAVE_FORMAT_IEEE_FLOAT ||
-            (fmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
-             IsEqualGUID(&fmtex->SubFormat, &KSDATAFORMAT_SUBTYPE_IEEE_FLOAT))){
-        if(fmt->wBitsPerSample != 32)
-            return -1;
-
-        return AFMT_FLOAT;
-    }
-#endif
-
-    return -1;
-}
-
-static WAVEFORMATEX *clone_format(const WAVEFORMATEX *fmt)
-{
-    WAVEFORMATEX *ret;
-    size_t size;
-
-    if(fmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE)
-        size = sizeof(WAVEFORMATEXTENSIBLE);
-    else
-        size = sizeof(WAVEFORMATEX);
-
-    ret = CoTaskMemAlloc(size);
-    if(!ret)
-        return NULL;
-
-    memcpy(ret, fmt, size);
-
-    ret->cbSize = size - sizeof(WAVEFORMATEX);
-
-    return ret;
-}
-
-static HRESULT setup_oss_device(AUDCLNT_SHAREMODE mode, int fd,
-        const WAVEFORMATEX *fmt, WAVEFORMATEX **out)
-{
-    int tmp, oss_format;
-    double tenth;
-    HRESULT ret = S_OK;
-    WAVEFORMATEX *closest = NULL;
-
-    tmp = oss_format = get_oss_format(fmt);
-    if(oss_format < 0)
-        return AUDCLNT_E_UNSUPPORTED_FORMAT;
-    if(ioctl(fd, SNDCTL_DSP_SETFMT, &tmp) < 0){
-        WARN("SETFMT failed: %d (%s)\n", errno, strerror(errno));
-        return E_FAIL;
-    }
-    if(tmp != oss_format){
-        TRACE("Format unsupported by this OSS version: %x\n", oss_format);
-        return AUDCLNT_E_UNSUPPORTED_FORMAT;
-    }
-
-    if(fmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
-            (fmt->nAvgBytesPerSec == 0 ||
-             fmt->nBlockAlign == 0 ||
-             ((WAVEFORMATEXTENSIBLE*)fmt)->Samples.wValidBitsPerSample > fmt->wBitsPerSample))
-        return E_INVALIDARG;
-
-    if(fmt->nChannels == 0)
-        return AUDCLNT_E_UNSUPPORTED_FORMAT;
-
-    closest = clone_format(fmt);
-    if(!closest)
-        return E_OUTOFMEMORY;
-
-    tmp = fmt->nSamplesPerSec;
-    if(ioctl(fd, SNDCTL_DSP_SPEED, &tmp) < 0){
-        WARN("SPEED failed: %d (%s)\n", errno, strerror(errno));
-        CoTaskMemFree(closest);
-        return E_FAIL;
-    }
-    tenth = fmt->nSamplesPerSec * 0.1;
-    if(tmp > fmt->nSamplesPerSec + tenth || tmp < fmt->nSamplesPerSec - tenth){
-        ret = S_FALSE;
-        closest->nSamplesPerSec = tmp;
-    }
-
-    tmp = fmt->nChannels;
-    if(ioctl(fd, SNDCTL_DSP_CHANNELS, &tmp) < 0){
-        WARN("CHANNELS failed: %d (%s)\n", errno, strerror(errno));
-        CoTaskMemFree(closest);
-        return E_FAIL;
-    }
-    if(tmp != fmt->nChannels){
-        ret = S_FALSE;
-        closest->nChannels = tmp;
-    }
-
-    if(closest->wFormatTag == WAVE_FORMAT_EXTENSIBLE)
-        ((WAVEFORMATEXTENSIBLE*)closest)->dwChannelMask = get_channel_mask(closest->nChannels);
-
-    if(fmt->nBlockAlign != fmt->nChannels * fmt->wBitsPerSample / 8 ||
-            fmt->nAvgBytesPerSec != fmt->nBlockAlign * fmt->nSamplesPerSec ||
-            (fmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
-             ((WAVEFORMATEXTENSIBLE*)fmt)->Samples.wValidBitsPerSample < fmt->wBitsPerSample))
-        ret = S_FALSE;
-
-    if(mode == AUDCLNT_SHAREMODE_EXCLUSIVE &&
-            fmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE){
-        if(((WAVEFORMATEXTENSIBLE*)fmt)->dwChannelMask == 0 ||
-                ((WAVEFORMATEXTENSIBLE*)fmt)->dwChannelMask & SPEAKER_RESERVED)
-            ret = S_FALSE;
-    }
-
-    if(ret == S_FALSE && !out)
-        ret = AUDCLNT_E_UNSUPPORTED_FORMAT;
-
-    if(ret == S_FALSE && out){
-        closest->nBlockAlign =
-            closest->nChannels * closest->wBitsPerSample / 8;
-        closest->nAvgBytesPerSec =
-            closest->nBlockAlign * closest->nSamplesPerSec;
-        if(closest->wFormatTag == WAVE_FORMAT_EXTENSIBLE)
-            ((WAVEFORMATEXTENSIBLE*)closest)->Samples.wValidBitsPerSample = closest->wBitsPerSample;
-        *out = closest;
-    } else
-        CoTaskMemFree(closest);
-
-    TRACE("returning: %08x\n", ret);
-    return ret;
 }
 
 static void session_init_vols(AudioSession *session, UINT channels)
@@ -840,10 +678,9 @@ static HRESULT WINAPI AudioClient_Initialize(IAudioClient3 *iface,
         const GUID *sessionguid)
 {
     ACImpl *This = impl_from_IAudioClient3(iface);
+    struct create_stream_params params;
     struct oss_stream *stream;
-    oss_audioinfo ai;
-    int i;
-    HRESULT hr;
+    unsigned int i;
 
     TRACE("(%p)->(%x, %x, %s, %s, %p, %s)\n", This, mode, flags,
           wine_dbgstr_longlong(duration), wine_dbgstr_longlong(period), fmt, debugstr_guid(sessionguid));
@@ -893,106 +730,53 @@ static HRESULT WINAPI AudioClient_Initialize(IAudioClient3 *iface,
     }
 
     EnterCriticalSection(&g_sessions_lock);
-    EnterCriticalSection(&This->lock);
 
-    if(This->initted){
-        LeaveCriticalSection(&This->lock);
+    if(This->stream){
         LeaveCriticalSection(&g_sessions_lock);
         return AUDCLNT_E_ALREADY_INITIALIZED;
     }
 
-    stream = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*This->stream));
-    if(!stream){
-        LeaveCriticalSection(&This->lock);
+    params.device = This->devnode;
+    params.flow = This->dataflow;
+    params.share = mode;
+    params.flags = flags;
+    params.duration = duration;
+    params.period = period;
+    params.fmt = fmt;
+    params.stream = &stream;
+
+    OSS_CALL(create_stream, &params);
+    if(FAILED(params.result)){
         LeaveCriticalSection(&g_sessions_lock);
-        return E_OUTOFMEMORY;
-    }
-    stream->flow = This->dataflow;
-
-    stream->fd = open_device(This->devnode, This->dataflow);
-    if(stream->fd < 0){
-        WARN("Unable to open device %s: %d (%s)\n", This->devnode, errno, strerror(errno));
-        hr = AUDCLNT_E_DEVICE_INVALIDATED;
-        goto exit;
-    }
-
-    ai.dev = -1;
-    if(ioctl(stream->fd, SNDCTL_ENGINEINFO, &ai) < 0){
-        WARN("Unable to get audio info for device %s: %d (%s)\n", This->devnode, errno, strerror(errno));
-        hr = E_FAIL;
-        goto exit;
-    }
-
-    TRACE("OSS audioinfo:\n");
-    TRACE("devnode: %s\n", ai.devnode);
-    TRACE("name: %s\n", ai.name);
-    TRACE("busy: %x\n", ai.busy);
-    TRACE("caps: %x\n", ai.caps);
-    TRACE("iformats: %x\n", ai.iformats);
-    TRACE("oformats: %x\n", ai.oformats);
-    TRACE("enabled: %d\n", ai.enabled);
-    TRACE("min_rate: %d\n", ai.min_rate);
-    TRACE("max_rate: %d\n", ai.max_rate);
-    TRACE("min_channels: %d\n", ai.min_channels);
-    TRACE("max_channels: %d\n", ai.max_channels);
-
-    hr = setup_oss_device(mode, stream->fd, fmt, NULL);
-    if(FAILED(hr))
-        goto exit;
-
-    stream->fmt = clone_format(fmt);
-    if(!stream->fmt){
-        hr = E_OUTOFMEMORY;
-        goto exit;
-    }
-
-    stream->period_us = period / 10;
-    stream->period_frames = MulDiv(fmt->nSamplesPerSec, period, 10000000);
-
-    stream->bufsize_frames = MulDiv(duration, fmt->nSamplesPerSec, 10000000);
-    if(mode == AUDCLNT_SHAREMODE_EXCLUSIVE)
-        stream->bufsize_frames -= stream->bufsize_frames % stream->period_frames;
-    stream->local_buffer = HeapAlloc(GetProcessHeap(), 0,
-            stream->bufsize_frames * fmt->nBlockAlign);
-    if(!stream->local_buffer){
-        hr = E_OUTOFMEMORY;
-        goto exit;
+        return params.result;
     }
 
     This->channel_count = fmt->nChannels;
     This->vols = HeapAlloc(GetProcessHeap(), 0, This->channel_count * sizeof(float));
     if(!This->vols){
-        hr = E_OUTOFMEMORY;
+        params.result = E_OUTOFMEMORY;
         goto exit;
     }
     for(i = 0; i < This->channel_count; ++i)
         This->vols[i] = 1.f;
 
-    stream->share = mode;
-    stream->flags = flags;
-    stream->oss_bufsize_bytes = 0;
-
-    hr = get_audio_session(sessionguid, This->parent, This->channel_count,
+    params.result = get_audio_session(sessionguid, This->parent, This->channel_count,
             &This->session);
 
 exit:
-    if(FAILED(hr)){
+    if(FAILED(params.result)){
+        stream_release(stream);
         HeapFree(GetProcessHeap(), 0, This->vols);
         This->vols = NULL;
-        CoTaskMemFree(stream->fmt);
-        if(stream->fd >= 0) close(stream->fd);
-        HeapFree(GetProcessHeap(), 0, stream->local_buffer);
-        HeapFree(GetProcessHeap(), 0, stream);
     } else {
         list_add_tail(&This->session->clients, &This->entry);
         This->stream = stream;
-        This->initted = TRUE;
+        set_stream_volumes(This);
     }
 
-    LeaveCriticalSection(&This->lock);
     LeaveCriticalSection(&g_sessions_lock);
 
-    return hr;
+    return params.result;
 }
 
 static HRESULT WINAPI AudioClient_GetBufferSize(IAudioClient3 *iface,
@@ -1006,18 +790,16 @@ static HRESULT WINAPI AudioClient_GetBufferSize(IAudioClient3 *iface,
     if(!frames)
         return E_POINTER;
 
-    EnterCriticalSection(&This->lock);
-
-    if(!This->initted){
-        LeaveCriticalSection(&This->lock);
+    if(!This->stream)
         return AUDCLNT_E_NOT_INITIALIZED;
-    }
+
+    oss_lock(stream);
 
     *frames = stream->bufsize_frames;
 
     TRACE("buffer size: %u\n", *frames);
 
-    LeaveCriticalSection(&This->lock);
+    oss_unlock(stream);
 
     return S_OK;
 }
@@ -1033,18 +815,16 @@ static HRESULT WINAPI AudioClient_GetStreamLatency(IAudioClient3 *iface,
     if(!latency)
         return E_POINTER;
 
-    EnterCriticalSection(&This->lock);
-
-    if(!This->initted){
-        LeaveCriticalSection(&This->lock);
+    if(!This->stream)
         return AUDCLNT_E_NOT_INITIALIZED;
-    }
+
+    oss_lock(stream);
 
     /* pretend we process audio in Period chunks, so max latency includes
      * the period time.  Some native machines add .6666ms in shared mode. */
     *latency = (REFERENCE_TIME)stream->period_us * 10 + 6666;
 
-    LeaveCriticalSection(&This->lock);
+    oss_unlock(stream);
 
     return S_OK;
 }
@@ -1060,18 +840,16 @@ static HRESULT WINAPI AudioClient_GetCurrentPadding(IAudioClient3 *iface,
     if(!numpad)
         return E_POINTER;
 
-    EnterCriticalSection(&This->lock);
-
-    if(!This->initted){
-        LeaveCriticalSection(&This->lock);
+    if(!This->stream)
         return AUDCLNT_E_NOT_INITIALIZED;
-    }
+
+    oss_lock(stream);
 
     *numpad = stream->held_frames;
 
     TRACE("padding: %u\n", *numpad);
 
-    LeaveCriticalSection(&This->lock);
+    oss_unlock(stream);
 
     return S_OK;
 }
@@ -1166,7 +944,7 @@ static void silence_buffer(struct oss_stream *stream, BYTE *buffer, UINT32 frame
         memset(buffer, 0, frames * stream->fmt->nBlockAlign);
 }
 
-static void oss_write_data(struct oss_stream *stream, BOOL mute)
+static void oss_write_data(struct oss_stream *stream)
 {
     ssize_t written_bytes;
     UINT32 written_frames, in_oss_frames, write_limit, max_period, write_offs_frames, new_frames;
@@ -1237,7 +1015,7 @@ static void oss_write_data(struct oss_stream *stream, BOOL mute)
 
     buf = stream->local_buffer + write_offs_frames * stream->fmt->nBlockAlign;
 
-    if(mute)
+    if(stream->mute)
         silence_buffer(stream, buf, to_write_frames);
 
     written_bytes = write(stream->fd, buf, to_write_bytes);
@@ -1261,7 +1039,7 @@ static void oss_write_data(struct oss_stream *stream, BOOL mute)
         to_write_frames = min(write_limit - written_frames, new_frames - written_frames);
         to_write_bytes = to_write_frames * stream->fmt->nBlockAlign;
 
-        if(mute)
+        if(stream->mute)
             silence_buffer(stream, stream->local_buffer, to_write_frames);
 
         TRACE("wrapping to write %lu frames from beginning\n", to_write_frames);
@@ -1306,19 +1084,19 @@ static void CALLBACK oss_period_callback(void *user, BOOLEAN timer)
     ACImpl *This = user;
     struct oss_stream *stream = This->stream;
 
-    EnterCriticalSection(&This->lock);
+    oss_lock(stream);
 
     if(stream->playing){
         if(stream->flow == eRender && stream->held_frames)
-            oss_write_data(stream, This->session->mute);
+            oss_write_data(stream);
         else if(stream->flow == eCapture)
             oss_read_data(stream);
     }
 
-    LeaveCriticalSection(&This->lock);
-
     if(stream->event)
         SetEvent(stream->event);
+
+    oss_unlock(stream);
 }
 
 static HRESULT WINAPI AudioClient_Start(IAudioClient3 *iface)
@@ -1328,20 +1106,24 @@ static HRESULT WINAPI AudioClient_Start(IAudioClient3 *iface)
 
     TRACE("(%p)\n", This);
 
-    EnterCriticalSection(&This->lock);
+    EnterCriticalSection(&g_sessions_lock);
 
-    if(!This->initted){
-        LeaveCriticalSection(&This->lock);
+    if(!This->stream){
+        LeaveCriticalSection(&g_sessions_lock);
         return AUDCLNT_E_NOT_INITIALIZED;
     }
 
+    oss_lock(stream);
+
     if((stream->flags & AUDCLNT_STREAMFLAGS_EVENTCALLBACK) && !stream->event){
-        LeaveCriticalSection(&This->lock);
+        oss_unlock(stream);
+        LeaveCriticalSection(&g_sessions_lock);
         return AUDCLNT_E_EVENTHANDLE_NOT_SET;
     }
 
     if(stream->playing){
-        LeaveCriticalSection(&This->lock);
+        oss_unlock(stream);
+        LeaveCriticalSection(&g_sessions_lock);
         return AUDCLNT_E_NOT_STOPPED;
     }
 
@@ -1354,7 +1136,8 @@ static HRESULT WINAPI AudioClient_Start(IAudioClient3 *iface)
 
     stream->playing = TRUE;
 
-    LeaveCriticalSection(&This->lock);
+    oss_unlock(stream);
+    LeaveCriticalSection(&g_sessions_lock);
 
     return S_OK;
 }
@@ -1366,22 +1149,20 @@ static HRESULT WINAPI AudioClient_Stop(IAudioClient3 *iface)
 
     TRACE("(%p)\n", This);
 
-    EnterCriticalSection(&This->lock);
-
-    if(!This->initted){
-        LeaveCriticalSection(&This->lock);
+    if(!This->stream)
         return AUDCLNT_E_NOT_INITIALIZED;
-    }
+
+    oss_lock(stream);
 
     if(!stream->playing){
-        LeaveCriticalSection(&This->lock);
+        oss_unlock(stream);
         return S_FALSE;
     }
 
     stream->playing = FALSE;
     stream->in_oss_frames = 0;
 
-    LeaveCriticalSection(&This->lock);
+    oss_unlock(stream);
 
     return S_OK;
 }
@@ -1393,20 +1174,18 @@ static HRESULT WINAPI AudioClient_Reset(IAudioClient3 *iface)
 
     TRACE("(%p)\n", This);
 
-    EnterCriticalSection(&This->lock);
-
-    if(!This->initted){
-        LeaveCriticalSection(&This->lock);
+    if(!This->stream)
         return AUDCLNT_E_NOT_INITIALIZED;
-    }
+
+    oss_lock(stream);
 
     if(stream->playing){
-        LeaveCriticalSection(&This->lock);
+        oss_unlock(stream);
         return AUDCLNT_E_NOT_STOPPED;
     }
 
     if(stream->getbuf_last){
-        LeaveCriticalSection(&This->lock);
+        oss_unlock(stream);
         return AUDCLNT_E_BUFFER_OPERATION_PENDING;
     }
 
@@ -1420,7 +1199,7 @@ static HRESULT WINAPI AudioClient_Reset(IAudioClient3 *iface)
     stream->lcl_offs_frames = 0;
     stream->in_oss_frames = 0;
 
-    LeaveCriticalSection(&This->lock);
+    oss_unlock(stream);
 
     return S_OK;
 }
@@ -1436,27 +1215,25 @@ static HRESULT WINAPI AudioClient_SetEventHandle(IAudioClient3 *iface,
     if(!event)
         return E_INVALIDARG;
 
-    EnterCriticalSection(&This->lock);
-
-    if(!This->initted){
-        LeaveCriticalSection(&This->lock);
+    if(!This->stream)
         return AUDCLNT_E_NOT_INITIALIZED;
-    }
+
+    oss_lock(stream);
 
     if(!(stream->flags & AUDCLNT_STREAMFLAGS_EVENTCALLBACK)){
-        LeaveCriticalSection(&This->lock);
+        oss_unlock(stream);
         return AUDCLNT_E_EVENTHANDLE_NOT_EXPECTED;
     }
 
     if (stream->event){
-        LeaveCriticalSection(&This->lock);
+        oss_unlock(stream);
         FIXME("called twice\n");
         return HRESULT_FROM_WIN32(ERROR_INVALID_NAME);
     }
 
     stream->event = event;
 
-    LeaveCriticalSection(&This->lock);
+    oss_unlock(stream);
 
     return S_OK;
 }
@@ -1472,23 +1249,23 @@ static HRESULT WINAPI AudioClient_GetService(IAudioClient3 *iface, REFIID riid,
         return E_POINTER;
     *ppv = NULL;
 
-    EnterCriticalSection(&This->lock);
+    EnterCriticalSection(&g_sessions_lock);
 
-    if(!This->initted){
-        LeaveCriticalSection(&This->lock);
+    if(!This->stream){
+        LeaveCriticalSection(&g_sessions_lock);
         return AUDCLNT_E_NOT_INITIALIZED;
     }
 
     if(IsEqualIID(riid, &IID_IAudioRenderClient)){
         if(This->dataflow != eRender){
-            LeaveCriticalSection(&This->lock);
+            LeaveCriticalSection(&g_sessions_lock);
             return AUDCLNT_E_WRONG_ENDPOINT_TYPE;
         }
         IAudioRenderClient_AddRef(&This->IAudioRenderClient_iface);
         *ppv = &This->IAudioRenderClient_iface;
     }else if(IsEqualIID(riid, &IID_IAudioCaptureClient)){
         if(This->dataflow != eCapture){
-            LeaveCriticalSection(&This->lock);
+            LeaveCriticalSection(&g_sessions_lock);
             return AUDCLNT_E_WRONG_ENDPOINT_TYPE;
         }
         IAudioCaptureClient_AddRef(&This->IAudioCaptureClient_iface);
@@ -1503,7 +1280,7 @@ static HRESULT WINAPI AudioClient_GetService(IAudioClient3 *iface, REFIID riid,
         if(!This->session_wrapper){
             This->session_wrapper = AudioSessionWrapper_Create(This);
             if(!This->session_wrapper){
-                LeaveCriticalSection(&This->lock);
+                LeaveCriticalSection(&g_sessions_lock);
                 return E_OUTOFMEMORY;
             }
         }else
@@ -1514,7 +1291,7 @@ static HRESULT WINAPI AudioClient_GetService(IAudioClient3 *iface, REFIID riid,
         if(!This->session_wrapper){
             This->session_wrapper = AudioSessionWrapper_Create(This);
             if(!This->session_wrapper){
-                LeaveCriticalSection(&This->lock);
+                LeaveCriticalSection(&g_sessions_lock);
                 return E_OUTOFMEMORY;
             }
         }else
@@ -1525,7 +1302,7 @@ static HRESULT WINAPI AudioClient_GetService(IAudioClient3 *iface, REFIID riid,
         if(!This->session_wrapper){
             This->session_wrapper = AudioSessionWrapper_Create(This);
             if(!This->session_wrapper){
-                LeaveCriticalSection(&This->lock);
+                LeaveCriticalSection(&g_sessions_lock);
                 return E_OUTOFMEMORY;
             }
         }else
@@ -1535,11 +1312,11 @@ static HRESULT WINAPI AudioClient_GetService(IAudioClient3 *iface, REFIID riid,
     }
 
     if(*ppv){
-        LeaveCriticalSection(&This->lock);
+        LeaveCriticalSection(&g_sessions_lock);
         return S_OK;
     }
 
-    LeaveCriticalSection(&This->lock);
+    LeaveCriticalSection(&g_sessions_lock);
 
     FIXME("stub %s\n", debugstr_guid(riid));
     return E_NOINTERFACE;
@@ -1703,6 +1480,7 @@ static HRESULT WINAPI AudioRenderClient_GetBuffer(IAudioRenderClient *iface,
     ACImpl *This = impl_from_IAudioRenderClient(iface);
     struct oss_stream *stream = This->stream;
     UINT32 write_pos;
+    SIZE_T size;
 
     TRACE("(%p)->(%u, %p)\n", This, frames, data);
 
@@ -1711,20 +1489,20 @@ static HRESULT WINAPI AudioRenderClient_GetBuffer(IAudioRenderClient *iface,
 
     *data = NULL;
 
-    EnterCriticalSection(&This->lock);
+    oss_lock(stream);
 
     if(stream->getbuf_last){
-        LeaveCriticalSection(&This->lock);
+        oss_unlock(stream);
         return AUDCLNT_E_OUT_OF_ORDER;
     }
 
     if(!frames){
-        LeaveCriticalSection(&This->lock);
+        oss_unlock(stream);
         return S_OK;
     }
 
     if(stream->held_frames + frames > stream->bufsize_frames){
-        LeaveCriticalSection(&This->lock);
+        oss_unlock(stream);
         return AUDCLNT_E_BUFFER_TOO_LARGE;
     }
 
@@ -1732,11 +1510,16 @@ static HRESULT WINAPI AudioRenderClient_GetBuffer(IAudioRenderClient *iface,
         (stream->lcl_offs_frames + stream->held_frames) % stream->bufsize_frames;
     if(write_pos + frames > stream->bufsize_frames){
         if(stream->tmp_buffer_frames < frames){
-            HeapFree(GetProcessHeap(), 0, stream->tmp_buffer);
-            stream->tmp_buffer = HeapAlloc(GetProcessHeap(), 0,
-                    frames * stream->fmt->nBlockAlign);
-            if(!stream->tmp_buffer){
-                LeaveCriticalSection(&This->lock);
+            if(stream->tmp_buffer){
+                size = 0;
+                NtFreeVirtualMemory(GetCurrentProcess(), (void **)&stream->tmp_buffer, &size, MEM_RELEASE);
+                stream->tmp_buffer = NULL;
+            }
+            size = frames * stream->fmt->nBlockAlign;
+            if(NtAllocateVirtualMemory(GetCurrentProcess(), (void **)&stream->tmp_buffer, 0, &size,
+                                       MEM_COMMIT, PAGE_READWRITE)){
+                stream->tmp_buffer_frames = 0;
+                oss_unlock(stream);
                 return E_OUTOFMEMORY;
             }
             stream->tmp_buffer_frames = frames;
@@ -1750,7 +1533,7 @@ static HRESULT WINAPI AudioRenderClient_GetBuffer(IAudioRenderClient *iface,
 
     silence_buffer(stream, *data, frames);
 
-    LeaveCriticalSection(&This->lock);
+    oss_unlock(stream);
 
     return S_OK;
 }
@@ -1782,21 +1565,21 @@ static HRESULT WINAPI AudioRenderClient_ReleaseBuffer(
 
     TRACE("(%p)->(%u, %x)\n", This, written_frames, flags);
 
-    EnterCriticalSection(&This->lock);
+    oss_lock(stream);
 
     if(!written_frames){
         stream->getbuf_last = 0;
-        LeaveCriticalSection(&This->lock);
+        oss_unlock(stream);
         return S_OK;
     }
 
     if(!stream->getbuf_last){
-        LeaveCriticalSection(&This->lock);
+        oss_unlock(stream);
         return AUDCLNT_E_OUT_OF_ORDER;
     }
 
     if(written_frames > (stream->getbuf_last >= 0 ? stream->getbuf_last : -stream->getbuf_last)){
-        LeaveCriticalSection(&This->lock);
+        oss_unlock(stream);
         return AUDCLNT_E_INVALID_SIZE;
     }
 
@@ -1816,7 +1599,7 @@ static HRESULT WINAPI AudioRenderClient_ReleaseBuffer(
     stream->written_frames += written_frames;
     stream->getbuf_last = 0;
 
-    LeaveCriticalSection(&This->lock);
+    oss_unlock(stream);
 
     return S_OK;
 }
@@ -1871,6 +1654,7 @@ static HRESULT WINAPI AudioCaptureClient_GetBuffer(IAudioCaptureClient *iface,
 {
     ACImpl *This = impl_from_IAudioCaptureClient(iface);
     struct oss_stream *stream = This->stream;
+    SIZE_T size;
 
     TRACE("(%p)->(%p, %p, %p, %p, %p)\n", This, data, frames, flags,
             devpos, qpcpos);
@@ -1883,16 +1667,16 @@ static HRESULT WINAPI AudioCaptureClient_GetBuffer(IAudioCaptureClient *iface,
     if(!frames || !flags)
         return E_POINTER;
 
-    EnterCriticalSection(&This->lock);
+    oss_lock(stream);
 
     if(stream->getbuf_last){
-        LeaveCriticalSection(&This->lock);
+        oss_unlock(stream);
         return AUDCLNT_E_OUT_OF_ORDER;
     }
 
     if(stream->held_frames < stream->period_frames){
         *frames = 0;
-        LeaveCriticalSection(&This->lock);
+        oss_unlock(stream);
         return AUDCLNT_S_BUFFER_EMPTY;
     }
 
@@ -1903,11 +1687,16 @@ static HRESULT WINAPI AudioCaptureClient_GetBuffer(IAudioCaptureClient *iface,
     if(stream->lcl_offs_frames + *frames > stream->bufsize_frames){
         UINT32 chunk_bytes, offs_bytes, frames_bytes;
         if(stream->tmp_buffer_frames < *frames){
-            HeapFree(GetProcessHeap(), 0, stream->tmp_buffer);
-            stream->tmp_buffer = HeapAlloc(GetProcessHeap(), 0,
-                    *frames * stream->fmt->nBlockAlign);
-            if(!stream->tmp_buffer){
-                LeaveCriticalSection(&This->lock);
+            if(stream->tmp_buffer){
+                size = 0;
+                NtFreeVirtualMemory(GetCurrentProcess(), (void **)&stream->tmp_buffer, &size, MEM_RELEASE);
+                stream->tmp_buffer = NULL;
+            }
+            size = *frames * stream->fmt->nBlockAlign;
+            if(NtAllocateVirtualMemory(GetCurrentProcess(), (void **)&stream->tmp_buffer, 0, &size,
+                                       MEM_COMMIT, PAGE_READWRITE)){
+                stream->tmp_buffer_frames = 0;
+                oss_unlock(stream);
                 return E_OUTOFMEMORY;
             }
             stream->tmp_buffer_frames = *frames;
@@ -1936,7 +1725,7 @@ static HRESULT WINAPI AudioCaptureClient_GetBuffer(IAudioCaptureClient *iface,
         *qpcpos = (stamp.QuadPart * (INT64)10000000) / freq.QuadPart;
     }
 
-    LeaveCriticalSection(&This->lock);
+    oss_unlock(stream);
 
     return *frames ? S_OK : AUDCLNT_S_BUFFER_EMPTY;
 }
@@ -1949,21 +1738,21 @@ static HRESULT WINAPI AudioCaptureClient_ReleaseBuffer(
 
     TRACE("(%p)->(%u)\n", This, done);
 
-    EnterCriticalSection(&This->lock);
+    oss_lock(stream);
 
     if(!done){
         stream->getbuf_last = 0;
-        LeaveCriticalSection(&This->lock);
+        oss_unlock(stream);
         return S_OK;
     }
 
     if(!stream->getbuf_last){
-        LeaveCriticalSection(&This->lock);
+        oss_unlock(stream);
         return AUDCLNT_E_OUT_OF_ORDER;
     }
 
     if(stream->getbuf_last != done){
-        LeaveCriticalSection(&This->lock);
+        oss_unlock(stream);
         return AUDCLNT_E_INVALID_SIZE;
     }
 
@@ -1973,7 +1762,7 @@ static HRESULT WINAPI AudioCaptureClient_ReleaseBuffer(
     stream->lcl_offs_frames %= stream->bufsize_frames;
     stream->getbuf_last = 0;
 
-    LeaveCriticalSection(&This->lock);
+    oss_unlock(stream);
 
     return S_OK;
 }
@@ -1989,11 +1778,11 @@ static HRESULT WINAPI AudioCaptureClient_GetNextPacketSize(
     if(!frames)
         return E_POINTER;
 
-    EnterCriticalSection(&This->lock);
+    oss_lock(stream);
 
     *frames = stream->held_frames < stream->period_frames ? 0 : stream->period_frames;
 
-    LeaveCriticalSection(&This->lock);
+    oss_unlock(stream);
 
     return S_OK;
 }
@@ -2070,7 +1859,7 @@ static HRESULT WINAPI AudioClock_GetPosition(IAudioClock *iface, UINT64 *pos,
     if(!pos)
         return E_POINTER;
 
-    EnterCriticalSection(&This->lock);
+    oss_lock(stream);
 
     if(stream->flow == eRender){
         *pos = stream->written_frames - stream->held_frames;
@@ -2099,7 +1888,7 @@ static HRESULT WINAPI AudioClock_GetPosition(IAudioClock *iface, UINT64 *pos,
     if(stream->share == AUDCLNT_SHAREMODE_SHARED)
         *pos *= stream->fmt->nBlockAlign;
 
-    LeaveCriticalSection(&This->lock);
+    oss_unlock(stream);
 
     if(qpctime){
         LARGE_INTEGER stamp, freq;
@@ -2236,9 +2025,9 @@ static ULONG WINAPI AudioSessionControl_Release(IAudioSessionControl2 *iface)
     TRACE("(%p) Refcount now %u\n", This, ref);
     if(!ref){
         if(This->client){
-            EnterCriticalSection(&This->client->lock);
+            EnterCriticalSection(&g_sessions_lock);
             This->client->session_wrapper = NULL;
-            LeaveCriticalSection(&This->client->lock);
+            LeaveCriticalSection(&g_sessions_lock);
             AudioClient_Release(&This->client->IAudioClient3_iface);
         }
         HeapFree(GetProcessHeap(), 0, This);
@@ -2266,14 +2055,14 @@ static HRESULT WINAPI AudioSessionControl_GetState(IAudioSessionControl2 *iface,
     }
 
     LIST_FOR_EACH_ENTRY(client, &This->session->clients, ACImpl, entry){
-        EnterCriticalSection(&client->lock);
+        oss_lock(client->stream);
         if(client->stream->playing){
             *state = AudioSessionStateActive;
-            LeaveCriticalSection(&client->lock);
+            oss_unlock(client->stream);
             LeaveCriticalSection(&g_sessions_lock);
             return S_OK;
         }
-        LeaveCriticalSection(&client->lock);
+        oss_unlock(client->stream);
     }
 
     LeaveCriticalSection(&g_sessions_lock);
@@ -2478,6 +2267,7 @@ static HRESULT WINAPI SimpleAudioVolume_SetMasterVolume(
 {
     AudioSessionWrapper *This = impl_from_ISimpleAudioVolume(iface);
     AudioSession *session = This->session;
+    ACImpl *client;
 
     TRACE("(%p)->(%f, %s)\n", session, level, wine_dbgstr_guid(context));
 
@@ -2492,6 +2282,8 @@ static HRESULT WINAPI SimpleAudioVolume_SetMasterVolume(
     session->master_vol = level;
 
     TRACE("OSS doesn't support setting volume\n");
+    LIST_FOR_EACH_ENTRY(client, &session->clients, ACImpl, entry)
+        set_stream_volumes(client);
 
     LeaveCriticalSection(&g_sessions_lock);
 
@@ -2519,12 +2311,16 @@ static HRESULT WINAPI SimpleAudioVolume_SetMute(ISimpleAudioVolume *iface,
 {
     AudioSessionWrapper *This = impl_from_ISimpleAudioVolume(iface);
     AudioSession *session = This->session;
+    ACImpl *client;
 
     TRACE("(%p)->(%u, %s)\n", session, mute, debugstr_guid(context));
 
     EnterCriticalSection(&g_sessions_lock);
 
     session->mute = mute;
+
+    LIST_FOR_EACH_ENTRY(client, &session->clients, ACImpl, entry)
+        set_stream_volumes(client);
 
     LeaveCriticalSection(&g_sessions_lock);
 
@@ -2619,13 +2415,14 @@ static HRESULT WINAPI AudioStreamVolume_SetChannelVolume(
     if(index >= This->channel_count)
         return E_INVALIDARG;
 
-    EnterCriticalSection(&This->lock);
+    EnterCriticalSection(&g_sessions_lock);
 
     This->vols[index] = level;
 
     TRACE("OSS doesn't support setting volume\n");
+    set_stream_volumes(This);
 
-    LeaveCriticalSection(&This->lock);
+    LeaveCriticalSection(&g_sessions_lock);
 
     return S_OK;
 }
@@ -2662,14 +2459,15 @@ static HRESULT WINAPI AudioStreamVolume_SetAllVolumes(
     if(count != This->channel_count)
         return E_INVALIDARG;
 
-    EnterCriticalSection(&This->lock);
+    EnterCriticalSection(&g_sessions_lock);
 
     for(i = 0; i < count; ++i)
         This->vols[i] = levels[i];
 
     TRACE("OSS doesn't support setting volume\n");
+    set_stream_volumes(This);
 
-    LeaveCriticalSection(&This->lock);
+    LeaveCriticalSection(&g_sessions_lock);
 
     return S_OK;
 }
@@ -2688,12 +2486,12 @@ static HRESULT WINAPI AudioStreamVolume_GetAllVolumes(
     if(count != This->channel_count)
         return E_INVALIDARG;
 
-    EnterCriticalSection(&This->lock);
+    EnterCriticalSection(&g_sessions_lock);
 
     for(i = 0; i < count; ++i)
         levels[i] = This->vols[i];
 
-    LeaveCriticalSection(&This->lock);
+    LeaveCriticalSection(&g_sessions_lock);
 
     return S_OK;
 }
@@ -2765,6 +2563,7 @@ static HRESULT WINAPI ChannelAudioVolume_SetChannelVolume(
 {
     AudioSessionWrapper *This = impl_from_IChannelAudioVolume(iface);
     AudioSession *session = This->session;
+    ACImpl *client;
 
     TRACE("(%p)->(%d, %f, %s)\n", session, index, level,
             wine_dbgstr_guid(context));
@@ -2783,6 +2582,8 @@ static HRESULT WINAPI ChannelAudioVolume_SetChannelVolume(
     session->channel_vols[index] = level;
 
     TRACE("OSS doesn't support setting volume\n");
+    LIST_FOR_EACH_ENTRY(client, &session->clients, ACImpl, entry)
+        set_stream_volumes(client);
 
     LeaveCriticalSection(&g_sessions_lock);
 
@@ -2814,6 +2615,7 @@ static HRESULT WINAPI ChannelAudioVolume_SetAllVolumes(
 {
     AudioSessionWrapper *This = impl_from_IChannelAudioVolume(iface);
     AudioSession *session = This->session;
+    ACImpl *client;
     int i;
 
     TRACE("(%p)->(%d, %p, %s)\n", session, count, levels,
@@ -2834,6 +2636,8 @@ static HRESULT WINAPI ChannelAudioVolume_SetAllVolumes(
         session->channel_vols[i] = levels[i];
 
     TRACE("OSS doesn't support setting volume\n");
+    LIST_FOR_EACH_ENTRY(client, &session->clients, ACImpl, entry)
+        set_stream_volumes(client);
 
     LeaveCriticalSection(&g_sessions_lock);
 
