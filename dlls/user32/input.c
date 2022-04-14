@@ -164,7 +164,7 @@ void WINAPI mouse_event( DWORD dwFlags, DWORD dx, DWORD dy,
  */
 BOOL WINAPI DECLSPEC_HOTPATCH GetCursorPos( POINT *pt )
 {
-    return NtUserCallOneParam( (UINT_PTR)pt, NtUserGetCursorPos );
+    return NtUserGetCursorPos( pt );
 }
 
 
@@ -173,7 +173,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetCursorPos( POINT *pt )
  */
 BOOL WINAPI DECLSPEC_HOTPATCH ReleaseCapture(void)
 {
-    return NtUserCallNoParam( NtUserReleaseCapture );
+    return NtUserReleaseCapture();
 }
 
 
@@ -193,7 +193,7 @@ HWND WINAPI GetCapture(void)
  */
 BOOL WINAPI GetInputState(void)
 {
-    return NtUserCallNoParam( NtUserGetInputState );
+    return NtUserGetInputState();
 }
 
 

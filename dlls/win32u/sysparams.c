@@ -4632,24 +4632,31 @@ ULONG_PTR WINAPI NtUserCallNoParam( ULONG code )
 {
     switch(code)
     {
-    case NtUserCreateMenu:
+    case NtUserCallNoParam_CreateMenu:
         return HandleToUlong( create_menu() );
-    case NtUserGetDesktopWindow:
+
+    case NtUserCallNoParam_GetDesktopWindow:
         return HandleToUlong( get_desktop_window() );
-    case NtUserGetInputState:
+
+    case NtUserCallNoParam_GetInputState:
         return get_input_state();
-    case NtUserReleaseCapture:
+
+    case NtUserCallNoParam_ReleaseCapture:
         return release_capture();
+
     /* temporary exports */
     case NtUserExitingThread:
         exiting_thread_id = GetCurrentThreadId();
         return 0;
+
     case NtUserThreadDetach:
         thread_detach();
         return 0;
+
     case NtUserUpdateClipboard:
         user_driver->pUpdateClipboard();
         return 0;
+
     default:
         FIXME( "invalid code %u\n", code );
         return 0;
@@ -4663,41 +4670,57 @@ ULONG_PTR WINAPI NtUserCallOneParam( ULONG_PTR arg, ULONG code )
 {
     switch(code)
     {
-    case NtUserBeginDeferWindowPos:
+    case NtUserCallOneParam_BeginDeferWindowPos:
         return HandleToUlong( begin_defer_window_pos( arg ));
-    case NtUserCreateCursorIcon:
+
+    case NtUserCallOneParam_CreateCursorIcon:
         return HandleToUlong( alloc_cursoricon_handle( arg ));
-    case NtUserDispatchMessageA:
+
+    case NtUserCallOneParam_DispatchMessageA:
         return dispatch_message( (const MSG *)arg, TRUE );
-    case NtUserEnableDC:
+
+    case NtUserCallOneParam_EnableDC:
         return set_dce_flags( UlongToHandle(arg), DCHF_ENABLEDC );
-    case NtUserEnableThunkLock:
+
+    case NtUserCallOneParam_EnableThunkLock:
         enable_thunk_lock = arg;
         return 0;
-    case NtUserGetClipCursor:
+
+    case NtUserCallOneParam_GetClipCursor:
         return get_clip_cursor( (RECT *)arg );
-    case NtUserGetCursorPos:
+
+    case NtUserCallOneParam_GetCursorPos:
         return get_cursor_pos( (POINT *)arg );
-    case NtUserGetIconParam:
+
+    case NtUserCallOneParam_GetIconParam:
         return get_icon_param( UlongToHandle(arg) );
-    case NtUserGetSysColor:
+
+    case NtUserCallOneParam_GetSysColor:
         return get_sys_color( arg );
-    case NtUserRealizePalette:
+
+    case NtUserCallOneParam_RealizePalette:
         return realize_palette( UlongToHandle(arg) );
-    case NtUserGetPrimaryMonitorRect:
+
+    case NtUserCallOneParam_GetPrimaryMonitorRect:
         *(RECT *)arg = get_primary_monitor_rect( 0 );
         return 1;
-    case NtUserGetSysColorBrush:
+
+    case NtUserCallOneParam_GetSysColorBrush:
         return HandleToUlong( get_sys_color_brush(arg) );
-    case NtUserGetSysColorPen:
+
+    case NtUserCallOneParam_GetSysColorPen:
         return HandleToUlong( get_sys_color_pen(arg) );
-    case NtUserGetSystemMetrics:
+
+    case NtUserCallOneParam_GetSystemMetrics:
         return get_system_metrics( arg );
-    case NtUserGetVirtualScreenRect:
+
+    case NtUserCallOneParam_GetVirtualScreenRect:
         *(RECT *)arg = get_virtual_screen_rect( 0 );
         return 1;
-    case NtUserMessageBeep:
+
+    case NtUserCallOneParam_MessageBeep:
         return message_beep( arg );
+
     /* temporary exports */
     case NtUserCallHooks:
         {
@@ -4705,18 +4728,13 @@ ULONG_PTR WINAPI NtUserCallOneParam( ULONG_PTR arg, ULONG code )
             return call_hooks( params->id, params->code, params->wparam, params->lparam,
                                params->next_unicode );
         }
-    case NtUserFlushWindowSurfaces:
-        flush_window_surfaces( arg );
-        return 0;
+
     case NtUserGetDeskPattern:
         return get_entry( &entry_DESKPATTERN, 256, (WCHAR *)arg );
+
     case NtUserGetWinProcPtr:
         return (UINT_PTR)get_winproc_ptr( UlongToHandle(arg) );
-    case NtUserHandleInternalMessage:
-        {
-            MSG *msg = (MSG *)arg;
-            return handle_internal_message( msg->hwnd, msg->message, msg->wParam, msg->lParam );
-        }
+
     case NtUserLock:
         switch( arg )
         {
@@ -4724,10 +4742,13 @@ ULONG_PTR WINAPI NtUserCallOneParam( ULONG_PTR arg, ULONG code )
         case 1: user_unlock(); return 0;
         default: user_check_not_lock(); return 0;
         }
+
     case NtUserSetCallbacks:
         return (UINT_PTR)InterlockedExchangePointer( (void **)&user_callbacks, (void *)arg );
+
     case NtUserSpyGetVKeyName:
         return (UINT_PTR)debugstr_vkey_name( arg );
+
     default:
         FIXME( "invalid code %u\n", code );
         return 0;
@@ -4741,25 +4762,31 @@ ULONG_PTR WINAPI NtUserCallTwoParam( ULONG_PTR arg1, ULONG_PTR arg2, ULONG code 
 {
     switch(code)
     {
-    case NtUserGetMonitorInfo:
+    case NtUserCallTwoParam_GetMonitorInfo:
         return get_monitor_info( UlongToHandle(arg1), (MONITORINFO *)arg2 );
-    case NtUserGetSystemMetricsForDpi:
+
+    case NtUserCallTwoParam_GetSystemMetricsForDpi:
         return get_system_metrics_for_dpi( arg1, arg2 );
-    case NtUserMirrorRgn:
-        return mirror_window_region( UlongToHandle(arg1), UlongToHandle(arg2) );
-    case NtUserMonitorFromRect:
+
+    case NtUserCallTwoParam_MonitorFromRect:
         return HandleToUlong( monitor_from_rect( (const RECT *)arg1, arg2, get_thread_dpi() ));
-    case NtUserReplyMessage:
+
+    case NtUserCallTwoParam_ReplyMessage:
         return reply_message_result( arg1, (MSG *)arg2 );
-    case NtUserSetIconParam:
+
+    case NtUserCallTwoParam_SetIconParam:
         return set_icon_param( UlongToHandle(arg1), arg2 );
-    case NtUserUnhookWindowsHook:
+
+    case NtUserCallTwoParam_UnhookWindowsHook:
         return unhook_windows_hook( arg1, (HOOKPROC)arg2 );
+
     /* temporary exports */
     case NtUserAllocWinProc:
         return (UINT_PTR)alloc_winproc( (WNDPROC)arg1, arg2 );
+
     case NtUserGetHandlePtr:
         return (UINT_PTR)get_user_handle_ptr( UlongToHandle(arg1), arg2 );
+
     default:
         FIXME( "invalid code %u\n", code );
         return 0;

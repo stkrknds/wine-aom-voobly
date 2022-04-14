@@ -3636,6 +3636,61 @@ static void _test_attr_parent(unsigned line, IHTMLDOMAttribute *attr)
     IHTMLDOMAttribute2_Release(attr2);
 }
 
+static LONG test_attr_collection_attr(IDispatch *attr, LONG i)
+{
+    IHTMLDOMAttribute *dom_attr;
+    LONG ret = 1;
+    HRESULT hres;
+    VARIANT val;
+    BSTR name;
+
+    hres = IDispatch_QueryInterface(attr, &IID_IHTMLDOMAttribute, (void**)&dom_attr);
+    ok(hres == S_OK, "%ld) QueryInterface failed: %08lx\n", i, hres);
+
+    hres = IHTMLDOMAttribute_get_nodeName(dom_attr, &name);
+    ok(hres == S_OK, "%ld) get_nodeName failed: %08lx\n", i, hres);
+
+    if(!lstrcmpW(name, L"id")) {
+        hres = IHTMLDOMAttribute_get_nodeValue(dom_attr, &val);
+        ok(hres == S_OK, "%ld) get_nodeValue failed: %08lx\n", i, hres);
+        ok(V_VT(&val) == VT_BSTR, "id: V_VT(&val) = %d\n", V_VT(&val));
+        ok(!lstrcmpW(V_BSTR(&val), L"attr"), "id: V_BSTR(&val) = %s\n", wine_dbgstr_w(V_BSTR(&val)));
+        test_attr_expando(dom_attr, VARIANT_FALSE);
+        test_attr_value(dom_attr, L"attr");
+    } else if(!lstrcmpW(name, L"attr1")) {
+        hres = IHTMLDOMAttribute_get_nodeValue(dom_attr, &val);
+        ok(hres == S_OK, "%ld) get_nodeValue failed: %08lx\n", i, hres);
+        ok(V_VT(&val) == VT_BSTR, "attr1: V_VT(&val) = %d\n", V_VT(&val));
+        ok(!lstrcmpW(V_BSTR(&val), L"attr1"), "attr1: V_BSTR(&val) = %s\n", wine_dbgstr_w(V_BSTR(&val)));
+        test_attr_expando(dom_attr, VARIANT_TRUE);
+        test_attr_value(dom_attr, L"attr1");
+    } else if(!lstrcmpW(name, L"attr2")) {
+        hres = IHTMLDOMAttribute_get_nodeValue(dom_attr, &val);
+        ok(hres == S_OK, "%ld) get_nodeValue failed: %08lx\n", i, hres);
+        ok(V_VT(&val) == VT_BSTR, "attr2: V_VT(&val) = %d\n", V_VT(&val));
+        ok(!V_BSTR(&val), "attr2: V_BSTR(&val) != NULL\n");
+        test_attr_value(dom_attr, L"");
+    } else if(!lstrcmpW(name, L"attr3")) {
+        hres = IHTMLDOMAttribute_get_nodeValue(dom_attr, &val);
+        ok(hres == S_OK, "%ld) get_nodeValue failed: %08lx\n", i, hres);
+        ok(V_VT(&val) == VT_BSTR, "attr3: V_VT(&val) = %d\n", V_VT(&val));
+        ok(!lstrcmpW(V_BSTR(&val), L"attr3"), "attr3: V_BSTR(&val) = %s\n", wine_dbgstr_w(V_BSTR(&val)));
+        test_attr_value(dom_attr, L"attr3");
+    } else if(!lstrcmpW(name, L"test")) {
+        hres = IHTMLDOMAttribute_get_nodeValue(dom_attr, &val);
+        ok(hres == S_OK, "%ld) get_nodeValue failed: %08lx\n", i, hres);
+        ok(V_VT(&val) == VT_I4, "test: V_VT(&val) = %d\n", V_VT(&val));
+        ok(V_I4(&val) == 1, "test: V_I4(&val) = %ld\n", V_I4(&val));
+        test_attr_value(dom_attr, L"1");
+    } else
+        ret = 0;
+
+    IHTMLDOMAttribute_Release(dom_attr);
+    SysFreeString(name);
+    VariantClear(&val);
+    return ret;
+}
+
 static void test_attr_collection_disp(IDispatch *disp)
 {
     IDispatchEx *dispex;
@@ -3689,11 +3744,13 @@ static void test_attr_collection(IHTMLElement *elem)
 
     IHTMLDOMNode *node;
     IDispatch *disp, *attr;
-    IHTMLDOMAttribute *dom_attr;
     IHTMLAttributeCollection *attr_col;
     BSTR name = SysAllocString(testW);
+    IEnumVARIANT *enum_var;
+    IUnknown *enum_unk;
     VARIANT id, val;
     LONG i, len, checked;
+    ULONG fetched;
     HRESULT hres;
 
     hres = IHTMLElement_QueryInterface(elem, &IID_IHTMLDOMNode, (void**)&node);
@@ -3724,6 +3781,13 @@ static void test_attr_collection(IHTMLElement *elem)
     ok(hres == S_OK, "get_length failed: %08lx\n", hres);
     ok(len == i+1, "get_length returned %ld, expected %ld\n", len, i+1);
 
+    hres = IHTMLAttributeCollection_get__newEnum(attr_col, &enum_unk);
+    ok(hres == S_OK, "_newEnum failed: %08lx\n", hres);
+
+    hres = IUnknown_QueryInterface(enum_unk, &IID_IEnumVARIANT, (void**)&enum_var);
+    IUnknown_Release(enum_unk);
+    ok(hres == S_OK, "Could not get IEnumVARIANT iface: %08lx\n", hres);
+
     checked = 0;
     for(i=0; i<len; i++) {
         V_VT(&id) = VT_I4;
@@ -3731,57 +3795,32 @@ static void test_attr_collection(IHTMLElement *elem)
         hres = IHTMLAttributeCollection_item(attr_col, &id, &attr);
         ok(hres == S_OK, "%ld) item failed: %08lx\n", i, hres);
 
-        hres = IDispatch_QueryInterface(attr, &IID_IHTMLDOMAttribute, (void**)&dom_attr);
-        ok(hres == S_OK, "%ld) QueryInterface failed: %08lx\n", i, hres);
+        checked += test_attr_collection_attr(attr, i);
         IDispatch_Release(attr);
-
-        hres = IHTMLDOMAttribute_get_nodeName(dom_attr, &name);
-        ok(hres == S_OK, "%ld) get_nodeName failed: %08lx\n", i, hres);
-
-        if(!lstrcmpW(name, L"id")) {
-            checked++;
-            hres = IHTMLDOMAttribute_get_nodeValue(dom_attr, &val);
-            ok(hres == S_OK, "%ld) get_nodeValue failed: %08lx\n", i, hres);
-            ok(V_VT(&val) == VT_BSTR, "id: V_VT(&val) = %d\n", V_VT(&val));
-            ok(!lstrcmpW(V_BSTR(&val), L"attr"), "id: V_BSTR(&val) = %s\n", wine_dbgstr_w(V_BSTR(&val)));
-            test_attr_expando(dom_attr, VARIANT_FALSE);
-            test_attr_value(dom_attr, L"attr");
-        } else if(!lstrcmpW(name, L"attr1")) {
-            checked++;
-            hres = IHTMLDOMAttribute_get_nodeValue(dom_attr, &val);
-            ok(hres == S_OK, "%ld) get_nodeValue failed: %08lx\n", i, hres);
-            ok(V_VT(&val) == VT_BSTR, "attr1: V_VT(&val) = %d\n", V_VT(&val));
-            ok(!lstrcmpW(V_BSTR(&val), L"attr1"), "attr1: V_BSTR(&val) = %s\n", wine_dbgstr_w(V_BSTR(&val)));
-            test_attr_expando(dom_attr, VARIANT_TRUE);
-            test_attr_value(dom_attr, L"attr1");
-        } else if(!lstrcmpW(name, L"attr2")) {
-            checked++;
-            hres = IHTMLDOMAttribute_get_nodeValue(dom_attr, &val);
-            ok(hres == S_OK, "%ld) get_nodeValue failed: %08lx\n", i, hres);
-            ok(V_VT(&val) == VT_BSTR, "attr2: V_VT(&val) = %d\n", V_VT(&val));
-            ok(!V_BSTR(&val), "attr2: V_BSTR(&val) != NULL\n");
-            test_attr_value(dom_attr, L"");
-        } else if(!lstrcmpW(name, L"attr3")) {
-            checked++;
-            hres = IHTMLDOMAttribute_get_nodeValue(dom_attr, &val);
-            ok(hres == S_OK, "%ld) get_nodeValue failed: %08lx\n", i, hres);
-            ok(V_VT(&val) == VT_BSTR, "attr3: V_VT(&val) = %d\n", V_VT(&val));
-            ok(!lstrcmpW(V_BSTR(&val), L"attr3"), "attr3: V_BSTR(&val) = %s\n", wine_dbgstr_w(V_BSTR(&val)));
-            test_attr_value(dom_attr, L"attr3");
-        } else if(!lstrcmpW(name, L"test")) {
-            checked++;
-            hres = IHTMLDOMAttribute_get_nodeValue(dom_attr, &val);
-            ok(hres == S_OK, "%ld) get_nodeValue failed: %08lx\n", i, hres);
-            ok(V_VT(&val) == VT_I4, "test: V_VT(&val) = %d\n", V_VT(&val));
-            ok(V_I4(&val) == 1, "test: V_I4(&val) = %ld\n", V_I4(&val));
-            test_attr_value(dom_attr, L"1");
-        }
-
-        IHTMLDOMAttribute_Release(dom_attr);
-        SysFreeString(name);
-        VariantClear(&val);
     }
     ok(checked==5, "invalid number of specified attributes (%ld)\n", checked);
+
+    checked = 0;
+    for(i=0; i<len; i++) {
+        fetched = 0;
+        V_VT(&val) = VT_ERROR;
+        hres = IEnumVARIANT_Next(enum_var, 1, &val, &fetched);
+        ok(hres == S_OK, "Next failed: %08lx\n", hres);
+        ok(fetched == 1, "fetched = %lu\n", fetched);
+        ok(V_VT(&val) == VT_DISPATCH, "V_VT(val) = %d\n", V_VT(&val));
+        ok(V_DISPATCH(&val) != NULL, "V_DISPATCH(&val) == NULL\n");
+
+        checked += test_attr_collection_attr(V_DISPATCH(&val), i);
+        IDispatch_Release(V_DISPATCH(&val));
+    }
+    ok(checked==5, "invalid number of specified attributes (%ld)\n", checked);
+
+    fetched = 0;
+    V_VT(&val) = VT_ERROR;
+    hres = IEnumVARIANT_Next(enum_var, 1, &val, &fetched);
+    ok(hres == S_FALSE, "Next failed: %08lx\n", hres);
+    ok(fetched == 0, "fetched = %lu\n", fetched);
+    IEnumVARIANT_Release(enum_var);
 
     V_I4(&id) = len;
     hres = IHTMLAttributeCollection_item(attr_col, &id, &attr);
@@ -5229,8 +5268,11 @@ static void test_elem_bounding_client_rect(IUnknown *unk)
 {
     IHTMLRectCollection *rects;
     IHTMLRect *rect, *rect2;
+    IEnumVARIANT *enum_var;
     IHTMLElement2 *elem2;
+    IUnknown *enum_unk;
     VARIANT v, index;
+    ULONG fetched;
     LONG l;
     HRESULT hres;
 
@@ -5284,6 +5326,30 @@ static void test_elem_bounding_client_rect(IUnknown *unk)
     ok(V_VT(&v) == VT_DISPATCH, "V_VT(v) = %d\n", V_VT(&v));
     test_disp((IUnknown*)V_DISPATCH(&v), &IID_IHTMLRect, NULL, L"[object]");
     VariantClear(&v);
+
+    hres = IHTMLRectCollection_get__newEnum(rects, &enum_unk);
+    ok(hres == S_OK, "_newEnum failed: %08lx\n", hres);
+
+    hres = IUnknown_QueryInterface(enum_unk, &IID_IEnumVARIANT, (void**)&enum_var);
+    IUnknown_Release(enum_unk);
+    ok(hres == S_OK, "Could not get IEnumVARIANT iface: %08lx\n", hres);
+
+    fetched = 0;
+    V_VT(&v) = VT_ERROR;
+    hres = IEnumVARIANT_Next(enum_var, 1, &v, &fetched);
+    ok(hres == S_OK, "Next failed: %08lx\n", hres);
+    ok(fetched == 1, "fetched = %lu\n", fetched);
+    ok(V_VT(&v) == VT_DISPATCH, "V_VT(v) = %d\n", V_VT(&v));
+    ok(V_DISPATCH(&v) != NULL, "V_DISPATCH(&v) == NULL\n");
+    test_disp((IUnknown*)V_DISPATCH(&v), &IID_IHTMLRect, NULL, L"[object]");
+    VariantClear(&v);
+
+    fetched = 0;
+    V_VT(&v) = VT_ERROR;
+    hres = IEnumVARIANT_Next(enum_var, 1, &v, &fetched);
+    ok(hres == S_FALSE, "Next failed: %08lx\n", hres);
+    ok(fetched == 0, "fetched = %lu\n", fetched);
+    IEnumVARIANT_Release(enum_var);
 
     IHTMLRectCollection_Release(rects);
     IHTMLElement2_Release(elem2);
@@ -5398,7 +5464,10 @@ static IHTMLElement *get_doc_elem_by_id(IHTMLDocument2 *doc, const WCHAR *id)
 static void test_select_elem(IHTMLSelectElement *select)
 {
     IDispatch *disp, *disp2;
-    VARIANT name, index;
+    VARIANT name, index, v;
+    IEnumVARIANT *enum_var;
+    IUnknown *enum_unk;
+    ULONG fetched;
     HRESULT hres;
 
     test_select_type(select, L"select-one");
@@ -5468,6 +5537,40 @@ static void test_select_elem(IHTMLSelectElement *select)
     IDispatch_Release(disp2);
     IDispatch_Release(disp);
 
+    hres = IHTMLSelectElement_get__newEnum(select, &enum_unk);
+    ok(hres == S_OK, "_newEnum failed: %08lx\n", hres);
+
+    hres = IUnknown_QueryInterface(enum_unk, &IID_IEnumVARIANT, (void**)&enum_var);
+    IUnknown_Release(enum_unk);
+    ok(hres == S_OK, "Could not get IEnumVARIANT iface: %08lx\n", hres);
+
+    fetched = 0;
+    V_VT(&v) = VT_ERROR;
+    hres = IEnumVARIANT_Next(enum_var, 1, &v, &fetched);
+    ok(hres == S_OK, "Next failed: %08lx\n", hres);
+    ok(fetched == 1, "fetched = %lu\n", fetched);
+    ok(V_VT(&v) == VT_DISPATCH, "V_VT(v) = %d\n", V_VT(&v));
+    ok(V_DISPATCH(&v) != NULL, "V_DISPATCH(&v) == NULL\n");
+    test_disp((IUnknown*)V_DISPATCH(&v), &DIID_DispHTMLOptionElement, &CLSID_HTMLOptionElement, NULL);
+    VariantClear(&v);
+
+    fetched = 0;
+    V_VT(&v) = VT_ERROR;
+    hres = IEnumVARIANT_Next(enum_var, 1, &v, &fetched);
+    ok(hres == S_OK, "Next failed: %08lx\n", hres);
+    ok(fetched == 1, "fetched = %lu\n", fetched);
+    ok(V_VT(&v) == VT_DISPATCH, "V_VT(v) = %d\n", V_VT(&v));
+    ok(V_DISPATCH(&v) != NULL, "V_DISPATCH(&v) == NULL\n");
+    test_disp((IUnknown*)V_DISPATCH(&v), &DIID_DispHTMLOptionElement, &CLSID_HTMLOptionElement, NULL);
+    VariantClear(&v);
+
+    fetched = 0;
+    V_VT(&v) = VT_ERROR;
+    hres = IEnumVARIANT_Next(enum_var, 1, &v, &fetched);
+    ok(hres == S_FALSE, "Next failed: %08lx\n", hres);
+    ok(fetched == 0, "fetched = %lu\n", fetched);
+    IEnumVARIANT_Release(enum_var);
+
     test_select_multiple(select, VARIANT_FALSE);
     test_select_set_multiple(select, VARIANT_TRUE);
     test_select_remove(select);
@@ -5477,7 +5580,10 @@ static void test_form_item(IHTMLElement *elem)
 {
     IHTMLFormElement *form = get_form_iface((IUnknown*)elem);
     IDispatch *disp, *disp2;
-    VARIANT name, index;
+    IEnumVARIANT *enum_var;
+    VARIANT name, index, v;
+    IUnknown *enum_unk;
+    ULONG fetched;
     HRESULT hres;
 
     V_VT(&index) = VT_EMPTY;
@@ -5516,6 +5622,40 @@ static void test_form_item(IHTMLElement *elem)
     ok(iface_cmp((IUnknown*)disp, (IUnknown*)disp2), "disp != disp2\n");
     IDispatch_Release(disp2);
     IDispatch_Release(disp);
+
+    hres = IHTMLFormElement_get__newEnum(form, &enum_unk);
+    ok(hres == S_OK, "_newEnum failed: %08lx\n", hres);
+
+    hres = IUnknown_QueryInterface(enum_unk, &IID_IEnumVARIANT, (void**)&enum_var);
+    IUnknown_Release(enum_unk);
+    ok(hres == S_OK, "Could not get IEnumVARIANT iface: %08lx\n", hres);
+
+    fetched = 0;
+    V_VT(&v) = VT_ERROR;
+    hres = IEnumVARIANT_Next(enum_var, 1, &v, &fetched);
+    ok(hres == S_OK, "Next failed: %08lx\n", hres);
+    ok(fetched == 1, "fetched = %lu\n", fetched);
+    ok(V_VT(&v) == VT_DISPATCH, "V_VT(v) = %d\n", V_VT(&v));
+    ok(V_DISPATCH(&v) != NULL, "V_DISPATCH(&v) == NULL\n");
+    test_disp((IUnknown*)V_DISPATCH(&v), &DIID_DispHTMLTextAreaElement, &CLSID_HTMLTextAreaElement, NULL);
+    VariantClear(&v);
+
+    fetched = 0;
+    V_VT(&v) = VT_ERROR;
+    hres = IEnumVARIANT_Next(enum_var, 1, &v, &fetched);
+    ok(hres == S_OK, "Next failed: %08lx\n", hres);
+    ok(fetched == 1, "fetched = %lu\n", fetched);
+    ok(V_VT(&v) == VT_DISPATCH, "V_VT(v) = %d\n", V_VT(&v));
+    ok(V_DISPATCH(&v) != NULL, "V_DISPATCH(&v) == NULL\n");
+    test_disp((IUnknown*)V_DISPATCH(&v), &DIID_DispHTMLInputElement, &CLSID_HTMLInputElement, NULL);
+    VariantClear(&v);
+
+    fetched = 0;
+    V_VT(&v) = VT_ERROR;
+    hres = IEnumVARIANT_Next(enum_var, 1, &v, &fetched);
+    ok(hres == S_FALSE, "Next failed: %08lx\n", hres);
+    ok(fetched == 0, "fetched = %lu\n", fetched);
+    IEnumVARIANT_Release(enum_var);
 }
 
 static void test_create_option_elem(IHTMLDocument2 *doc)
@@ -8577,7 +8717,10 @@ static void test_stylesheet(IDispatch *disp)
 static void test_stylesheets(IHTMLDocument2 *doc)
 {
     IHTMLStyleSheetsCollection *col = NULL;
+    IEnumVARIANT *enum_var;
+    IUnknown *enum_unk;
     VARIANT idx, res;
+    ULONG fetched;
     LONG len = 0;
     HRESULT hres;
 
@@ -8610,6 +8753,30 @@ static void test_stylesheets(IHTMLDocument2 *doc)
     ok(hres == E_INVALIDARG, "item failed: %08lx, expected E_INVALIDARG\n", hres);
     ok(V_VT(&res) == VT_EMPTY, "V_VT(res) = %d\n", V_VT(&res));
     VariantClear(&res);
+
+    hres = IHTMLStyleSheetsCollection_get__newEnum(col, &enum_unk);
+    ok(hres == S_OK, "_newEnum failed: %08lx\n", hres);
+
+    hres = IUnknown_QueryInterface(enum_unk, &IID_IEnumVARIANT, (void**)&enum_var);
+    IUnknown_Release(enum_unk);
+    ok(hres == S_OK, "Could not get IEnumVARIANT iface: %08lx\n", hres);
+
+    fetched = 0;
+    V_VT(&res) = VT_ERROR;
+    hres = IEnumVARIANT_Next(enum_var, 1, &res, &fetched);
+    ok(hres == S_OK, "Next failed: %08lx\n", hres);
+    ok(fetched == 1, "fetched = %lu\n", fetched);
+    ok(V_VT(&res) == VT_DISPATCH, "V_VT(res) = %d\n", V_VT(&res));
+    ok(V_DISPATCH(&res) != NULL, "V_DISPATCH(&res) == NULL\n");
+    test_disp2((IUnknown*)V_DISPATCH(&res), &DIID_DispHTMLStyleSheet, &IID_IHTMLStyleSheet, NULL, L"[object]");
+    VariantClear(&res);
+
+    fetched = 0;
+    V_VT(&res) = VT_ERROR;
+    hres = IEnumVARIANT_Next(enum_var, 1, &res, &fetched);
+    ok(hres == S_FALSE, "Next failed: %08lx\n", hres);
+    ok(fetched == 0, "fetched = %lu\n", fetched);
+    IEnumVARIANT_Release(enum_var);
 
     IHTMLStyleSheetsCollection_Release(col);
 }

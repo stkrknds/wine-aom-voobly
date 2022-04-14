@@ -4976,26 +4976,36 @@ ULONG_PTR WINAPI NtUserCallHwnd( HWND hwnd, DWORD code )
 {
     switch (code)
     {
-    case NtUserArrangeIconicWindows:
+    case NtUserCallHwnd_ArrangeIconicWindows:
         return arrange_iconic_windows( hwnd );
-    case NtUserGetDpiForWindow:
+
+    case NtUserCallHwnd_GetDpiForWindow:
         return get_dpi_for_window( hwnd );
-    case NtUserGetParent:
+
+    case NtUserCallHwnd_GetParent:
         return HandleToUlong( get_parent( hwnd ));
-    case NtUserGetWindowContextHelpId:
+
+    case NtUserCallHwnd_GetWindowContextHelpId:
         return get_window_context_help_id( hwnd );
-    case NtUserGetWindowDpiAwarenessContext:
+
+    case NtUserCallHwnd_GetWindowDpiAwarenessContext:
         return (ULONG_PTR)get_window_dpi_awareness_context( hwnd );
-    case NtUserGetWindowTextLength:
+
+    case NtUserCallHwnd_GetWindowTextLength:
         return get_server_window_text( hwnd, NULL, 0 );
-    case NtUserIsWindow:
+
+    case NtUserCallHwnd_IsWindow:
         return is_window( hwnd );
-    case NtUserIsWindowEnabled:
+
+    case NtUserCallHwnd_IsWindowEnabled:
         return is_window_enabled( hwnd );
-    case NtUserIsWindowUnicode:
+
+    case NtUserCallHwnd_IsWindowUnicode:
         return is_window_unicode( hwnd );
-    case NtUserIsWindowVisible:
+
+    case NtUserCallHwnd_IsWindowVisible:
         return is_window_visible( hwnd );
+
     default:
         FIXME( "invalid code %u\n", code );
         return 0;
@@ -5009,65 +5019,95 @@ ULONG_PTR WINAPI NtUserCallHwndParam( HWND hwnd, DWORD_PTR param, DWORD code )
 {
     switch (code)
     {
-    case NtUserGetClassLongA:
+    case NtUserCallHwndParam_GetClassLongA:
         return get_class_long( hwnd, param, TRUE );
-    case NtUserGetClassLongW:
+
+    case NtUserCallHwndParam_GetClassLongW:
         return get_class_long( hwnd, param, FALSE );
-    case NtUserGetClassLongPtrA:
+
+    case NtUserCallHwndParam_GetClassLongPtrA:
         return get_class_long_ptr( hwnd, param, TRUE );
-    case NtUserGetClassLongPtrW:
+
+    case NtUserCallHwndParam_GetClassLongPtrW:
         return get_class_long_ptr( hwnd, param, FALSE );
-    case NtUserGetClassWord:
+
+    case NtUserCallHwndParam_GetClassWord:
         return get_class_word( hwnd, param );
-    case NtUserGetClientRect:
+
+    case NtUserCallHwndParam_GetClientRect:
         return get_client_rect( hwnd, (RECT *)param );
-    case NtUserGetMinMaxInfo:
+
+    case NtUserCallHwndParam_GetMinMaxInfo:
         *(MINMAXINFO *)param = get_min_max_info( hwnd );
         return 0;
-    case NtUserGetWindowInfo:
+
+    case NtUserCallHwndParam_GetWindowInfo:
         return get_window_info( hwnd, (WINDOWINFO *)param );
-    case NtUserGetWindowLongA:
+
+    case NtUserCallHwndParam_GetWindowLongA:
         return get_window_long_size( hwnd, param, sizeof(LONG), TRUE );
-    case NtUserGetWindowLongW:
+
+    case NtUserCallHwndParam_GetWindowLongW:
         return get_window_long( hwnd, param );
-    case NtUserGetWindowLongPtrA:
+
+    case NtUserCallHwndParam_GetWindowLongPtrA:
         return get_window_long_ptr( hwnd, param, TRUE );
-    case NtUserGetWindowLongPtrW:
+
+    case NtUserCallHwndParam_GetWindowLongPtrW:
         return get_window_long_ptr( hwnd, param, FALSE );
-    case NtUserGetWindowPlacement:
+
+    case NtUserCallHwndParam_GetWindowPlacement:
         return get_window_placement( hwnd, (WINDOWPLACEMENT *)param );
-    case NtUserGetWindowRect:
+
+    case NtUserCallHwndParam_GetWindowRect:
         return get_window_rect( hwnd, (RECT *)param, get_thread_dpi() );
-    case NtUserGetWindowRelative:
+
+    case NtUserCallHwndParam_GetWindowRelative:
         return HandleToUlong( get_window_relative( hwnd, param ));
-    case NtUserGetWindowThread:
+
+    case NtUserCallHwndParam_GetWindowThread:
         return get_window_thread( hwnd, (DWORD *)param );
-    case NtUserGetWindowWord:
+
+    case NtUserCallHwndParam_GetWindowWord:
         return get_window_word( hwnd, param );
-    case NtUserIsChild:
+
+    case NtUserCallHwndParam_IsChild:
         return is_child( hwnd, UlongToHandle(param) );
-    case NtUserKillSystemTimer:
+
+    case NtUserCallHwndParam_KillSystemTimer:
         return kill_system_timer( hwnd, param );
-    case NtUserMonitorFromWindow:
-        return HandleToUlong( monitor_from_window( hwnd, param, NtUserMonitorFromWindow ));
-    case NtUserScreenToClient:
+
+    case NtUserCallHwndParam_MirrorRgn:
+        return mirror_window_region( hwnd, UlongToHandle(param) );
+
+    case NtUserCallHwndParam_MonitorFromWindow:
+        return HandleToUlong( monitor_from_window( hwnd, param, get_thread_dpi() ));
+
+    case NtUserCallHwndParam_ScreenToClient:
         return screen_to_client( hwnd, (POINT *)param );
-    case NtUserSetCaptureWindow:
-        return set_capture_window( hwnd, param, NULL );
-    case NtUserSetForegroundWindow:
+
+    case NtUserCallHwndParam_SetForegroundWindow:
         return set_foreground_window( hwnd, param );
-    case NtUserSetWindowPixelFormat:
+
+    case NtUserCallHwndParam_SetWindowPixelFormat:
         return set_window_pixel_format( hwnd, param );
+
     /* temporary exports */
     case NtUserIsWindowDrawable:
         return is_window_drawable( hwnd, param );
+
+    case NtUserSetCaptureWindow:
+        return set_capture_window( hwnd, param, NULL );
+
     case NtUserSetWindowStyle:
         {
             STYLESTRUCT *style = (void *)param;
             return set_window_style( hwnd, style->styleNew, style->styleOld );
         }
+
     case NtUserSpyGetMsgName:
         return (UINT_PTR)debugstr_msg_name( param, hwnd );
+
     default:
         FIXME( "invalid code %u\n", code );
         return 0;
