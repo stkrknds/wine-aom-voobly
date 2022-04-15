@@ -14,6 +14,7 @@ SOURCES = \
 	amaudio.h \
 	amsi.idl \
 	amstream.idl \
+	amva.h \
 	amvideo.idl \
 	appcompatapi.h \
 	appmgmt.h \
@@ -746,6 +747,7 @@ SOURCES = \
 	verrsrc.h \
 	vfw.h \
 	vfwmsgs.h \
+	videoacc.idl \
 	virtdisk.h \
 	vmr9.idl \
 	vmrender.idl \

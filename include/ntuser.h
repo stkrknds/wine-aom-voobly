@@ -403,6 +403,7 @@ ULONG_PTR WINAPI NtUserCallOneParam( ULONG_PTR arg, ULONG code );
 ULONG_PTR WINAPI NtUserCallTwoParam( ULONG_PTR arg1, ULONG_PTR arg2, ULONG code );
 LONG    WINAPI NtUserChangeDisplaySettings( UNICODE_STRING *devname, DEVMODEW *devmode, HWND hwnd,
                                             DWORD flags, void *lparam );
+HWND    WINAPI NtUserChildWindowFromPointEx( HWND parent, LONG x, LONG y, UINT flags );
 BOOL    WINAPI NtUserClipCursor( const RECT *rect );
 BOOL    WINAPI NtUserCloseClipboard(void);
 BOOL    WINAPI NtUserCloseDesktop( HDESK handle );
@@ -436,6 +437,7 @@ NTSTATUS WINAPI NtUserEnumDisplayDevices( UNICODE_STRING *device, DWORD index,
 BOOL    WINAPI NtUserEnumDisplayMonitors( HDC hdc, RECT *rect, MONITORENUMPROC proc, LPARAM lp );
 BOOL    WINAPI NtUserEnumDisplaySettings( UNICODE_STRING *device, DWORD mode,
                                           DEVMODEW *dev_mode, DWORD flags );
+INT     WINAPI NtUserExcludeUpdateRgn( HDC hdc, HWND hwnd );
 HICON   WINAPI NtUserFindExistingCursorIcon( UNICODE_STRING *module, UNICODE_STRING *res_name,
                                              void *desc );
 BOOL    WINAPI NtUserFlashWindowEx( FLASHWINFO *info );
@@ -576,6 +578,7 @@ enum
     NtUserCallNoParam_CreateMenu,
     NtUserCallNoParam_GetDesktopWindow,
     NtUserCallNoParam_GetInputState,
+    NtUserCallNoParam_GetMessagePos,
     NtUserCallNoParam_ReleaseCapture,
     /* temporary exports */
     NtUserExitingThread,
@@ -596,6 +599,11 @@ static inline HWND NtUserGetDesktopWindow(void)
 static inline BOOL NtUserGetInputState(void)
 {
     return NtUserCallNoParam( NtUserCallNoParam_GetInputState );
+}
+
+static inline DWORD NtUserGetMessagePos(void)
+{
+    return NtUserCallNoParam( NtUserCallNoParam_GetMessagePos );
 }
 
 static inline BOOL NtUserReleaseCapture(void)
@@ -830,6 +838,8 @@ static inline BOOL NtUserIsWindowVisible( HWND hwnd )
 /* NtUserCallHwndParam codes, not compatible with Windows */
 enum
 {
+    NtUserCallHwndParam_ClientToScreen,
+    NtUserCallHwndParam_EnableWindow,
     NtUserCallHwndParam_GetClassLongA,
     NtUserCallHwndParam_GetClassLongW,
     NtUserCallHwndParam_GetClassLongPtrA,
@@ -849,6 +859,7 @@ enum
     NtUserCallHwndParam_GetWindowWord,
     NtUserCallHwndParam_IsChild,
     NtUserCallHwndParam_KillSystemTimer,
+    NtUserCallHwndParam_MapWindowPoints,
     NtUserCallHwndParam_MirrorRgn,
     NtUserCallHwndParam_MonitorFromWindow,
     NtUserCallHwndParam_ScreenToClient,
@@ -860,6 +871,16 @@ enum
     NtUserSetWindowStyle,
     NtUserSpyGetMsgName,
 };
+
+static inline BOOL NtUserClientToScreen( HWND hwnd, POINT *pt )
+{
+    return NtUserCallHwndParam( hwnd, (UINT_PTR)pt, NtUserCallHwndParam_ClientToScreen );
+}
+
+static inline BOOL NtUserEnableWindow( HWND hwnd, BOOL enable )
+{
+    return NtUserCallHwndParam( hwnd, enable, NtUserCallHwndParam_EnableWindow );
+}
 
 static inline DWORD NtUserGetClassLongA( HWND hwnd, INT offset )
 {
@@ -958,6 +979,23 @@ static inline BOOL NtUserIsChild( HWND parent, HWND child )
 static inline BOOL NtUserKillSystemTimer( HWND hwnd, UINT_PTR id )
 {
     return NtUserCallHwndParam( hwnd, id, NtUserCallHwndParam_KillSystemTimer );
+}
+
+struct map_window_points_params
+{
+    HWND hwnd_to;
+    POINT *points;
+    UINT count;
+};
+
+static inline int NtUserMapWindowPoints( HWND hwnd_from, HWND hwnd_to, POINT *points, UINT count )
+{
+    struct map_window_points_params params;
+    params.hwnd_to = hwnd_to;
+    params.points = points;
+    params.count = count;
+    return NtUserCallHwndParam( hwnd_from, (UINT_PTR)&params,
+                                NtUserCallHwndParam_MapWindowPoints );
 }
 
 static inline BOOL NtUserMirrorRgn( HWND hwnd, HRGN hrgn )

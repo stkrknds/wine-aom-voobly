@@ -807,6 +807,40 @@ BOOL is_window_unicode( HWND hwnd )
     return ret;
 }
 
+/* see EnableWindow */
+static BOOL enable_window( HWND hwnd, BOOL enable )
+{
+    BOOL ret;
+
+    if (is_broadcast(hwnd))
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+
+    TRACE( "( %p, %d )\n", hwnd, enable );
+
+    if (enable)
+    {
+        ret = (set_window_style( hwnd, 0, WS_DISABLED ) & WS_DISABLED) != 0;
+        if (ret) send_message( hwnd, WM_ENABLE, TRUE, 0 );
+    }
+    else
+    {
+        send_message( hwnd, WM_CANCELMODE, 0, 0 );
+
+        ret = (set_window_style( hwnd, WS_DISABLED, 0 ) & WS_DISABLED) != 0;
+        if (!ret)
+        {
+            if (hwnd == get_focus())
+                NtUserSetFocus( 0 ); /* A disabled window can't have the focus */
+
+            send_message( hwnd, WM_ENABLE, FALSE, 0 );
+        }
+    }
+    return ret;
+}
+
 /* see IsWindowEnabled */
 BOOL is_window_enabled( HWND hwnd )
 {
@@ -2256,6 +2290,43 @@ HWND WINAPI NtUserWindowFromPoint( LONG x, LONG y )
 }
 
 /*******************************************************************
+ *           NtUserChildWindowFromPointEx (win32u.@)
+ */
+HWND WINAPI NtUserChildWindowFromPointEx( HWND parent, LONG x, LONG y, UINT flags )
+{
+    POINT pt = { .x = x, .y = y }; /* in the client coordinates */
+    HWND *list;
+    int i;
+    RECT rect;
+    HWND ret;
+
+    get_client_rect( parent, &rect );
+    if (!PtInRect( &rect, pt )) return 0;
+    if (!(list = list_window_children( 0, parent, NULL, 0 ))) return parent;
+
+    for (i = 0; list[i]; i++)
+    {
+        if (!get_window_rects( list[i], COORDS_PARENT, &rect, NULL, get_thread_dpi() )) continue;
+        if (!PtInRect( &rect, pt )) continue;
+        if (flags & (CWP_SKIPINVISIBLE|CWP_SKIPDISABLED))
+        {
+            LONG style = get_window_long( list[i], GWL_STYLE );
+            if ((flags & CWP_SKIPINVISIBLE) && !(style & WS_VISIBLE)) continue;
+            if ((flags & CWP_SKIPDISABLED) && (style & WS_DISABLED)) continue;
+        }
+        if (flags & CWP_SKIPTRANSPARENT)
+        {
+            if (get_window_long( list[i], GWL_EXSTYLE ) & WS_EX_TRANSPARENT) continue;
+        }
+        break;
+    }
+    ret = list[i];
+    free( list );
+    if (!ret) ret = parent;
+    return ret;
+}
+
+/*******************************************************************
  *           get_work_rect
  *
  * Get the work area that a maximized window can cover, depending on style.
@@ -2596,6 +2667,25 @@ other_process:  /* one of the parents may belong to another process, do it the h
     }
     SERVER_END_REQ;
     return ret;
+}
+
+/* see ClientToScreen */
+static BOOL client_to_screen( HWND hwnd, POINT *pt )
+{
+    POINT offset;
+    BOOL mirrored;
+
+    if (!hwnd)
+    {
+        SetLastError( ERROR_INVALID_WINDOW_HANDLE );
+        return FALSE;
+    }
+
+    if (!get_windows_offset( hwnd, 0, get_thread_dpi(), &mirrored, &offset )) return FALSE;
+    pt->x += offset.x;
+    pt->y += offset.y;
+    if (mirrored) pt->x = -pt->x;
+    return TRUE;
 }
 
 /* see ScreenToClient */
@@ -5019,6 +5109,12 @@ ULONG_PTR WINAPI NtUserCallHwndParam( HWND hwnd, DWORD_PTR param, DWORD code )
 {
     switch (code)
     {
+    case NtUserCallHwndParam_ClientToScreen:
+        return client_to_screen( hwnd, (POINT *)param );
+
+    case NtUserCallHwndParam_EnableWindow:
+        return enable_window( hwnd, param );
+
     case NtUserCallHwndParam_GetClassLongA:
         return get_class_long( hwnd, param, TRUE );
 
@@ -5076,6 +5172,13 @@ ULONG_PTR WINAPI NtUserCallHwndParam( HWND hwnd, DWORD_PTR param, DWORD code )
 
     case NtUserCallHwndParam_KillSystemTimer:
         return kill_system_timer( hwnd, param );
+
+    case NtUserCallHwndParam_MapWindowPoints:
+        {
+            struct map_window_points_params *params = (void *)param;
+            return map_window_points( hwnd, params->hwnd_to, params->points, params->count,
+                                      get_thread_dpi() );
+        }
 
     case NtUserCallHwndParam_MirrorRgn:
         return mirror_window_region( hwnd, UlongToHandle(param) );

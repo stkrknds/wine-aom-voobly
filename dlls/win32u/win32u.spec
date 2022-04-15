@@ -790,7 +790,7 @@
 @ stub NtUserCheckProcessForClipboardAccess
 @ stub NtUserCheckProcessSession
 @ stub NtUserCheckWindowThreadDesktop
-@ stub NtUserChildWindowFromPointEx
+@ stdcall -syscall NtUserChildWindowFromPointEx(long long long long)
 @ stub NtUserClearForeground
 @ stdcall NtUserClipCursor(ptr)
 @ stdcall NtUserCloseClipboard()
@@ -879,7 +879,7 @@
 @ stdcall NtUserEnumDisplayMonitors(long ptr ptr long)
 @ stdcall NtUserEnumDisplaySettings(ptr long ptr long)
 @ stub NtUserEvent
-@ stub NtUserExcludeUpdateRgn
+@ stdcall NtUserExcludeUpdateRgn(long long)
 @ stub NtUserFillWindow
 @ stdcall -syscall NtUserFindExistingCursorIcon(ptr ptr ptr)
 @ stub NtUserFindWindowEx
