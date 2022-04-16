@@ -25,6 +25,7 @@
 
 #include "win32u_private.h"
 #include "ntuser_private.h"
+#include "wine/server.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(menu);
@@ -110,14 +111,104 @@ BOOL WINAPI NtUserDestroyAcceleratorTable( HACCEL handle )
     return TRUE;
 }
 
+static POPUPMENU *grab_menu_ptr( HMENU handle )
+{
+    POPUPMENU *menu = get_user_handle_ptr( handle, NTUSER_OBJ_MENU );
+
+    if (menu == OBJ_OTHER_PROCESS)
+    {
+        WARN( "other process menu %p\n", handle );
+        return NULL;
+    }
+
+    if (menu)
+        menu->refcount++;
+    else
+        WARN( "invalid menu handle=%p\n", handle );
+    return menu;
+}
+
+static void release_menu_ptr( POPUPMENU *menu )
+{
+    if (menu)
+    {
+        menu->refcount--;
+        release_user_handle_ptr( menu );
+    }
+}
+
+static POPUPMENU *find_menu_item( HMENU handle, UINT id, UINT flags, UINT *pos )
+{
+    UINT fallback_pos = ~0u, i;
+    POPUPMENU *menu;
+
+    menu = grab_menu_ptr( handle );
+    if (!menu)
+        return NULL;
+
+    if (flags & MF_BYPOSITION)
+    {
+        if (id >= menu->nItems)
+        {
+            release_menu_ptr( menu );
+            return NULL;
+        }
+
+        if (pos) *pos = id;
+        return menu;
+    }
+    else
+    {
+        MENUITEM *item = menu->items;
+        for (i = 0; i < menu->nItems; i++, item++)
+        {
+            if (item->fType & MF_POPUP)
+            {
+                POPUPMENU *submenu = find_menu_item( item->hSubMenu, id, flags, pos );
+
+                if (submenu)
+                {
+                    release_menu_ptr( menu );
+                    return submenu;
+                }
+                else if (item->wID == id)
+                {
+                    /* fallback to this item if nothing else found */
+                    fallback_pos = i;
+                }
+            }
+            else if (item->wID == id)
+            {
+                if (pos) *pos = i;
+                return menu;
+            }
+        }
+    }
+
+    if (fallback_pos != ~0u)
+        *pos = fallback_pos;
+    else
+    {
+        release_menu_ptr( menu );
+        menu = NULL;
+    }
+
+    return menu;
+}
+
+static BOOL is_win_menu_disallowed( HWND hwnd )
+{
+    return (get_window_long(hwnd, GWL_STYLE) & (WS_CHILD | WS_POPUP)) == WS_CHILD;
+}
+
 /* see GetMenu */
 HMENU get_menu( HWND hwnd )
 {
     return UlongToHandle( get_window_long( hwnd, GWLP_ID ));
 }
 
-/* see CreateMenu */
-HMENU create_menu(void)
+/* see CreateMenu and CreatePopupMenu */
+HMENU create_menu( BOOL is_popup )
 {
     POPUPMENU *menu;
     HMENU handle;
@@ -125,6 +216,7 @@ HMENU create_menu(void)
     if (!(menu = calloc( 1, sizeof(*menu) ))) return 0;
     menu->FocusedItem = NO_SELECTED_ITEM;
     menu->refcount = 1;
+    if (is_popup) menu->wFlags |= MF_POPUP;
 
     if (!(handle = alloc_user_handle( &menu->obj, NTUSER_OBJ_MENU ))) free( menu );
 
@@ -164,4 +256,94 @@ BOOL WINAPI NtUserDestroyMenu( HMENU handle )
 BOOL WINAPI NtUserSetSystemMenu( HWND hwnd, HMENU menu )
 {
     return user_callbacks && user_callbacks->pSetSystemMenu( hwnd, menu );
+}
+
+/*******************************************************************
+ *           NtUserCheckMenuItem    (win32u.@)
+ */
+DWORD WINAPI NtUserCheckMenuItem( HMENU handle, UINT id, UINT flags )
+{
+    POPUPMENU *menu;
+    MENUITEM *item;
+    DWORD ret;
+    UINT pos;
+
+    if (!(menu = find_menu_item(handle, id, flags, &pos)))
+        return -1;
+    item = &menu->items[pos];
+
+    ret = item->fState & MF_CHECKED;
+    if (flags & MF_CHECKED) item->fState |= MF_CHECKED;
+    else item->fState &= ~MF_CHECKED;
+    release_menu_ptr(menu);
+    return ret;
+}
+
+/**********************************************************************
+ *           NtUserEnableMenuItem    (win32u.@)
+ */
+BOOL WINAPI NtUserEnableMenuItem( HMENU handle, UINT id, UINT flags )
+{
+    UINT oldflags, pos;
+    POPUPMENU *menu;
+    MENUITEM *item;
+
+    TRACE( "(%p, %04x, %04x)\n", handle, id, flags );
+
+    /* Get the Popupmenu to access the owner menu */
+    if (!(menu = find_menu_item( handle, id, flags, &pos )))
+	return ~0u;
+
+    item = &menu->items[pos];
+    oldflags = item->fState & (MF_GRAYED | MF_DISABLED);
+    item->fState ^= (oldflags ^ flags) & (MF_GRAYED | MF_DISABLED);
+
+    /* If the close item in the system menu change update the close button */
+    if (item->wID == SC_CLOSE && oldflags != flags && menu->hSysMenuOwner)
+    {
+        POPUPMENU *parent_menu;
+        RECT rc;
+        HWND hwnd;
+
+        /* Get the parent menu to access */
+        parent_menu = grab_menu_ptr( menu->hSysMenuOwner );
+        release_menu_ptr( menu );
+        if (!parent_menu)
+            return ~0u;
+
+        hwnd = parent_menu->hWnd;
+        release_menu_ptr( parent_menu );
+
+        /* Refresh the frame to reflect the change */
+        get_window_rects( hwnd, COORDS_CLIENT, &rc, NULL, get_thread_dpi() );
+        rc.bottom = 0;
+        NtUserRedrawWindow( hwnd, &rc, 0, RDW_FRAME | RDW_INVALIDATE | RDW_NOCHILDREN );
+    }
+    else
+        release_menu_ptr( menu );
+
+    return oldflags;
+}
+
+/* see DrawMenuBar */
+BOOL draw_menu_bar( HWND hwnd )
+{
+    HMENU handle;
+
+    if (!is_window( hwnd )) return FALSE;
+    if (is_win_menu_disallowed( hwnd )) return TRUE;
+
+    if ((handle = get_menu( hwnd )))
+    {
+        POPUPMENU *menu = grab_menu_ptr( handle );
+        if (menu)
+        {
+            menu->Height = 0; /* Make sure we call MENU_MenuBarCalcSize */
+            menu->hwndOwner = hwnd;
+            release_menu_ptr( menu );
+        }
+    }
+
+    return NtUserSetWindowPos( hwnd, 0, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE |
+                               SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED );
 }

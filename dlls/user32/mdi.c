@@ -457,7 +457,7 @@ static LRESULT MDI_RefreshMenu(MDICLIENTINFO *ci)
             AppendMenuW(ci->hWindowMenu, MF_STRING, id, buf);
 
             if (ci->child[i] == ci->hwndActiveChild)
-                CheckMenuItem(ci->hWindowMenu, id, MF_CHECKED);
+                NtUserCheckMenuItem(ci->hWindowMenu, id, MF_CHECKED);
         }
         else
             TRACE("MDI child %p is not visible, skipping\n", ci->child[i]);
@@ -891,9 +891,9 @@ static BOOL MDI_AugmentFrameMenu( HWND frame, HWND hChild )
         return FALSE;
     }
 
-    EnableMenuItem(hSysPopup, SC_SIZE, MF_BYCOMMAND | MF_GRAYED);
-    EnableMenuItem(hSysPopup, SC_MOVE, MF_BYCOMMAND | MF_GRAYED);
-    EnableMenuItem(hSysPopup, SC_MAXIMIZE, MF_BYCOMMAND | MF_GRAYED);
+    NtUserEnableMenuItem(hSysPopup, SC_SIZE, MF_BYCOMMAND | MF_GRAYED);
+    NtUserEnableMenuItem(hSysPopup, SC_MOVE, MF_BYCOMMAND | MF_GRAYED);
+    NtUserEnableMenuItem(hSysPopup, SC_MAXIMIZE, MF_BYCOMMAND | MF_GRAYED);
     SetMenuDefaultItem(hSysPopup, SC_CLOSE, FALSE);
 
     /* redraw menu */

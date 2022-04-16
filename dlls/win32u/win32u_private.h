@@ -210,6 +210,7 @@ struct unix_funcs
     LRESULT  (WINAPI *pNtUserDispatchMessage)( const MSG *msg );
     BOOL     (WINAPI *pNtUserDrawIconEx)( HDC hdc, INT x0, INT y0, HICON icon, INT width,
                                           INT height, UINT istep, HBRUSH hbr, UINT flags );
+    BOOL     (WINAPI *pNtUserEnableMenuItem)( HMENU handle, UINT id, UINT flags );
     BOOL     (WINAPI *pNtUserEndDeferWindowPosEx)( HDWP hdwp, BOOL async );
     BOOL     (WINAPI *pNtUserEndPaint)( HWND hwnd, const PAINTSTRUCT *ps );
     NTSTATUS (WINAPI *pNtUserEnumDisplayDevices)( UNICODE_STRING *device, DWORD index,
@@ -283,6 +284,7 @@ struct unix_funcs
                                                          UINT winini, UINT dpi );
     INT      (WINAPI *pNtUserToUnicodeEx)( UINT virt, UINT scan, const BYTE *state,
                                            WCHAR *str, int size, UINT flags, HKL layout );
+    BOOL     (WINAPI *pNtUserTranslateMessage)( const MSG *msg, UINT flags );
     BOOL     (WINAPI *pNtUserUnregisterClass)( UNICODE_STRING *name, HINSTANCE instance,
                                                struct client_menu_name *client_menu_name );
     BOOL     (WINAPI *pNtUserUnregisterHotKey)( HWND hwnd, INT id );
@@ -352,7 +354,8 @@ extern BOOL set_capture_window( HWND hwnd, UINT gui_flags, HWND *prev_ret ) DECL
 extern BOOL set_foreground_window( HWND hwnd, BOOL mouse ) DECLSPEC_HIDDEN;
 
 /* menu.c */
-extern HMENU create_menu(void) DECLSPEC_HIDDEN;
+extern HMENU create_menu( BOOL is_popup ) DECLSPEC_HIDDEN;
+extern BOOL draw_menu_bar( HWND hwnd ) DECLSPEC_HIDDEN;
 extern HMENU get_menu( HWND hwnd ) DECLSPEC_HIDDEN;
 
 /* message.c */
@@ -428,6 +431,7 @@ extern LONG_PTR set_window_long( HWND hwnd, INT offset, UINT size, LONG_PTR newv
                                  BOOL ansi ) DECLSPEC_HIDDEN;
 extern BOOL set_window_pos( WINDOWPOS *winpos, int parent_x, int parent_y ) DECLSPEC_HIDDEN;
 extern ULONG set_window_style( HWND hwnd, ULONG set_bits, ULONG clear_bits ) DECLSPEC_HIDDEN;
+extern BOOL show_owned_popups( HWND owner, BOOL show ) DECLSPEC_HIDDEN;
 extern void update_window_state( HWND hwnd ) DECLSPEC_HIDDEN;
 extern HWND window_from_point( HWND hwnd, POINT pt, INT *hittest ) DECLSPEC_HIDDEN;
 

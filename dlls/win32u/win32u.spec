@@ -786,7 +786,7 @@
 @ stdcall NtUserChangeDisplaySettings(ptr ptr long long ptr)
 @ stub NtUserChangeWindowMessageFilterEx
 @ stub NtUserCheckAccessForIntegrityLevel
-@ stub NtUserCheckMenuItem
+@ stdcall -syscall NtUserCheckMenuItem(long long long)
 @ stub NtUserCheckProcessForClipboardAccess
 @ stub NtUserCheckProcessSession
 @ stub NtUserCheckWindowThreadDesktop
@@ -860,7 +860,7 @@
 @ stub NtUserEmptyClipboard
 @ stub NtUserEnableChildWindowDpiMessage
 @ stub NtUserEnableIAMAccess
-@ stub NtUserEnableMenuItem
+@ stdcall NtUserEnableMenuItem(long long long)
 @ stub NtUserEnableMouseInPointer
 @ stub NtUserEnableMouseInPointerForWindow
 @ stub NtUserEnableMouseInputForCursorSuppression
@@ -1282,7 +1282,7 @@
 @ stub NtUserTransformPoint
 @ stub NtUserTransformRect
 @ stub NtUserTranslateAccelerator
-@ stub NtUserTranslateMessage
+@ stdcall NtUserTranslateMessage(ptr long)
 @ stub NtUserUndelegateInput
 @ stdcall -syscall NtUserUnhookWinEvent(long)
 @ stdcall -syscall NtUserUnhookWindowsHookEx(long)

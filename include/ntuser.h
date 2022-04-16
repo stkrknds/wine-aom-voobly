@@ -403,6 +403,7 @@ ULONG_PTR WINAPI NtUserCallOneParam( ULONG_PTR arg, ULONG code );
 ULONG_PTR WINAPI NtUserCallTwoParam( ULONG_PTR arg1, ULONG_PTR arg2, ULONG code );
 LONG    WINAPI NtUserChangeDisplaySettings( UNICODE_STRING *devname, DEVMODEW *devmode, HWND hwnd,
                                             DWORD flags, void *lparam );
+DWORD   WINAPI NtUserCheckMenuItem( HMENU handle, UINT id, UINT flags );
 HWND    WINAPI NtUserChildWindowFromPointEx( HWND parent, LONG x, LONG y, UINT flags );
 BOOL    WINAPI NtUserClipCursor( const RECT *rect );
 BOOL    WINAPI NtUserCloseClipboard(void);
@@ -430,6 +431,7 @@ BOOL    WINAPI NtUserDestroyWindow( HWND hwnd );
 LRESULT WINAPI NtUserDispatchMessage( const MSG *msg );
 BOOL    WINAPI NtUserDrawIconEx( HDC hdc, INT x0, INT y0, HICON icon, INT width,
                                  INT height, UINT istep, HBRUSH hbr, UINT flags );
+BOOL    WINAPI NtUserEnableMenuItem( HMENU handle, UINT id, UINT flags );
 BOOL    WINAPI NtUserEndDeferWindowPosEx( HDWP hdwp, BOOL async );
 BOOL    WINAPI NtUserEndPaint( HWND hwnd, const PAINTSTRUCT *ps );
 NTSTATUS WINAPI NtUserEnumDisplayDevices( UNICODE_STRING *device, DWORD index,
@@ -559,6 +561,8 @@ BOOL    WINAPI NtUserSystemParametersInfo( UINT action, UINT val, void *ptr, UIN
 BOOL    WINAPI NtUserSystemParametersInfoForDpi( UINT action, UINT val, PVOID ptr, UINT winini, UINT dpi );
 INT     WINAPI NtUserToUnicodeEx( UINT virt, UINT scan, const BYTE *state,
                                   WCHAR *str, int size, UINT flags, HKL layout );
+INT     WINAPI NtUserTranslateAccelerator( HWND hwnd, HACCEL accel, MSG *msg );
+BOOL    WINAPI NtUserTranslateMessage( const MSG *msg, UINT flags );
 BOOL    WINAPI NtUserUnhookWinEvent( HWINEVENTHOOK hEventHook );
 BOOL    WINAPI NtUserUnhookWindowsHookEx( HHOOK handle );
 BOOL    WINAPI NtUserUnregisterClass( UNICODE_STRING *name, HINSTANCE instance,
@@ -575,7 +579,6 @@ HWND    WINAPI NtUserWindowFromPoint( LONG x, LONG y );
 /* NtUserCallNoParam codes, not compatible with Windows */
 enum
 {
-    NtUserCallNoParam_CreateMenu,
     NtUserCallNoParam_GetDesktopWindow,
     NtUserCallNoParam_GetInputState,
     NtUserCallNoParam_GetMessagePos,
@@ -585,11 +588,6 @@ enum
     NtUserThreadDetach,
     NtUserUpdateClipboard,
 };
-
-static inline HMENU NtUserCreateMenu(void)
-{
-    return UlongToHandle( NtUserCallNoParam( NtUserCallNoParam_CreateMenu ));
-}
 
 static inline HWND NtUserGetDesktopWindow(void)
 {
@@ -616,6 +614,7 @@ enum
 {
     NtUserCallOneParam_BeginDeferWindowPos,
     NtUserCallOneParam_CreateCursorIcon,
+    NtUserCallOneParam_CreateMenu,
     NtUserCallOneParam_DispatchMessageA,
     NtUserCallOneParam_EnableDC,
     NtUserCallOneParam_EnableThunkLock,
@@ -647,6 +646,11 @@ static inline HDWP NtUserBeginDeferWindowPos( INT count )
 static inline HICON NtUserCreateCursorIcon( BOOL is_icon )
 {
     return UlongToHandle( NtUserCallOneParam( is_icon, NtUserCallOneParam_CreateCursorIcon ));
+}
+
+static inline HMENU NtUserCreateMenu( BOOL is_popup )
+{
+    return UlongToHandle( NtUserCallOneParam( is_popup, NtUserCallOneParam_CreateMenu ));
 }
 
 static inline LRESULT NtUserDispatchMessageA( const MSG *msg )
@@ -773,6 +777,7 @@ static inline BOOL NtUserUnhookWindowsHook( INT id, HOOKPROC proc )
 enum
 {
     NtUserCallHwnd_ArrangeIconicWindows,
+    NtUserCallHwnd_DrawMenuBar,
     NtUserCallHwnd_GetDpiForWindow,
     NtUserCallHwnd_GetParent,
     NtUserCallHwnd_GetWindowContextHelpId,
@@ -787,6 +792,11 @@ enum
 static inline UINT NtUserArrangeIconicWindows( HWND parent )
 {
     return NtUserCallHwnd( parent, NtUserCallHwnd_ArrangeIconicWindows );
+}
+
+static inline BOOL NtUserDrawMenuBar( HWND hwnd )
+{
+    return NtUserCallHwnd( hwnd, NtUserCallHwnd_DrawMenuBar );
 }
 
 static inline DWORD NtUserGetWindowContextHelpId( HWND hwnd )
@@ -865,6 +875,7 @@ enum
     NtUserCallHwndParam_ScreenToClient,
     NtUserCallHwndParam_SetForegroundWindow,
     NtUserCallHwndParam_SetWindowPixelFormat,
+    NtUserCallHwndParam_ShowOwnedPopups,
     /* temporary exports */
     NtUserIsWindowDrawable,
     NtUserSetCaptureWindow,
@@ -1022,6 +1033,11 @@ static inline BOOL NtUserSetForegroundWindow( HWND hwnd, BOOL mouse )
 static inline BOOL NtUserSetWindowPixelFormat( HWND hwnd, int format )
 {
     return NtUserCallHwndParam( hwnd, format, NtUserCallHwndParam_SetWindowPixelFormat );
+}
+
+static inline BOOL NtUserShowOwnedPopups( HWND hwnd, BOOL show )
+{
+    return NtUserCallHwndParam( hwnd, show, NtUserCallHwndParam_ShowOwnedPopups );
 }
 
 #endif /* _NTUSER_ */

@@ -113,6 +113,40 @@ struct timer_loop_params
     struct oss_stream *stream;
 };
 
+struct get_render_buffer_params
+{
+    struct oss_stream *stream;
+    UINT32 frames;
+    HRESULT result;
+    BYTE **data;
+};
+
+struct release_render_buffer_params
+{
+    struct oss_stream *stream;
+    UINT32 written_frames;
+    UINT flags;
+    HRESULT result;
+};
+
+struct get_capture_buffer_params
+{
+    struct oss_stream *stream;
+    HRESULT result;
+    BYTE **data;
+    UINT32 *frames;
+    UINT *flags;
+    UINT64 *devpos;
+    UINT64 *qpcpos;
+};
+
+struct release_capture_buffer_params
+{
+    struct oss_stream *stream;
+    UINT32 done;
+    HRESULT result;
+};
+
 struct is_format_supported_params
 {
     const char *device;
@@ -152,6 +186,13 @@ struct get_current_padding_params
     UINT32 *padding;
 };
 
+struct set_event_handle_params
+{
+    struct oss_stream *stream;
+    HANDLE event;
+    HRESULT result;
+};
+
 enum oss_funcs
 {
     oss_test_connect,
@@ -162,11 +203,16 @@ enum oss_funcs
     oss_stop,
     oss_reset,
     oss_timer_loop,
+    oss_get_render_buffer,
+    oss_release_render_buffer,
+    oss_get_capture_buffer,
+    oss_release_capture_buffer,
     oss_is_format_supported,
     oss_get_mix_format,
     oss_get_buffer_size,
     oss_get_latency,
     oss_get_current_padding,
+    oss_set_event_handle,
 };
 
 extern unixlib_handle_t oss_handle;

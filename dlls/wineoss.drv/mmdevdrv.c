@@ -919,18 +919,6 @@ static HRESULT WINAPI AudioClient_GetDevicePeriod(IAudioClient3 *iface,
     return S_OK;
 }
 
-static void silence_buffer(struct oss_stream *stream, BYTE *buffer, UINT32 frames)
-{
-    WAVEFORMATEXTENSIBLE *fmtex = (WAVEFORMATEXTENSIBLE*)stream->fmt;
-    if((stream->fmt->wFormatTag == WAVE_FORMAT_PCM ||
-            (stream->fmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
-             IsEqualGUID(&fmtex->SubFormat, &KSDATAFORMAT_SUBTYPE_PCM))) &&
-            stream->fmt->wBitsPerSample == 8)
-        memset(buffer, 128, frames * stream->fmt->nBlockAlign);
-    else
-        memset(buffer, 0, frames * stream->fmt->nBlockAlign);
-}
-
 static HRESULT WINAPI AudioClient_Start(IAudioClient3 *iface)
 {
     ACImpl *This = impl_from_IAudioClient3(iface);
@@ -994,7 +982,7 @@ static HRESULT WINAPI AudioClient_SetEventHandle(IAudioClient3 *iface,
         HANDLE event)
 {
     ACImpl *This = impl_from_IAudioClient3(iface);
-    struct oss_stream *stream = This->stream;
+    struct set_event_handle_params params;
 
     TRACE("(%p)->(%p)\n", This, event);
 
@@ -1004,24 +992,11 @@ static HRESULT WINAPI AudioClient_SetEventHandle(IAudioClient3 *iface,
     if(!This->stream)
         return AUDCLNT_E_NOT_INITIALIZED;
 
-    oss_lock(stream);
+    params.stream = This->stream;
+    params.event = event;
+    OSS_CALL(set_event_handle, &params);
 
-    if(!(stream->flags & AUDCLNT_STREAMFLAGS_EVENTCALLBACK)){
-        oss_unlock(stream);
-        return AUDCLNT_E_EVENTHANDLE_NOT_EXPECTED;
-    }
-
-    if (stream->event){
-        oss_unlock(stream);
-        FIXME("called twice\n");
-        return HRESULT_FROM_WIN32(ERROR_INVALID_NAME);
-    }
-
-    stream->event = event;
-
-    oss_unlock(stream);
-
-    return S_OK;
+    return params.result;
 }
 
 static HRESULT WINAPI AudioClient_GetService(IAudioClient3 *iface, REFIID riid,
@@ -1264,9 +1239,7 @@ static HRESULT WINAPI AudioRenderClient_GetBuffer(IAudioRenderClient *iface,
         UINT32 frames, BYTE **data)
 {
     ACImpl *This = impl_from_IAudioRenderClient(iface);
-    struct oss_stream *stream = This->stream;
-    UINT32 write_pos;
-    SIZE_T size;
+    struct get_render_buffer_params params;
 
     TRACE("(%p)->(%u, %p)\n", This, frames, data);
 
@@ -1275,119 +1248,28 @@ static HRESULT WINAPI AudioRenderClient_GetBuffer(IAudioRenderClient *iface,
 
     *data = NULL;
 
-    oss_lock(stream);
+    params.stream = This->stream;
+    params.frames = frames;
+    params.data = data;
+    OSS_CALL(get_render_buffer, &params);
 
-    if(stream->getbuf_last){
-        oss_unlock(stream);
-        return AUDCLNT_E_OUT_OF_ORDER;
-    }
-
-    if(!frames){
-        oss_unlock(stream);
-        return S_OK;
-    }
-
-    if(stream->held_frames + frames > stream->bufsize_frames){
-        oss_unlock(stream);
-        return AUDCLNT_E_BUFFER_TOO_LARGE;
-    }
-
-    write_pos =
-        (stream->lcl_offs_frames + stream->held_frames) % stream->bufsize_frames;
-    if(write_pos + frames > stream->bufsize_frames){
-        if(stream->tmp_buffer_frames < frames){
-            if(stream->tmp_buffer){
-                size = 0;
-                NtFreeVirtualMemory(GetCurrentProcess(), (void **)&stream->tmp_buffer, &size, MEM_RELEASE);
-                stream->tmp_buffer = NULL;
-            }
-            size = frames * stream->fmt->nBlockAlign;
-            if(NtAllocateVirtualMemory(GetCurrentProcess(), (void **)&stream->tmp_buffer, 0, &size,
-                                       MEM_COMMIT, PAGE_READWRITE)){
-                stream->tmp_buffer_frames = 0;
-                oss_unlock(stream);
-                return E_OUTOFMEMORY;
-            }
-            stream->tmp_buffer_frames = frames;
-        }
-        *data = stream->tmp_buffer;
-        stream->getbuf_last = -frames;
-    }else{
-        *data = stream->local_buffer + write_pos * stream->fmt->nBlockAlign;
-        stream->getbuf_last = frames;
-    }
-
-    silence_buffer(stream, *data, frames);
-
-    oss_unlock(stream);
-
-    return S_OK;
-}
-
-static void oss_wrap_buffer(struct oss_stream *stream, BYTE *buffer, UINT32 written_frames)
-{
-    UINT32 write_offs_frames =
-        (stream->lcl_offs_frames + stream->held_frames) % stream->bufsize_frames;
-    UINT32 write_offs_bytes = write_offs_frames * stream->fmt->nBlockAlign;
-    UINT32 chunk_frames = stream->bufsize_frames - write_offs_frames;
-    UINT32 chunk_bytes = chunk_frames * stream->fmt->nBlockAlign;
-    UINT32 written_bytes = written_frames * stream->fmt->nBlockAlign;
-
-    if(written_bytes <= chunk_bytes){
-        memcpy(stream->local_buffer + write_offs_bytes, buffer, written_bytes);
-    }else{
-        memcpy(stream->local_buffer + write_offs_bytes, buffer, chunk_bytes);
-        memcpy(stream->local_buffer, buffer + chunk_bytes,
-                written_bytes - chunk_bytes);
-    }
+    return params.result;
 }
 
 static HRESULT WINAPI AudioRenderClient_ReleaseBuffer(
         IAudioRenderClient *iface, UINT32 written_frames, DWORD flags)
 {
     ACImpl *This = impl_from_IAudioRenderClient(iface);
-    struct oss_stream *stream = This->stream;
-    BYTE *buffer;
+    struct release_render_buffer_params params;
 
     TRACE("(%p)->(%u, %x)\n", This, written_frames, flags);
 
-    oss_lock(stream);
+    params.stream = This->stream;
+    params.written_frames = written_frames;
+    params.flags = flags;
+    OSS_CALL(release_render_buffer, &params);
 
-    if(!written_frames){
-        stream->getbuf_last = 0;
-        oss_unlock(stream);
-        return S_OK;
-    }
-
-    if(!stream->getbuf_last){
-        oss_unlock(stream);
-        return AUDCLNT_E_OUT_OF_ORDER;
-    }
-
-    if(written_frames > (stream->getbuf_last >= 0 ? stream->getbuf_last : -stream->getbuf_last)){
-        oss_unlock(stream);
-        return AUDCLNT_E_INVALID_SIZE;
-    }
-
-    if(stream->getbuf_last >= 0)
-        buffer = stream->local_buffer + stream->fmt->nBlockAlign *
-          ((stream->lcl_offs_frames + stream->held_frames) % stream->bufsize_frames);
-    else
-        buffer = stream->tmp_buffer;
-
-    if(flags & AUDCLNT_BUFFERFLAGS_SILENT)
-        silence_buffer(stream, buffer, written_frames);
-
-    if(stream->getbuf_last < 0)
-        oss_wrap_buffer(stream, buffer, written_frames);
-
-    stream->held_frames += written_frames;
-    stream->written_frames += written_frames;
-    stream->getbuf_last = 0;
-
-    oss_unlock(stream);
-
-    return S_OK;
+    return params.result;
 }
 
 static const IAudioRenderClientVtbl AudioRenderClient_Vtbl = {
@@ -1439,8 +1321,7 @@ static HRESULT WINAPI AudioCaptureClient_GetBuffer(IAudioCaptureClient *iface,
         UINT64 *qpcpos)
 {
     ACImpl *This = impl_from_IAudioCaptureClient(iface);
-    struct oss_stream *stream = This->stream;
-    SIZE_T size;
+    struct get_capture_buffer_params params;
 
     TRACE("(%p)->(%p, %p, %p, %p, %p)\n", This, data, frames, flags,
             devpos, qpcpos);
@@ -1453,104 +1334,30 @@ static HRESULT WINAPI AudioCaptureClient_GetBuffer(IAudioCaptureClient *iface,
     if(!frames || !flags)
         return E_POINTER;
 
-    oss_lock(stream);
+    params.stream = This->stream;
+    params.data = data;
+    params.frames = frames;
+    params.flags = flags;
+    params.devpos = devpos;
+    params.qpcpos = qpcpos;
+    OSS_CALL(get_capture_buffer, &params);
 
-    if(stream->getbuf_last){
-        oss_unlock(stream);
-        return AUDCLNT_E_OUT_OF_ORDER;
-    }
-
-    if(stream->held_frames < stream->period_frames){
-        *frames = 0;
-        oss_unlock(stream);
-        return AUDCLNT_S_BUFFER_EMPTY;
-    }
-
-    *flags = 0;
-
-    *frames = stream->period_frames;
-
-    if(stream->lcl_offs_frames + *frames > stream->bufsize_frames){
-        UINT32 chunk_bytes, offs_bytes, frames_bytes;
-        if(stream->tmp_buffer_frames < *frames){
-            if(stream->tmp_buffer){
-                size = 0;
-                NtFreeVirtualMemory(GetCurrentProcess(), (void **)&stream->tmp_buffer, &size, MEM_RELEASE);
-                stream->tmp_buffer = NULL;
-            }
-            size = *frames * stream->fmt->nBlockAlign;
-            if(NtAllocateVirtualMemory(GetCurrentProcess(), (void **)&stream->tmp_buffer, 0, &size,
-                                       MEM_COMMIT, PAGE_READWRITE)){
-                stream->tmp_buffer_frames = 0;
-                oss_unlock(stream);
-                return E_OUTOFMEMORY;
-            }
-            stream->tmp_buffer_frames = *frames;
-        }
-
-        *data = stream->tmp_buffer;
-        chunk_bytes = (stream->bufsize_frames - stream->lcl_offs_frames) *
-            stream->fmt->nBlockAlign;
-        offs_bytes = stream->lcl_offs_frames * stream->fmt->nBlockAlign;
-        frames_bytes = *frames * stream->fmt->nBlockAlign;
-        memcpy(stream->tmp_buffer, stream->local_buffer + offs_bytes, chunk_bytes);
-        memcpy(stream->tmp_buffer + chunk_bytes, stream->local_buffer,
-                frames_bytes - chunk_bytes);
-    }else
-        *data = stream->local_buffer +
-            stream->lcl_offs_frames * stream->fmt->nBlockAlign;
-
-    stream->getbuf_last = *frames;
-
-    if(devpos)
-       *devpos = stream->written_frames;
-    if(qpcpos){
-        LARGE_INTEGER stamp, freq;
-        QueryPerformanceCounter(&stamp);
-        QueryPerformanceFrequency(&freq);
-        *qpcpos = (stamp.QuadPart * (INT64)10000000) / freq.QuadPart;
-    }
-
-    oss_unlock(stream);
-
-    return *frames ? S_OK : AUDCLNT_S_BUFFER_EMPTY;
+    return params.result;
 }
 
 static HRESULT WINAPI AudioCaptureClient_ReleaseBuffer(
         IAudioCaptureClient *iface, UINT32 done)
 {
     ACImpl *This = impl_from_IAudioCaptureClient(iface);
-    struct oss_stream *stream = This->stream;
+    struct release_capture_buffer_params params;
 
     TRACE("(%p)->(%u)\n", This, done);
 
-    oss_lock(stream);
+    params.stream = This->stream;
+    params.done = done;
+    OSS_CALL(release_capture_buffer, &params);
 
-    if(!done){
-        stream->getbuf_last = 0;
-        oss_unlock(stream);
-        return S_OK;
-    }
-
-    if(!stream->getbuf_last){
-        oss_unlock(stream);
-        return AUDCLNT_E_OUT_OF_ORDER;
-    }
-
-    if(stream->getbuf_last != done){
-        oss_unlock(stream);
-        return AUDCLNT_E_INVALID_SIZE;
-    }
-
-    stream->written_frames += done;
-    stream->held_frames -= done;
-    stream->lcl_offs_frames += done;
-    stream->lcl_offs_frames %= stream->bufsize_frames;
-    stream->getbuf_last = 0;
-
-    oss_unlock(stream);
-
-    return S_OK;
+    return params.result;
 }
 
 static HRESULT WINAPI AudioCaptureClient_GetNextPacketSize(
