@@ -95,23 +95,8 @@ static int (*old_error_handler)( Display *, XErrorEvent * );
 static BOOL use_xim = TRUE;
 static WCHAR input_style[20];
 
-static CRITICAL_SECTION x11drv_section;
-static CRITICAL_SECTION_DEBUG critsect_debug =
-{
-    0, 0, &x11drv_section,
-    { &critsect_debug.ProcessLocksList, &critsect_debug.ProcessLocksList },
-    0, 0, { (DWORD_PTR)(__FILE__ ": x11drv_section") }
-};
-static CRITICAL_SECTION x11drv_section = { &critsect_debug, -1, 0, 0, 0, 0 };
-
-static CRITICAL_SECTION x11drv_error_section;
-static CRITICAL_SECTION_DEBUG x11drv_error_section_debug =
-{
-    0, 0, &x11drv_error_section,
-    { &x11drv_error_section_debug.ProcessLocksList, &x11drv_error_section_debug.ProcessLocksList },
-    0, 0, { (DWORD_PTR)(__FILE__ ": x11drv_error_section") }
-};
-static CRITICAL_SECTION x11drv_error_section = { &x11drv_error_section_debug, -1, 0, 0, 0, 0 };
+static pthread_mutex_t d3dkmt_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t error_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 struct d3dkmt_vidpn_source
 {
@@ -262,7 +247,7 @@ static inline BOOL ignore_error( Display *display, XErrorEvent *event )
  */
 void X11DRV_expect_error( Display *display, x11drv_error_callback callback, void *arg )
 {
-    EnterCriticalSection( &x11drv_error_section );
+    pthread_mutex_lock( &error_mutex );
     err_callback         = callback;
     err_callback_display = display;
     err_callback_arg     = arg;
@@ -281,7 +266,7 @@ int X11DRV_check_error(void)
 {
     int res = err_callback_result;
     err_callback = NULL;
-    LeaveCriticalSection( &x11drv_error_section );
+    pthread_mutex_unlock( &error_mutex );
     return res;
 }
 
@@ -683,9 +668,7 @@ static BOOL process_attach(void)
 
     XInternAtoms( display, (char **)atom_names, NB_XATOMS - FIRST_XATOM, False, X11DRV_Atoms );
 
-    winContext = XUniqueContext();
-    win_data_context = XUniqueContext();
-    cursor_context = XUniqueContext();
+    init_win_context();
 
     if (TRACE_ON(synchronous)) XSynchronize( display, True );
 
@@ -865,7 +848,7 @@ NTSTATUS CDECL X11DRV_D3DKMTSetVidPnSourceOwner( const D3DKMT_SETVIDPNSOURCEOWNE
 
     TRACE("(%p)\n", desc);
 
-    EnterCriticalSection( &x11drv_section );
+    pthread_mutex_lock( &d3dkmt_mutex );
 
     /* Check parameters */
     for (i = 0; i < desc->VidPnSourceCount; ++i)
@@ -964,7 +947,7 @@ NTSTATUS CDECL X11DRV_D3DKMTSetVidPnSourceOwner( const D3DKMT_SETVIDPNSOURCEOWNE
     }
 
 done:
-    LeaveCriticalSection( &x11drv_section );
+    pthread_mutex_unlock( &d3dkmt_mutex );
     return status;
 }
 
@@ -980,15 +963,15 @@ NTSTATUS CDECL X11DRV_D3DKMTCheckVidPnExclusiveOwnership( const D3DKMT_CHECKVIDP
     if (!desc || !desc->hAdapter)
         return STATUS_INVALID_PARAMETER;
 
-    EnterCriticalSection( &x11drv_section );
+    pthread_mutex_lock( &d3dkmt_mutex );
     LIST_FOR_EACH_ENTRY( source, &d3dkmt_vidpn_sources, struct d3dkmt_vidpn_source, entry )
     {
         if (source->id == desc->VidPnSourceId && source->type == D3DKMT_VIDPNSOURCEOWNER_EXCLUSIVE)
         {
-            LeaveCriticalSection( &x11drv_section );
+            pthread_mutex_unlock( &d3dkmt_mutex );
             return STATUS_GRAPHICS_PRESENT_OCCLUDED;
         }
     }
-    LeaveCriticalSection( &x11drv_section );
+    pthread_mutex_unlock( &d3dkmt_mutex );
     return STATUS_SUCCESS;
 }

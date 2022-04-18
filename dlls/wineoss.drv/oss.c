@@ -44,6 +44,28 @@
 
 #include "unixlib.h"
 
+struct oss_stream
+{
+    WAVEFORMATEX *fmt;
+    EDataFlow flow;
+    UINT flags;
+    AUDCLNT_SHAREMODE share;
+    HANDLE event;
+
+    int fd;
+
+    BOOL playing, mute, please_quit;
+    UINT64 written_frames, last_pos_frames;
+    UINT32 period_frames, bufsize_frames, held_frames, tmp_buffer_frames, in_oss_frames;
+    UINT32 oss_bufsize_bytes, lcl_offs_frames; /* offs into local_buffer where valid data starts */
+    REFERENCE_TIME period;
+
+    BYTE *local_buffer, *tmp_buffer;
+    INT32 getbuf_last; /* <0 when using tmp_buffer */
+
+    pthread_mutex_t lock;
+};
+
 WINE_DEFAULT_DEBUG_CHANNEL(oss);
 
 /* copied from kernelbase */
@@ -1243,6 +1265,91 @@ static NTSTATUS get_current_padding(void *args)
     return oss_unlock_result(stream, &params->result, S_OK);
 }
 
+static NTSTATUS get_next_packet_size(void *args)
+{
+    struct get_next_packet_size_params *params = args;
+    struct oss_stream *stream = params->stream;
+    UINT32 *frames = params->frames;
+
+    oss_lock(stream);
+
+    *frames = stream->held_frames < stream->period_frames ? 0 : stream->period_frames;
+
+    return oss_unlock_result(stream, &params->result, S_OK);
+}
+
+static NTSTATUS get_frequency(void *args)
+{
+    struct get_frequency_params *params = args;
+    struct oss_stream *stream = params->stream;
+    UINT64 *freq = params->frequency;
+
+    oss_lock(stream);
+
+    if(stream->share == AUDCLNT_SHAREMODE_SHARED)
+        *freq = (UINT64)stream->fmt->nSamplesPerSec * stream->fmt->nBlockAlign;
+    else
+        *freq = stream->fmt->nSamplesPerSec;
+
+    return oss_unlock_result(stream, &params->result, S_OK);
+}
+
+static NTSTATUS get_position(void *args)
+{
+    struct get_position_params *params = args;
+    struct oss_stream *stream = params->stream;
+    UINT64 *pos = params->position, *qpctime = params->qpctime;
+
+    oss_lock(stream);
+
+    if(stream->flow == eRender){
+        *pos = stream->written_frames - stream->held_frames;
+        if(*pos < stream->last_pos_frames)
+            *pos = stream->last_pos_frames;
+    }else if(stream->flow == eCapture){
+        audio_buf_info bi;
+        UINT32 held;
+
+        if(ioctl(stream->fd, SNDCTL_DSP_GETISPACE, &bi) < 0){
+            TRACE("GETISPACE failed: %d (%s)\n", errno, strerror(errno));
+            held = 0;
+        }else{
+            if(bi.bytes <= bi.fragsize)
+                held = 0;
+            else
+                held = bi.bytes / stream->fmt->nBlockAlign;
+        }
+
+        *pos = stream->written_frames + held;
+    }
+
+    stream->last_pos_frames = *pos;
+
+    TRACE("returning: %s\n", wine_dbgstr_longlong(*pos));
+    if(stream->share == AUDCLNT_SHAREMODE_SHARED)
+        *pos *= stream->fmt->nBlockAlign;
+
+    if(qpctime){
+        LARGE_INTEGER stamp, freq;
+        NtQueryPerformanceCounter(&stamp, &freq);
+        *qpctime = (stamp.QuadPart * (INT64)10000000) / freq.QuadPart;
+    }
+
+    return oss_unlock_result(stream, &params->result, S_OK);
+}
+
+static NTSTATUS set_volumes(void *args)
+{
+    struct set_volumes_params *params = args;
+    struct oss_stream *stream = params->stream;
+
+    oss_lock(stream);
+    stream->mute = !params->master_volume;
+    oss_unlock(stream);
+
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS set_event_handle(void *args)
 {
     struct set_event_handle_params *params = args;
@@ -1261,6 +1368,16 @@ static NTSTATUS set_event_handle(void *args)
     stream->event = params->event;
 
     return oss_unlock_result(stream, &params->result, S_OK);
+}
+
+static NTSTATUS is_started(void *args)
+{
+    struct is_started_params *params = args;
+    struct oss_stream *stream = params->stream;
+
+    oss_lock(stream);
+
+    return oss_unlock_result(stream, &params->result, stream->playing ? S_OK : S_FALSE);
 }
 
 unixlib_entry_t __wine_unix_call_funcs[] =
@@ -1282,5 +1399,10 @@ unixlib_entry_t __wine_unix_call_funcs[] =
     get_buffer_size,
     get_latency,
     get_current_padding,
+    get_next_packet_size,
+    get_frequency,
+    get_position,
+    set_volumes,
     set_event_handle,
+    is_started,
 };

@@ -18,22 +18,7 @@
  */
 
 #define COBJMACROS
-#include "config.h"
-
 #include <stdarg.h>
-#include <errno.h>
-#include <limits.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <sys/ioctl.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <math.h>
-#include <sys/soundcard.h>
-#include <pthread.h>
 
 #include "windef.h"
 #include "winbase.h"
@@ -277,16 +262,6 @@ static DWORD WINAPI timer_thread(void *user)
     return 0;
 }
 
-static void oss_lock(struct oss_stream *stream)
-{
-    pthread_mutex_lock(&stream->lock);
-}
-
-static void oss_unlock(struct oss_stream *stream)
-{
-    pthread_mutex_unlock(&stream->lock);
-}
-
 static void set_device_guid(EDataFlow flow, HKEY drv_key, const WCHAR *key_name,
         GUID *guid)
 {
@@ -361,11 +336,13 @@ static void get_device_guid(EDataFlow flow, const char *device, GUID *guid)
 
 static void set_stream_volumes(ACImpl *This)
 {
-    struct oss_stream *stream = This->stream;
+    struct set_volumes_params params;
 
-    oss_lock(stream);
-    stream->mute = This->session->mute;
-    oss_unlock(stream);
+    params.stream = This->stream;
+    params.master_volume = (This->session->mute ? 0.0f : This->session->master_vol);
+    params.volumes = This->vols;
+    params.session_volumes = This->session->channel_vols;
+    OSS_CALL(set_volumes, &params);
 }
 
 static const OSSDevice *get_ossdevice_from_guid(const GUID *guid)
@@ -1364,20 +1341,18 @@ static HRESULT WINAPI AudioCaptureClient_GetNextPacketSize(
         IAudioCaptureClient *iface, UINT32 *frames)
 {
     ACImpl *This = impl_from_IAudioCaptureClient(iface);
-    struct oss_stream *stream = This->stream;
+    struct get_next_packet_size_params params;
 
     TRACE("(%p)->(%p)\n", This, frames);
 
     if(!frames)
         return E_POINTER;
 
-    oss_lock(stream);
+    params.stream = This->stream;
+    params.frames = frames;
+    OSS_CALL(get_next_packet_size, &params);
 
-    *frames = stream->held_frames < stream->period_frames ? 0 : stream->period_frames;
-
-    oss_unlock(stream);
-
-    return S_OK;
+    return params.result;
 }
 
 static const IAudioCaptureClientVtbl AudioCaptureClient_Vtbl =
@@ -1429,68 +1404,34 @@ static ULONG WINAPI AudioClock_Release(IAudioClock *iface)
 static HRESULT WINAPI AudioClock_GetFrequency(IAudioClock *iface, UINT64 *freq)
 {
     ACImpl *This = impl_from_IAudioClock(iface);
-    struct oss_stream *stream = This->stream;
+    struct get_frequency_params params;
 
     TRACE("(%p)->(%p)\n", This, freq);
 
-    if(stream->share == AUDCLNT_SHAREMODE_SHARED)
-        *freq = (UINT64)stream->fmt->nSamplesPerSec * stream->fmt->nBlockAlign;
-    else
-        *freq = stream->fmt->nSamplesPerSec;
+    params.stream = This->stream;
+    params.frequency = freq;
+    OSS_CALL(get_frequency, &params);
 
-    return S_OK;
+    return params.result;
 }
 
 static HRESULT WINAPI AudioClock_GetPosition(IAudioClock *iface, UINT64 *pos,
         UINT64 *qpctime)
 {
     ACImpl *This = impl_from_IAudioClock(iface);
-    struct oss_stream *stream = This->stream;
+    struct get_position_params params;
 
     TRACE("(%p)->(%p, %p)\n", This, pos, qpctime);
 
     if(!pos)
         return E_POINTER;
 
-    oss_lock(stream);
+    params.stream = This->stream;
+    params.position = pos;
+    params.qpctime = qpctime;
+    OSS_CALL(get_position, &params);
 
-    if(stream->flow == eRender){
-        *pos = stream->written_frames - stream->held_frames;
-        if(*pos < stream->last_pos_frames)
-            *pos = stream->last_pos_frames;
-    }else if(stream->flow == eCapture){
-        audio_buf_info bi;
-        UINT32 held;
-
-        if(ioctl(stream->fd, SNDCTL_DSP_GETISPACE, &bi) < 0){
-            TRACE("GETISPACE failed: %d (%s)\n", errno, strerror(errno));
-            held = 0;
-        }else{
-            if(bi.bytes <= bi.fragsize)
-                held = 0;
-            else
-                held = bi.bytes / stream->fmt->nBlockAlign;
-        }
-
-        *pos = stream->written_frames + held;
-    }
-
-    stream->last_pos_frames = *pos;
-
-    TRACE("returning: %s\n", wine_dbgstr_longlong(*pos));
-    if(stream->share == AUDCLNT_SHAREMODE_SHARED)
-        *pos *= stream->fmt->nBlockAlign;
-
-    oss_unlock(stream);
-
-    if(qpctime){
-        LARGE_INTEGER stamp, freq;
-        QueryPerformanceCounter(&stamp);
-        QueryPerformanceFrequency(&freq);
-        *qpctime = (stamp.QuadPart * (INT64)10000000) / freq.QuadPart;
-    }
-
-    return S_OK;
+    return params.result;
 }
 
 static HRESULT WINAPI AudioClock_GetCharacteristics(IAudioClock *iface,
@@ -1632,6 +1573,7 @@ static HRESULT WINAPI AudioSessionControl_GetState(IAudioSessionControl2 *iface,
         AudioSessionState *state)
 {
     AudioSessionWrapper *This = impl_from_IAudioSessionControl2(iface);
+    struct is_started_params params;
     ACImpl *client;
 
     TRACE("(%p)->(%p)\n", This, state);
@@ -1648,14 +1590,13 @@ static HRESULT WINAPI AudioSessionControl_GetState(IAudioSessionControl2 *iface,
     }
 
     LIST_FOR_EACH_ENTRY(client, &This->session->clients, ACImpl, entry){
-        oss_lock(client->stream);
-        if(client->stream->playing){
+        params.stream = client->stream;
+        OSS_CALL(is_started, &params);
+        if(params.result == S_OK){
             *state = AudioSessionStateActive;
-            oss_unlock(client->stream);
             LeaveCriticalSection(&g_sessions_lock);
             return S_OK;
         }
-        oss_unlock(client->stream);
     }
 
     LeaveCriticalSection(&g_sessions_lock);
