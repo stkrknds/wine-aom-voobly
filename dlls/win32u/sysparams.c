@@ -1547,6 +1547,27 @@ RECT get_virtual_screen_rect( UINT dpi )
     return rect;
 }
 
+static BOOL is_window_rect_full_screen( const RECT *rect )
+{
+    struct monitor *monitor;
+    BOOL ret = FALSE;
+
+    if (!lock_display_devices()) return FALSE;
+
+    LIST_FOR_EACH_ENTRY( monitor, &monitors, struct monitor, entry )
+    {
+        if (rect->left <= monitor->rc_monitor.left && rect->right >= monitor->rc_monitor.right &&
+            rect->top <= monitor->rc_monitor.top && rect->bottom >= monitor->rc_monitor.bottom)
+        {
+            ret = TRUE;
+            break;
+        }
+    }
+
+    unlock_display_devices();
+    return ret;
+}
+
 RECT get_display_rect( const WCHAR *display )
 {
     struct monitor *monitor;
@@ -4698,6 +4719,9 @@ ULONG_PTR WINAPI NtUserCallOneParam( ULONG_PTR arg, ULONG code )
     case NtUserCallOneParam_GetSysColor:
         return get_sys_color( arg );
 
+    case NtUserCallOneParam_IsWindowRectFullScreen:
+        return is_window_rect_full_screen( (const RECT *)arg );
+
     case NtUserCallOneParam_RealizePalette:
         return realize_palette( UlongToHandle(arg) );
 
@@ -4762,6 +4786,9 @@ ULONG_PTR WINAPI NtUserCallTwoParam( ULONG_PTR arg1, ULONG_PTR arg2, ULONG code 
 {
     switch(code)
     {
+    case NtUserCallTwoParam_GetMenuInfo:
+        return get_menu_info( UlongToHandle(arg1), (MENUINFO *)arg2 );
+
     case NtUserCallTwoParam_GetMonitorInfo:
         return get_monitor_info( UlongToHandle(arg1), (MONITORINFO *)arg2 );
 

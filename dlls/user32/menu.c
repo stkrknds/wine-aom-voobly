@@ -4262,13 +4262,13 @@ BOOL WINAPI GetMenuBarInfo( HWND hwnd, LONG idObject, LONG idItem, PMENUBARINFO 
     }
     else if (idItem == 0)
     {
-        GetMenuItemRect(hwnd, hmenu, 0, &pmbi->rcBar);
+        NtUserGetMenuItemRect( hwnd, hmenu, 0, &pmbi->rcBar );
         pmbi->rcBar.right = pmbi->rcBar.left + menu->Width;
         pmbi->rcBar.bottom = pmbi->rcBar.top + menu->Height;
     }
     else
     {
-        GetMenuItemRect(hwnd, hmenu, idItem - 1, &pmbi->rcBar);
+        NtUserGetMenuItemRect( hwnd, hmenu, idItem - 1, &pmbi->rcBar );
     }
 
     pmbi->hMenu = hmenu;
@@ -4289,55 +4289,6 @@ BOOL WINAPI GetMenuBarInfo( HWND hwnd, LONG idObject, LONG idItem, PMENUBARINFO 
         pmbi->fFocused = pmbi->fBarFocused;
     }
 
-    return TRUE;
-}
-
-/**********************************************************************
- *         MENU_SetMenu
- *
- * Helper for SetMenu. Also called by WIN_CreateWindowEx to avoid the
- * SetWindowPos call that would result if SetMenu were called directly.
- */
-BOOL MENU_SetMenu( HWND hWnd, HMENU hMenu )
-{
-    TRACE("(%p, %p);\n", hWnd, hMenu);
-
-    if (hMenu && !IsMenu(hMenu))
-    {
-        WARN("hMenu %p is not a menu handle\n", hMenu);
-        return FALSE;
-    }
-    if (is_win_menu_disallowed(hWnd))
-        return FALSE;
-
-    hWnd = WIN_GetFullHandle( hWnd );
-    if (GetCapture() == hWnd)
-        set_capture_window( 0, GUI_INMENUMODE, NULL );  /* release the capture */
-
-    if (hMenu)
-    {
-        POPUPMENU *menu;
-
-        if (!(menu = grab_menu_ptr(hMenu))) return FALSE;
-        menu->hWnd = hWnd;
-        menu->Height = 0;  /* Make sure we recalculate the size */
-        release_menu_ptr(menu);
-    }
-    SetWindowLongPtrW( hWnd, GWLP_ID, (LONG_PTR)hMenu );
-    return TRUE;
-}
-
-
-/**********************************************************************
- *         SetMenu    (USER32.@)
- */
-BOOL WINAPI SetMenu( HWND hWnd, HMENU hMenu )
-{   
-    if(!MENU_SetMenu(hWnd, hMenu))
-        return FALSE;
- 
-    NtUserSetWindowPos( hWnd, 0, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE |
-                        SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED );
     return TRUE;
 }
 
@@ -5121,51 +5072,6 @@ BOOL WINAPI CheckMenuRadioItem(HMENU hMenu, UINT first, UINT last,
 
 
 /**********************************************************************
- *		GetMenuItemRect    (USER32.@)
- *
- *      ATTENTION: Here, the returned values in rect are the screen
- *                 coordinates of the item just like if the menu was
- *                 always on the upper left side of the application.
- *
- */
-BOOL WINAPI GetMenuItemRect(HWND hwnd, HMENU hMenu, UINT uItem, RECT *rect)
-{
-    POPUPMENU *menu;
-    UINT pos;
-    RECT window_rect;
-
-    TRACE("(%p,%p,%d,%p)\n", hwnd, hMenu, uItem, rect);
-
-    if (!rect)
-        return FALSE;
-
-    if (!(menu = find_menu_item(hMenu, uItem, MF_BYPOSITION, &pos)))
-        return FALSE;
-
-    if (!hwnd) hwnd = menu->hWnd;
-    if (!hwnd)
-    {
-        release_menu_ptr(menu);
-        return FALSE;
-    }
-
-    *rect = menu->items[pos].rect;
-    OffsetRect(rect, menu->items_rect.left, menu->items_rect.top);
-
-    /* Popup menu item draws in the client area */
-    if (menu->wFlags & MF_POPUP) MapWindowPoints(hwnd, 0, (POINT *)rect, 2);
-    else
-    {
-        /* Sysmenu draws in the non-client area */
-        GetWindowRect(hwnd, &window_rect);
-        OffsetRect(rect, window_rect.left, window_rect.top);
-    }
-
-    release_menu_ptr(menu);
-    return TRUE;
-}
-
-/**********************************************************************
  *		SetMenuInfo    (USER32.@)
  *
  * FIXME
@@ -5218,59 +5124,11 @@ BOOL WINAPI SetMenuInfo (HMENU hMenu, LPCMENUINFO lpmi)
 }
 
 /**********************************************************************
- *		GetMenuInfo    (USER32.@)
- *
- *  NOTES
- *	win98/NT5.0
- *
+ *           GetMenuInfo    (USER32.@)
  */
-BOOL WINAPI GetMenuInfo (HMENU hMenu, LPMENUINFO lpmi)
+BOOL WINAPI GetMenuInfo( HMENU menu, MENUINFO *info )
 {
-    POPUPMENU *menu;
-
-    TRACE("(%p %p)\n", hMenu, lpmi);
-
-    if (lpmi && (lpmi->cbSize == sizeof(MENUINFO)) && (menu = grab_menu_ptr(hMenu)))
-    {
-	if (lpmi->fMask & MIM_BACKGROUND)
-	    lpmi->hbrBack = menu->hbrBack;
-
-	if (lpmi->fMask & MIM_HELPID)
-	    lpmi->dwContextHelpID = menu->dwContextHelpID;
-
-	if (lpmi->fMask & MIM_MAXHEIGHT)
-	    lpmi->cyMax = menu->cyMax;
-
-	if (lpmi->fMask & MIM_MENUDATA)
-	    lpmi->dwMenuData = menu->dwMenuData;
-
-	if (lpmi->fMask & MIM_STYLE)
-	    lpmi->dwStyle = menu->dwStyle;
-
-        release_menu_ptr(menu);
-	return TRUE;
-    }
-    SetLastError( ERROR_INVALID_PARAMETER);
-    return FALSE;
-}
-
-
-/**********************************************************************
- *         SetMenuContextHelpId    (USER32.@)
- */
-BOOL WINAPI SetMenuContextHelpId( HMENU hMenu, DWORD dwContextHelpID)
-{
-    POPUPMENU *menu;
-
-    TRACE("(%p 0x%08x)\n", hMenu, dwContextHelpID);
-
-    if ((menu = grab_menu_ptr(hMenu)))
-    {
-        menu->dwContextHelpID = dwContextHelpID;
-        release_menu_ptr(menu);
-        return TRUE;
-    }
-    return FALSE;
+    return NtUserGetMenuInfo( menu, info );
 }
 
 

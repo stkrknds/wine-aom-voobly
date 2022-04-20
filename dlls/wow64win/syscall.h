@@ -123,6 +123,7 @@
     SYSCALL_ENTRY( NtUserGetKeyboardLayoutName ) \
     SYSCALL_ENTRY( NtUserGetKeyboardState ) \
     SYSCALL_ENTRY( NtUserGetLayeredWindowAttributes ) \
+    SYSCALL_ENTRY( NtUserGetMenuItemRect ) \
     SYSCALL_ENTRY( NtUserGetMouseMovePointsEx ) \
     SYSCALL_ENTRY( NtUserGetObjectInformation ) \
     SYSCALL_ENTRY( NtUserGetOpenClipboardWindow ) \
@@ -142,6 +143,7 @@
     SYSCALL_ENTRY( NtUserRemoveClipboardFormatListener ) \
     SYSCALL_ENTRY( NtUserRemoveProp ) \
     SYSCALL_ENTRY( NtUserSetKeyboardState ) \
+    SYSCALL_ENTRY( NtUserSetMenuContextHelpId ) \
     SYSCALL_ENTRY( NtUserSetObjectInformation ) \
     SYSCALL_ENTRY( NtUserSetProcessDpiAwarenessContext ) \
     SYSCALL_ENTRY( NtUserSetProcessWindowStation ) \

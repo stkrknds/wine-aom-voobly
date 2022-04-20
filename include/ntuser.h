@@ -492,6 +492,7 @@ UINT    WINAPI NtUserGetKeyboardLayoutList( INT size, HKL *layouts );
 BOOL    WINAPI NtUserGetKeyboardLayoutName( WCHAR *name );
 BOOL    WINAPI NtUserGetKeyboardState( BYTE *state );
 BOOL    WINAPI NtUserGetLayeredWindowAttributes( HWND hwnd, COLORREF *key, BYTE *alpha, DWORD *flags );
+BOOL    WINAPI NtUserGetMenuItemRect( HWND hwnd, HMENU menu, UINT item, RECT *rect );
 BOOL    WINAPI NtUserGetMessage( MSG *msg, HWND hwnd, UINT first, UINT last );
 int     WINAPI NtUserGetMouseMovePointsEx( UINT size, MOUSEMOVEPOINT *ptin, MOUSEMOVEPOINT *ptout,
                                            int count, DWORD resolution );
@@ -553,6 +554,8 @@ BOOL    WINAPI NtUserSetCursorPos( INT x, INT y );
 HWND    WINAPI NtUserSetFocus( HWND hwnd );
 BOOL    WINAPI NtUserSetKeyboardState( BYTE *state );
 BOOL    WINAPI NtUserSetLayeredWindowAttributes( HWND hwnd, COLORREF key, BYTE alpha, DWORD flags );
+BOOL    WINAPI NtUserSetMenu( HWND hwnd, HMENU menu );
+BOOL    WINAPI NtUserSetMenuContextHelpId( HMENU handle, DWORD id );
 HWND    WINAPI NtUserSetParent( HWND hwnd, HWND parent );
 BOOL    WINAPI NtUserSetProcessDpiAwarenessContext( ULONG awareness, ULONG unknown );
 BOOL    WINAPI NtUserSetProcessWindowStation( HWINSTA handle );
@@ -639,6 +642,7 @@ enum
     NtUserCallOneParam_GetSysColorPen,
     NtUserCallOneParam_GetSystemMetrics,
     NtUserCallOneParam_GetVirtualScreenRect,
+    NtUserCallOneParam_IsWindowRectFullScreen,
     NtUserCallOneParam_MessageBeep,
     NtUserCallOneParam_RealizePalette,
     /* temporary exports */
@@ -729,6 +733,11 @@ static inline RECT NtUserGetVirtualScreenRect(void)
     return virtual;
 }
 
+static inline BOOL NtUserIsWindowRectFullScreen( const RECT *rect )
+{
+    return NtUserCallOneParam( (UINT_PTR)rect, NtUserCallOneParam_IsWindowRectFullScreen );
+}
+
 static inline BOOL NtUserMessageBeep( UINT i )
 {
     return NtUserCallOneParam( i, NtUserCallOneParam_MessageBeep );
@@ -742,6 +751,7 @@ static inline UINT NtUserRealizePalette( HDC hdc )
 /* NtUserCallTwoParam codes, not compatible with Windows */
 enum
 {
+    NtUserCallTwoParam_GetMenuInfo,
     NtUserCallTwoParam_GetMonitorInfo,
     NtUserCallTwoParam_GetSystemMetricsForDpi,
     NtUserCallTwoParam_MonitorFromRect,
@@ -752,6 +762,12 @@ enum
     NtUserAllocWinProc,
     NtUserGetHandlePtr,
 };
+
+static inline BOOL NtUserGetMenuInfo( HMENU menu, MENUINFO *info )
+{
+    return NtUserCallTwoParam( HandleToUlong(menu), (ULONG_PTR)info,
+                               NtUserCallTwoParam_GetMenuInfo );
+}
 
 static inline BOOL NtUserGetMonitorInfo( HMONITOR monitor, MONITORINFO *info )
 {

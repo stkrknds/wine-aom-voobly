@@ -954,7 +954,7 @@
 @ stub NtUserGetListBoxInfo
 @ stub NtUserGetMenuBarInfo
 @ stub NtUserGetMenuIndex
-@ stub NtUserGetMenuItemRect
+@ stdcall -syscall NtUserGetMenuItemRect(long long long ptr)
 @ stdcall NtUserGetMessage(ptr long long long)
 @ stdcall -syscall NtUserGetMouseMovePointsEx(long ptr ptr long long)
 @ stdcall -syscall NtUserGetObjectInformation(long long long long ptr)
@@ -1206,8 +1206,8 @@
 @ stdcall NtUserSetLayeredWindowAttributes(ptr long long long)
 @ stub NtUserSetMagnificationDesktopMagnifierOffsetsDWMUpdated
 @ stub NtUserSetManipulationInputTarget
-@ stub NtUserSetMenu
-@ stub NtUserSetMenuContextHelpId
+@ stdcall NtUserSetMenu(long long)
+@ stdcall -syscall NtUserSetMenuContextHelpId(long long)
 @ stub NtUserSetMenuDefaultItem
 @ stub NtUserSetMenuFlagRtoL
 @ stub NtUserSetMirrorRendering

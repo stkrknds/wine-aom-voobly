@@ -110,8 +110,8 @@ static pthread_mutex_t win_data_mutex = PTHREAD_MUTEX_INITIALIZER;
 static void remove_startup_notification(Display *display, Window window)
 {
     static LONG startup_notification_removed = 0;
-    char id[1024];
     char message[1024];
+    const char *id;
     int i;
     int pos;
     XEvent xevent;
@@ -121,9 +121,7 @@ static void remove_startup_notification(Display *display, Window window)
     if (InterlockedCompareExchange(&startup_notification_removed, 1, 0) != 0)
         return;
 
-    if (GetEnvironmentVariableA("DESKTOP_STARTUP_ID", id, sizeof(id)) == 0)
-        return;
-    SetEnvironmentVariableA("DESKTOP_STARTUP_ID", NULL);
+    if (!(id = getenv( "DESKTOP_STARTUP_ID" )) || !id[0]) return;
 
     if ((src = strstr( id, "_TIME" ))) update_user_time( atol( src + 5 ));
 
@@ -137,6 +135,7 @@ static void remove_startup_notification(Display *display, Window window)
     }
     message[pos++] = '"';
     message[pos++] = '\0';
+    unsetenv( "DESKTOP_STARTUP_ID" );
 
     xevent.xclient.type = ClientMessage;
     xevent.xclient.message_type = x11drv_atom(_NET_STARTUP_INFO_BEGIN);
@@ -281,35 +280,7 @@ static inline BOOL is_window_resizable( struct x11drv_win_data *data, DWORD styl
 {
     if (style & WS_THICKFRAME) return TRUE;
     /* Metacity needs the window to be resizable to make it fullscreen */
-    return is_window_rect_full_screen( &data->whole_rect );
-}
-
-struct monitor_info
-{
-    const RECT *rect;
-    BOOL full_screen;
-};
-
-static BOOL CALLBACK enum_monitor_proc( HMONITOR monitor, HDC hdc, RECT *monitor_rect, LPARAM lparam )
-{
-    struct monitor_info *info = (struct monitor_info *)lparam;
-
-    if (info->rect->left <= monitor_rect->left && info->rect->right >= monitor_rect->right &&
-        info->rect->top <= monitor_rect->top && info->rect->bottom >= monitor_rect->bottom)
-    {
-        info->full_screen = TRUE;
-        return FALSE;
-    }
-
-    return TRUE;
-}
-
-BOOL is_window_rect_full_screen( const RECT *rect )
-{
-    struct monitor_info info = {rect, FALSE};
-
-    EnumDisplayMonitors( NULL, NULL, enum_monitor_proc, (LPARAM)&info );
-    return info.full_screen;
+    return NtUserIsWindowRectFullScreen( &data->whole_rect );
 }
 
 /***********************************************************************
@@ -992,7 +963,7 @@ void update_net_wm_states( struct x11drv_win_data *data )
     style = NtUserGetWindowLongW( data->hwnd, GWL_STYLE );
     if (style & WS_MINIMIZE)
         new_state |= data->net_wm_state & ((1 << NET_WM_STATE_FULLSCREEN)|(1 << NET_WM_STATE_MAXIMIZED));
-    if (is_window_rect_full_screen( &data->whole_rect ))
+    if (NtUserIsWindowRectFullScreen( &data->whole_rect ))
     {
         if ((style & WS_MAXIMIZE) && (style & WS_CAPTION) == WS_CAPTION)
             new_state |= (1 << NET_WM_STATE_MAXIMIZED);
@@ -2511,7 +2482,7 @@ void X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags,
         {
             release_win_data( data );
             unmap_window( hwnd );
-            if (is_window_rect_full_screen( &old_window_rect )) reset_clipping_window();
+            if (NtUserIsWindowRectFullScreen( &old_window_rect )) reset_clipping_window();
             if (!(data = get_win_data( hwnd ))) return;
         }
     }

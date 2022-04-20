@@ -137,6 +137,20 @@ static void release_menu_ptr( POPUPMENU *menu )
     }
 }
 
+/* see IsMenu */
+static BOOL is_menu( HMENU handle )
+{
+    POPUPMENU *menu;
+    BOOL is_menu;
+
+    menu = grab_menu_ptr( handle );
+    is_menu = menu != NULL;
+    release_menu_ptr( menu );
+
+    if (!is_menu) SetLastError( ERROR_INVALID_MENU_HANDLE );
+    return is_menu;
+}
+
 static POPUPMENU *find_menu_item( HMENU handle, UINT id, UINT flags, UINT *pos )
 {
     UINT fallback_pos = ~0u, i;
@@ -259,6 +273,55 @@ BOOL WINAPI NtUserSetSystemMenu( HWND hwnd, HMENU menu )
 }
 
 /*******************************************************************
+ *           set_window_menu
+ *
+ * Helper for NtUserSetMenu that does not call NtUserSetWindowPos.
+ */
+BOOL set_window_menu( HWND hwnd, HMENU handle )
+{
+    TRACE( "(%p, %p);\n", hwnd, handle );
+
+    if (handle && !is_menu( handle ))
+    {
+        WARN( "%p is not a menu handle\n", handle );
+        return FALSE;
+    }
+
+    if (is_win_menu_disallowed( hwnd ))
+        return FALSE;
+
+    hwnd = get_full_window_handle( hwnd );
+    if (get_capture() == hwnd)
+        set_capture_window( 0, GUI_INMENUMODE, NULL );  /* release the capture */
+
+    if (handle)
+    {
+        POPUPMENU *menu;
+
+        if (!(menu = grab_menu_ptr( handle ))) return FALSE;
+        menu->hWnd = hwnd;
+        menu->Height = 0;  /* Make sure we recalculate the size */
+        release_menu_ptr(menu);
+    }
+
+    NtUserSetWindowLong( hwnd, GWLP_ID, (LONG_PTR)handle, FALSE );
+    return TRUE;
+}
+
+/**********************************************************************
+ *           NtUserSetMenu    (win32u.@)
+ */
+BOOL WINAPI NtUserSetMenu( HWND hwnd, HMENU menu )
+{
+    if (!set_window_menu( hwnd, menu ))
+        return FALSE;
+
+    NtUserSetWindowPos( hwnd, 0, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE |
+                        SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED );
+    return TRUE;
+}
+
+/*******************************************************************
  *           NtUserCheckMenuItem    (win32u.@)
  */
 DWORD WINAPI NtUserCheckMenuItem( HMENU handle, UINT id, UINT flags )
@@ -346,4 +409,82 @@ BOOL draw_menu_bar( HWND hwnd )
 
     return NtUserSetWindowPos( hwnd, 0, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE |
                                SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED );
+}
+
+/**********************************************************************
+ *           NtUserGetMenuItemRect    (win32u.@)
+ */
+BOOL WINAPI NtUserGetMenuItemRect( HWND hwnd, HMENU handle, UINT item, RECT *rect )
+{
+    POPUPMENU *menu;
+    UINT pos;
+    RECT window_rect;
+
+    TRACE( "(%p,%p,%d,%p)\n", hwnd, handle, item, rect );
+
+    if (!rect)
+        return FALSE;
+
+    if (!(menu = find_menu_item( handle, item, MF_BYPOSITION, &pos )))
+        return FALSE;
+
+    if (!hwnd) hwnd = menu->hWnd;
+    if (!hwnd)
+    {
+        release_menu_ptr( menu );
+        return FALSE;
+    }
+
+    *rect = menu->items[pos].rect;
+    OffsetRect( rect, menu->items_rect.left, menu->items_rect.top );
+
+    /* Popup menu item draws in the client area */
+    if (menu->wFlags & MF_POPUP) map_window_points( hwnd, 0, (POINT *)rect, 2, get_thread_dpi() );
+    else
+    {
+        /* Sysmenu draws in the non-client area */
+        get_window_rect( hwnd, &window_rect, get_thread_dpi() );
+        OffsetRect( rect, window_rect.left, window_rect.top );
+    }
+
+    release_menu_ptr(menu);
+    return TRUE;
+}
+
+/* see GetMenuInfo */
+BOOL get_menu_info( HMENU handle, MENUINFO *info )
+{
+    POPUPMENU *menu;
+
+    TRACE( "(%p %p)\n", handle, info );
+
+    if (!info || info->cbSize != sizeof(MENUINFO) || !(menu = grab_menu_ptr( handle )))
+    {
+        SetLastError( ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    if (info->fMask & MIM_BACKGROUND) info->hbrBack = menu->hbrBack;
+    if (info->fMask & MIM_HELPID)     info->dwContextHelpID = menu->dwContextHelpID;
+    if (info->fMask & MIM_MAXHEIGHT)  info->cyMax = menu->cyMax;
+    if (info->fMask & MIM_MENUDATA)   info->dwMenuData = menu->dwMenuData;
+    if (info->fMask & MIM_STYLE)      info->dwStyle = menu->dwStyle;
+
+    release_menu_ptr(menu);
+    return TRUE;
+}
+
+/**********************************************************************
+ *           NtUserSetMenuContextHelpId    (win32u.@)
+ */
+BOOL WINAPI NtUserSetMenuContextHelpId( HMENU handle, DWORD id )
+{
+    POPUPMENU *menu;
+
+    TRACE( "(%p 0x%08x)\n", handle, id );
+
+    if (!(menu = grab_menu_ptr( handle ))) return FALSE;
+    menu->dwContextHelpID = id;
+    release_menu_ptr( menu );
+    return TRUE;
 }

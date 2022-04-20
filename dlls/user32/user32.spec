@@ -338,7 +338,7 @@
 @ stdcall GetMenuItemID(long long)
 @ stdcall GetMenuItemInfoA(long long long ptr)
 @ stdcall GetMenuItemInfoW(long long long ptr)
-@ stdcall GetMenuItemRect(long long long ptr)
+@ stdcall GetMenuItemRect(long long long ptr) NtUserGetMenuItemRect
 @ stdcall GetMenuState(long long long)
 @ stdcall GetMenuStringA(long long ptr long long)
 @ stdcall GetMenuStringW(long long ptr long long)
@@ -678,8 +678,8 @@
 @ stdcall SetLastErrorEx(long long)
 @ stdcall SetLayeredWindowAttributes(ptr long long long) NtUserSetLayeredWindowAttributes
 @ stdcall SetLogonNotifyWindow(long long)
-@ stdcall SetMenu(long long)
-@ stdcall SetMenuContextHelpId(long long)
+@ stdcall SetMenu(long long) NtUserSetMenu
+@ stdcall SetMenuContextHelpId(long long) NtUserSetMenuContextHelpId
 @ stdcall SetMenuDefaultItem(long long long)
 @ stdcall SetMenuInfo(long ptr)
 @ stdcall SetMenuItemBitmaps(long long long long long)

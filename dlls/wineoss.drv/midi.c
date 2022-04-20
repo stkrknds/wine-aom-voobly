@@ -75,8 +75,6 @@ static	int		MODM_NumFMSynthDevs = 0;
 /* this is the total number of MIDI out devices found */
 static	int 		MIDM_NumDevs = 0;
 
-static	int		midiSeqFD = -1;
-static	int		numOpenMidiSeq = 0;
 static	int		numStartedMidiIn = 0;
 
 static CRITICAL_SECTION crit_sect;   /* protects all MidiIn buffers queues */
@@ -96,7 +94,7 @@ static HANDLE hThread;
  *======================================================================*/
 
 static int midiOpenSeq(void);
-static int midiCloseSeq(void);
+static int midiCloseSeq(int);
 
 static int MIDI_loadcount;
 /**************************************************************************
@@ -151,6 +149,15 @@ static LRESULT OSS_MidiExit(void)
     return 0;
 }
 
+static void notify_client(struct notify_context *notify)
+{
+    TRACE("dev_id = %d msg = %d param1 = %04lX param2 = %04lX\n",
+          notify->dev_id, notify->msg, notify->param_1, notify->param_2);
+
+    DriverCallback(notify->callback, notify->flags, notify->device, notify->msg,
+                   notify->instance, notify->param_1, notify->param_2);
+}
+
 /**************************************************************************
  * 			MIDI_NotifyClient			[internal]
  */
@@ -166,8 +173,6 @@ static void MIDI_NotifyClient(UINT wDevID, WORD wMsg,
 	  wDevID, wMsg, dwParam1, dwParam2);
 
     switch (wMsg) {
-    case MOM_OPEN:
-    case MOM_CLOSE:
     case MOM_DONE:
     case MOM_POSITIONCB:
 	if (wDevID > MODM_NumDevs) return;
@@ -200,58 +205,31 @@ static void MIDI_NotifyClient(UINT wDevID, WORD wMsg,
     DriverCallback(dwCallBack, uFlags, hDev, wMsg, dwInstance, dwParam1, dwParam2);
 }
 
-static int midi_warn = 1;
 /**************************************************************************
  * 			midiOpenSeq				[internal]
  */
 static int midiOpenSeq(void)
 {
-    if (numOpenMidiSeq == 0) {
-	const char* device;
-	device=getenv("MIDIDEV");
-	if (!device) device="/dev/sequencer";
-	midiSeqFD = open(device, O_RDWR, 0);
-	if (midiSeqFD == -1) {
-	    if (midi_warn)
-	    {
-		WARN("Can't open MIDI device '%s' ! (%s). If your "
-                        "program needs this (probably not): %s\n",
-			device, strerror(errno),
-			errno == ENOENT ?
-			"create it ! (\"man MAKEDEV\" ?)" :
-			errno == ENODEV ?
-			"load MIDI sequencer kernel driver !" :
-			errno == EACCES ?
-			"grant access ! (\"man chmod\")" : ""
-		);
-	    }
-	    midi_warn = 0;
-	    return -1;
-	}
-#if 0
-	if (fcntl(midiSeqFD, F_SETFL, O_NONBLOCK) < 0) {
-	    WARN("can't set sequencer fd to non-blocking, errno %d (%s)\n", errno, strerror(errno));
-	    close(midiSeqFD);
-	    midiSeqFD = -1;
-	    return -1;
-	}
-#endif
-	fcntl(midiSeqFD, F_SETFD, 1); /* set close on exec flag */
-	ioctl(midiSeqFD, SNDCTL_SEQ_RESET);
-    }
-    numOpenMidiSeq++;
-    return 0;
+    struct midi_seq_open_params params;
+
+    params.close = 0;
+    params.fd = -1;
+    OSS_CALL(midi_seq_open, &params);
+
+    return params.fd;
 }
 
 /**************************************************************************
  * 			midiCloseSeq				[internal]
  */
-static int midiCloseSeq(void)
+static int midiCloseSeq(int fd)
 {
-    if (--numOpenMidiSeq == 0) {
-	close(midiSeqFD);
-	midiSeqFD = -1;
-    }
+    struct midi_seq_open_params params;
+
+    params.close = 1;
+    params.fd = fd;
+    OSS_CALL(midi_seq_open, &params);
+
     return 0;
 }
 
@@ -269,10 +247,16 @@ SEQ_DEFINEBUF(1024);
  */
 void seqbuf_dump(void)
 {
+    int fd;
+
+    /* The device is already open, but there's no way to pass the
+       fd to this function.  Rather than rely on a global variable
+       we pretend to open the seq again. */
+    fd = midiOpenSeq();
     if (_seqbufptr) {
-	if (write(midiSeqFD, _seqbuf, _seqbufptr) == -1) {
+	if (write(fd, _seqbuf, _seqbufptr) == -1) {
 	    WARN("Can't write data to sequencer %d, errno %d (%s)!\n",
-		 midiSeqFD, errno, strerror(errno));
+		fd, errno, strerror(errno));
 	}
 	/* FIXME:
 	 *	in any case buffer is lost so that if many errors occur the buffer
@@ -280,6 +264,7 @@ void seqbuf_dump(void)
 	 */
 	_seqbufptr = 0;
     }
+    midiCloseSeq(fd);
 }
 
 /**************************************************************************
@@ -392,8 +377,9 @@ static void midReceiveChar(WORD wDevID, unsigned char value, DWORD dwTime)
     }
 }
 
-static DWORD WINAPI midRecThread(LPVOID arg)
+static DWORD WINAPI midRecThread(void *arg)
 {
+    int fd = (int)(INT_PTR)arg;
     unsigned char buffer[256];
     int len, idx;
     DWORD dwTime;
@@ -401,7 +387,7 @@ static DWORD WINAPI midRecThread(LPVOID arg)
 
     TRACE("Thread startup\n");
 
-    pfd.fd = midiSeqFD;
+    pfd.fd = fd;
     pfd.events = POLLIN;
     
     while(!end_thread) {
@@ -411,7 +397,7 @@ static DWORD WINAPI midRecThread(LPVOID arg)
 	if (poll(&pfd, 1, 250) <= 0)
 	    continue;
 	
-	len = read(midiSeqFD, buffer, sizeof(buffer));
+	len = read(fd, buffer, sizeof(buffer));
 	TRACE("Received %d bytes\n", len);
 
 	if (len < 0) continue;
@@ -470,6 +456,8 @@ static DWORD midGetDevCaps(WORD wDevID, LPMIDIINCAPSW lpCaps, DWORD dwSize)
  */
 static DWORD midOpen(WORD wDevID, LPMIDIOPENDESC lpDesc, DWORD dwFlags)
 {
+    int fd;
+
     TRACE("(%04X, %p, %08X);\n", wDevID, lpDesc, dwFlags);
 
     if (lpDesc == NULL) {
@@ -501,17 +489,18 @@ static DWORD midOpen(WORD wDevID, LPMIDIOPENDESC lpDesc, DWORD dwFlags)
 	return MMSYSERR_INVALFLAG;
     }
 
-    if (midiOpenSeq() < 0) {
+    fd = midiOpenSeq();
+    if (fd < 0) {
 	return MMSYSERR_ERROR;
     }
 
     if (numStartedMidiIn++ == 0) {
 	end_thread = 0;
-	hThread = CreateThread(NULL, 0, midRecThread, NULL, 0, NULL);
+	hThread = CreateThread(NULL, 0, midRecThread, (void *)(INT_PTR)fd, 0, NULL);
 	if (!hThread) {
 	    numStartedMidiIn = 0;
 	    WARN("Couldn't create thread for midi-in\n");
-	    midiCloseSeq();
+	    midiCloseSeq(fd);
 	    return MMSYSERR_ERROR;
 	}
         SetThreadPriority(hThread, THREAD_PRIORITY_TIME_CRITICAL);
@@ -525,6 +514,7 @@ static DWORD midOpen(WORD wDevID, LPMIDIOPENDESC lpDesc, DWORD dwFlags)
     MidiInDev[wDevID].state = 0;
     MidiInDev[wDevID].incLen = 0;
     MidiInDev[wDevID].startTime = 0;
+    MidiInDev[wDevID].fd = fd;
 
     MIDI_NotifyClient(wDevID, MIM_OPEN, 0L, 0L);
     return MMSYSERR_NOERROR;
@@ -551,7 +541,7 @@ static DWORD midClose(WORD wDevID)
 	return MIDIERR_STILLPLAYING;
     }
 
-    if (midiSeqFD == -1) {
+    if (MidiInDev[wDevID].fd == -1) {
 	WARN("ooops !\n");
 	return MMSYSERR_ERROR;
     }
@@ -564,7 +554,8 @@ static DWORD midClose(WORD wDevID)
 	}
     	TRACE("Stopped thread for midi-in\n");
     }
-    midiCloseSeq();
+    midiCloseSeq(MidiInDev[wDevID].fd);
+    MidiInDev[wDevID].fd = -1;
 
     MIDI_NotifyClient(wDevID, MIM_CLOSE, 0L, 0L);
     MidiInDev[wDevID].midiDesc.hMidi = 0;
@@ -739,78 +730,6 @@ typedef struct sFMextra {
      */
 } sFMextra;
 
-extern const unsigned char midiFMInstrumentPatches[16 * 128];
-extern const unsigned char midiFMDrumsPatches     [16 * 128];
-
-/**************************************************************************
- * 			modFMLoad				[internal]
- */
-static int modFMLoad(int dev)
-{
-    int				i;
-    struct sbi_instrument	sbi;
-
-    sbi.device = dev;
-    sbi.key = FM_PATCH;
-
-    memset(sbi.operators + 16, 0, 16);
-    for (i = 0; i < 128; i++) {
-	sbi.channel = i;
-	memcpy(sbi.operators, midiFMInstrumentPatches + i * 16, 16);
-
-        if (write(midiSeqFD, &sbi, sizeof(sbi)) == -1) {
-	    WARN("Couldn't write patch for instrument %d, errno %d (%s)!\n", sbi.channel, errno, strerror(errno));
-	    return -1;
-	}
-    }
-    for (i = 0; i < 128; i++) {
-	sbi.channel = 128 + i;
-	memcpy(sbi.operators, midiFMDrumsPatches + i * 16, 16);
-
-        if (write(midiSeqFD, &sbi, sizeof(sbi)) == -1) {
-	    WARN("Couldn't write patch for drum %d, errno %d (%s)!\n", sbi.channel, errno, strerror(errno));
-	    return -1;
-	}
-    }
-    return 0;
-}
-
-/**************************************************************************
- * 			modFMReset				[internal]
- */
-static	void modFMReset(WORD wDevID)
-{
-    sFMextra*   extra   = MidiOutDev[wDevID].lpExtra;
-    sVoice* 	voice   = extra->voice;
-    sChannel*	channel = extra->channel;
-    int		i;
-
-    for (i = 0; i < MidiOutDev[wDevID].caps.wVoices; i++) {
-	if (voice[i].status != sVS_UNUSED) {
-	    SEQ_STOP_NOTE(wDevID, i, voice[i].note, 64);
-	}
-	SEQ_KEY_PRESSURE(wDevID, i, 127, 0);
-	SEQ_CONTROL(wDevID, i, SEQ_VOLMODE, VOL_METHOD_LINEAR);
-	voice[i].note = 0;
-	voice[i].channel = -1;
-	voice[i].cntMark = 0;
-	voice[i].status = sVS_UNUSED;
-    }
-    for (i = 0; i < 16; i++) {
-	channel[i].program = 0;
-	channel[i].bender = 8192;
-	channel[i].benderRange = 2;
-	channel[i].bank = 0;
-	channel[i].volume = 127;
-	channel[i].balance = 64;
-	channel[i].expression = 0;
-	channel[i].sustain = 0;
-    }
-    extra->counter = 0;
-    extra->drumSetMask = 1 << 9; /* channel 10 is normally drums, sometimes 16 also */
-    SEQ_DUMPBUF();
-}
-
 #define		IS_DRUM_CHANNEL(_xtra, _chn)	((_xtra)->drumSetMask & (1 << (_chn)))
 
 /**************************************************************************
@@ -829,125 +748,6 @@ static DWORD modGetDevCaps(WORD wDevID, LPMIDIOUTCAPSW lpCaps, DWORD dwSize)
 }
 
 /**************************************************************************
- * 			modOpen					[internal]
- */
-static DWORD modOpen(WORD wDevID, LPMIDIOPENDESC lpDesc, DWORD dwFlags)
-{
-    TRACE("(%04X, %p, %08X);\n", wDevID, lpDesc, dwFlags);
-    if (lpDesc == NULL) {
-	WARN("Invalid Parameter !\n");
-	return MMSYSERR_INVALPARAM;
-    }
-    if (wDevID >= MODM_NumDevs) {
-	TRACE("MAX_MIDIOUTDRV reached !\n");
-	return MMSYSERR_BADDEVICEID;
-    }
-    if (MidiOutDev[wDevID].midiDesc.hMidi != 0) {
-	WARN("device already open !\n");
-	return MMSYSERR_ALLOCATED;
-    }
-    if (!MidiOutDev[wDevID].bEnabled) {
-	WARN("device disabled !\n");
-	return MIDIERR_NODEVICE;
-    }
-    if ((dwFlags & ~CALLBACK_TYPEMASK) != 0) {
-	WARN("bad dwFlags\n");
-	return MMSYSERR_INVALFLAG;
-    }
-
-    MidiOutDev[wDevID].lpExtra = 0;
-
-    switch (MidiOutDev[wDevID].caps.wTechnology) {
-    case MOD_FMSYNTH:
-	{
-	    void*	extra;
-
-            extra = HeapAlloc(GetProcessHeap(), 0,
-                              offsetof(struct sFMextra, voice[MidiOutDev[wDevID].caps.wVoices]));
-
-	    if (extra == 0) {
-		WARN("can't alloc extra data !\n");
-		return MMSYSERR_NOMEM;
-	    }
-	    MidiOutDev[wDevID].lpExtra = extra;
-	    if (midiOpenSeq() < 0) {
-		MidiOutDev[wDevID].lpExtra = 0;
-		HeapFree(GetProcessHeap(), 0, extra);
-		return MMSYSERR_ERROR;
-	    }
-	    if (modFMLoad(wDevID) < 0) {
-		midiCloseSeq();
-		MidiOutDev[wDevID].lpExtra = 0;
-		HeapFree(GetProcessHeap(), 0, extra);
-		return MMSYSERR_ERROR;
-	    }
-	    modFMReset(wDevID);
-	}
-	break;
-    case MOD_MIDIPORT:
-    case MOD_SYNTH:
-	if (midiOpenSeq() < 0) {
-	    return MMSYSERR_ALLOCATED;
-	}
-	break;
-    default:
-	WARN("Technology not supported (yet) %d !\n",
-	     MidiOutDev[wDevID].caps.wTechnology);
-	return MMSYSERR_NOTENABLED;
-    }
-
-    MidiOutDev[wDevID].wFlags = HIWORD(dwFlags & CALLBACK_TYPEMASK);
-
-    MidiOutDev[wDevID].lpQueueHdr = NULL;
-    MidiOutDev[wDevID].midiDesc = *lpDesc;
-
-    MIDI_NotifyClient(wDevID, MOM_OPEN, 0L, 0L);
-    TRACE("Successful !\n");
-    return MMSYSERR_NOERROR;
-}
-
-
-/**************************************************************************
- * 			modClose				[internal]
- */
-static DWORD modClose(WORD wDevID)
-{
-    int	ret = MMSYSERR_NOERROR;
-
-    TRACE("(%04X);\n", wDevID);
-
-    if (MidiOutDev[wDevID].midiDesc.hMidi == 0) {
-	WARN("device not opened !\n");
-	return MMSYSERR_ERROR;
-    }
-    /* FIXME: should test that no pending buffer is still in the queue for
-     * playing */
-
-    if (midiSeqFD == -1) {
-	WARN("can't close !\n");
-	return MMSYSERR_ERROR;
-    }
-
-    switch (MidiOutDev[wDevID].caps.wTechnology) {
-    case MOD_FMSYNTH:
-    case MOD_MIDIPORT:
-	midiCloseSeq();
-	break;
-    default:
-	WARN("Technology not supported (yet) %d !\n",
-	     MidiOutDev[wDevID].caps.wTechnology);
-	return MMSYSERR_NOTENABLED;
-    }
-
-    HeapFree(GetProcessHeap(), 0, MidiOutDev[wDevID].lpExtra);
-    MidiOutDev[wDevID].lpExtra = 0;
-
-    MIDI_NotifyClient(wDevID, MOM_CLOSE, 0L, 0L);
-    MidiOutDev[wDevID].midiDesc.hMidi = 0;
-    return ret;
-}
-
-/**************************************************************************
  * 			modData					[internal]
  */
 static DWORD modData(WORD wDevID, DWORD dwParam)
@@ -961,7 +761,7 @@ static DWORD modData(WORD wDevID, DWORD dwParam)
     if (wDevID >= MODM_NumDevs) return MMSYSERR_BADDEVICEID;
     if (!MidiOutDev[wDevID].bEnabled) return MIDIERR_NODEVICE;
 
-    if (midiSeqFD == -1) {
+    if (MidiOutDev[wDevID].fd == -1) {
 	WARN("can't play !\n");
 	return MIDIERR_NODEVICE;
     }
@@ -1151,7 +951,7 @@ static DWORD modData(WORD wDevID, DWORD dwParam)
 	    case MIDI_SYSTEM_PREFIX:
 		switch (evt & 0x0F) {
 		case 0x0F: 	/* Reset */
-		    modFMReset(wDevID);
+		    OSS_CALL(midi_out_fm_reset, (void *)(UINT_PTR)wDevID);
 		    break;
 		default:
 		    WARN("Unsupported (yet) system event %02x\n", evt & 0x0F);
@@ -1256,7 +1056,7 @@ static DWORD modLongData(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
     if (wDevID >= MODM_NumDevs) return MMSYSERR_BADDEVICEID;
     if (!MidiOutDev[wDevID].bEnabled) return MIDIERR_NODEVICE;
 
-    if (midiSeqFD == -1) {
+    if (MidiOutDev[wDevID].fd == -1) {
 	WARN("can't play !\n");
 	return MIDIERR_NODEVICE;
     }
@@ -1445,6 +1245,10 @@ DWORD WINAPI OSS_midMessage(UINT wDevID, UINT wMsg, DWORD_PTR dwUser,
 DWORD WINAPI OSS_modMessage(UINT wDevID, UINT wMsg, DWORD_PTR dwUser,
 			    DWORD_PTR dwParam1, DWORD_PTR dwParam2)
 {
+    struct midi_out_message_params params;
+    struct notify_context notify;
+    UINT err;
+
     TRACE("(%04X, %04X, %08lX, %08lX, %08lX);\n",
 	  wDevID, wMsg, dwUser, dwParam1, dwParam2);
 
@@ -1453,14 +1257,6 @@ DWORD WINAPI OSS_modMessage(UINT wDevID, UINT wMsg, DWORD_PTR dwUser,
         return OSS_MidiInit();
     case DRVM_EXIT:
         return OSS_MidiExit();
-    case DRVM_ENABLE:
-    case DRVM_DISABLE:
-	/* FIXME: Pretend this is supported */
-	return 0;
-    case MODM_OPEN:
-	return modOpen(wDevID, (LPMIDIOPENDESC)dwParam1, dwParam2);
-    case MODM_CLOSE:
-	return modClose(wDevID);
     case MODM_DATA:
 	return modData(wDevID, dwParam1);
     case MODM_LONGDATA:
@@ -1479,10 +1275,21 @@ DWORD WINAPI OSS_modMessage(UINT wDevID, UINT wMsg, DWORD_PTR dwUser,
 	return 0;
     case MODM_RESET:
 	return modReset(wDevID);
-    default:
-	TRACE("Unsupported message\n");
     }
-    return MMSYSERR_NOTSUPPORTED;
+
+    params.dev_id = wDevID;
+    params.msg = wMsg;
+    params.user = dwUser;
+    params.param_1 = dwParam1;
+    params.param_2 = dwParam2;
+    params.err = &err;
+    params.notify = &notify;
+
+    OSS_CALL(midi_out_message, &params);
+
+    if (!err && notify.send_notify) notify_client(&notify);
+
+    return err;
 }
 
 /**************************************************************************
