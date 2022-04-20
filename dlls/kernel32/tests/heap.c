@@ -328,10 +328,12 @@ static void test_HeapCreate(void)
     ok( !!heap, "HeapCreate failed, error %lu\n", GetLastError() );
     ok( !((ULONG_PTR)heap & 0xffff), "wrong heap alignment\n" );
 
-    ptr = HeapAlloc( heap, 0, alloc_size - (0x400 + 0x80 * sizeof(void *)) );
+    /* theshold between failure and success varies, and w7pro64 has a much larger overhead. */
+
+    ptr = HeapAlloc( heap, 0, alloc_size - (0x400 + 0x100 * sizeof(void *)) );
     ok( !!ptr, "HeapAlloc failed, error %lu\n", GetLastError() );
     size = HeapSize( heap, 0, ptr );
-    ok( size == alloc_size - (0x400 + 0x80 * sizeof(void *)),
+    ok( size == alloc_size - (0x400 + 0x100 * sizeof(void *)),
         "HeapSize returned %#Ix, error %lu\n", size, GetLastError() );
     ret = HeapFree( heap, 0, ptr );
     ok( ret, "HeapFree failed, error %lu\n", GetLastError() );
@@ -438,7 +440,7 @@ static void test_HeapCreate(void)
         "got Region.dwCommittedSize %#lx\n", entries[0].Region.dwCommittedSize );
     todo_wine
     ok( entries[0].Region.dwUnCommittedSize == 0x10000 - entries[0].Region.dwCommittedSize ||
-        entries[0].Region.dwUnCommittedSize == 0x40000 - entries[0].Region.dwCommittedSize /* win7 */,
+        entries[0].Region.dwUnCommittedSize == 0x10000 * sizeof(void *) - entries[0].Region.dwCommittedSize /* win7 */,
         "got Region.dwUnCommittedSize %#lx\n", entries[0].Region.dwUnCommittedSize );
     todo_wine
     ok( (BYTE *)entries[0].Region.lpFirstBlock == (BYTE *)entries[0].lpData + entries[0].cbData + 2 * sizeof(void *) ||
@@ -493,7 +495,7 @@ static void test_HeapCreate(void)
     ok( entries[3].lpData == ptr, "got lpData %p\n", entries[3].lpData );
     todo_wine
     ok( entries[3].cbData == 5 * alloc_size, "got cbData %#lx\n", entries[3].cbData );
-    ok( entries[3].cbOverhead == 0 || entries[3].cbOverhead == 0x20 /* win7 */,
+    ok( entries[3].cbOverhead == 0 || entries[3].cbOverhead == 8 * sizeof(void *) /* win7 */,
         "got cbOverhead %#x\n", entries[3].cbOverhead );
     todo_wine
     ok( entries[3].iRegionIndex == 64, "got iRegionIndex %d\n", entries[3].iRegionIndex );
@@ -520,7 +522,7 @@ static void test_HeapCreate(void)
     ok( entries[4].lpData == ptr1, "got lpData %p\n", entries[4].lpData );
     todo_wine
     ok( entries[4].cbData == 5 * alloc_size, "got cbData %#lx\n", entries[4].cbData );
-    ok( entries[4].cbOverhead == 0 || entries[4].cbOverhead == 0x20 /* win7 */,
+    ok( entries[4].cbOverhead == 0 || entries[4].cbOverhead == 8 * sizeof(void *) /* win7 */,
         "got cbOverhead %#x\n", entries[4].cbOverhead );
     todo_wine
     ok( entries[4].iRegionIndex == 64, "got iRegionIndex %d\n", entries[4].iRegionIndex );
@@ -996,7 +998,7 @@ static void test_GlobalAlloc(void)
     mem = GlobalFree( mem );
     ok( !mem, "GlobalFree failed, error %lu\n", GetLastError() );
 
-    for (alloc_size = 1; alloc_size < 0x10000000; alloc_size <<= 1)
+    for (alloc_size = 1; alloc_size < 0x10000000; alloc_size <<= 5)
     {
         winetest_push_context( "size %#Ix", alloc_size );
 
@@ -1972,9 +1974,7 @@ static void test_heap_layout( HANDLE handle, DWORD global_flag, DWORD heap_flags
     if (global_flag & FLG_HEAP_ENABLE_TAGGING) heap_flags |= HEAP_SHARED;
     if (!(global_flag & FLG_HEAP_PAGE_ALLOCS)) force_flags &= ~(HEAP_GROWABLE|HEAP_PRIVATE);
 
-    todo_wine_if( force_flags & (HEAP_PRIVATE|HEAP_NO_SERIALIZE) )
     ok( heap->force_flags == force_flags, "got force_flags %#x\n", heap->force_flags );
-    todo_wine_if( heap_flags & (HEAP_VALIDATE_ALL|HEAP_VALIDATE_PARAMS|HEAP_SHARED|HEAP_PRIVATE) )
     ok( heap->flags == heap_flags, "got flags %#x\n", heap->flags );
 
     if (heap->flags & HEAP_PAGE_ALLOCS)
@@ -1988,7 +1988,6 @@ static void test_heap_layout( HANDLE handle, DWORD global_flag, DWORD heap_flags
     }
     else
     {
-        todo_wine
         ok( heap->ffeeffee == 0xffeeffee, "got ffeeffee %#x\n", heap->ffeeffee );
         ok( heap->auto_flags == (heap_flags & HEAP_GROWABLE) || !heap->auto_flags,
             "got auto_flags %#x\n", heap->auto_flags );

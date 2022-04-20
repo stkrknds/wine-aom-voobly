@@ -1,15 +1,10 @@
-/* -*- tab-width: 8; c-basic-offset: 4 -*- */
-
 /*
- * Sample MIDI Wine Driver for Open Sound System (basically Linux)
+ * MIDI driver for OSS (PE-side)
  *
- * Copyright 1994 	Martin Ayotte
- * Copyright 1998 	Luiz Otavio L. Zorzella (init procedures)
- * Copyright 1998/1999	Eric POUECH :
- * 		98/7 	changes for making this MIDI driver work on OSS
- * 			current support is limited to MIDI ports of OSS systems
- * 		98/9	rewriting MCI code for MIDI
- * 		98/11 	split in midi.c and mcimidi.c
+ * Copyright 1994       Martin Ayotte
+ * Copyright 1998       Luiz Otavio L. Zorzella (init procedures)
+ * Copyright 1998, 1999 Eric POUECH
+ * Copyright 2022       Huw Davies
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -57,41 +52,19 @@
 #include "winbase.h"
 #include "wingdi.h"
 #include "winuser.h"
-#include "winnls.h"
+#include "winternl.h"
 #include "mmddk.h"
+#include "audioclient.h"
+
 #include "wine/debug.h"
+#include "wine/unixlib.h"
+
+#include "unixlib.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(midi);
 
-#ifdef SNDCTL_SEQ_NRMIDIS
-
-typedef struct {
-    int			state;                  /* -1 disabled, 0 is no recording started, 1 in recording, bit 2 set if in sys exclusive recording */
-    DWORD		bufsize;
-    MIDIOPENDESC	midiDesc;
-    WORD		wFlags;
-    LPMIDIHDR	 	lpQueueHdr;
-    DWORD		dwTotalPlayed;
-    unsigned char	incoming[3];
-    unsigned char	incPrev;
-    char		incLen;
-    DWORD		startTime;
-    MIDIINCAPSW         caps;
-} WINE_MIDIIN;
-
-typedef struct {
-    BOOL                bEnabled;
-    DWORD		bufsize;
-    MIDIOPENDESC	midiDesc;
-    WORD		wFlags;
-    LPMIDIHDR	 	lpQueueHdr;
-    DWORD		dwTotalPlayed;
-    void*		lpExtra;	 	/* according to port type (MIDI, FM...), extra data when needed */
-    MIDIOUTCAPSW        caps;
-} WINE_MIDIOUT;
-
-static WINE_MIDIIN	MidiInDev [MAX_MIDIINDRV ];
-static WINE_MIDIOUT	MidiOutDev[MAX_MIDIOUTDRV];
+static WINE_MIDIIN *MidiInDev;
+static WINE_MIDIOUT *MidiOutDev;
 
 /* this is the total number of MIDI out devices found (synth and port) */
 static	int 		MODM_NumDevs = 0;
@@ -125,37 +98,6 @@ static HANDLE hThread;
 static int midiOpenSeq(void);
 static int midiCloseSeq(void);
 
-/**************************************************************************
- * 			MIDI_unixToWindowsDeviceType  		[internal]
- *
- * return the Windows equivalent to a Unix Device Type
- *
- */
-static	int 	MIDI_UnixToWindowsDeviceType(int type)
-{
-    /* MOD_MIDIPORT     output port
-     * MOD_SYNTH        generic internal synth
-     * MOD_SQSYNTH      square wave internal synth
-     * MOD_FMSYNTH      FM internal synth
-     * MOD_MAPPER       MIDI mapper
-     * MOD_WAVETABLE    hardware wavetable internal synth
-     * MOD_SWSYNTH      software internal synth
-     */
-
-    /* FIXME Is this really the correct equivalence from UNIX to
-       Windows Sound type */
-
-    switch (type) {
-    case SYNTH_TYPE_FM:     return MOD_FMSYNTH;
-    case SYNTH_TYPE_SAMPLE: return MOD_SYNTH;
-    case SYNTH_TYPE_MIDI:   return MOD_MIDIPORT;
-    default:
-	ERR("Cannot determine the type of this midi device. "
-	    "Assuming FM Synth\n");
-	return MOD_FMSYNTH;
-    }
-}
-
 static int MIDI_loadcount;
 /**************************************************************************
  * 			OSS_MidiInit				[internal]
@@ -164,9 +106,8 @@ static int MIDI_loadcount;
  */
 static LRESULT OSS_MidiInit(void)
 {
-    int 		i, status, numsynthdevs = 255, nummididevs = 255;
-    struct synth_info 	sinfo;
-    struct midi_info 	minfo;
+    struct midi_init_params params;
+    UINT err;
 
     TRACE("(%i)\n", MIDI_loadcount);
     if (MIDI_loadcount++)
@@ -174,187 +115,18 @@ static LRESULT OSS_MidiInit(void)
 
     TRACE("Initializing the MIDI variables.\n");
 
-    /* try to open device */
-    if (midiOpenSeq() == -1) {
-	return -1;
+    params.err = &err;
+    OSS_CALL(midi_init, &params);
+
+    if (!err)
+    {
+        MidiInDev = params.srcs;
+        MidiOutDev = params.dests;
+        MODM_NumDevs = params.num_dests;
+        MODM_NumFMSynthDevs = params.num_synths;
+        MIDM_NumDevs = params.num_srcs;
     }
-
-    /* find how many Synth devices are there in the system */
-    status = ioctl(midiSeqFD, SNDCTL_SEQ_NRSYNTHS, &numsynthdevs);
-
-    if (status == -1) {
-	ERR("ioctl for nr synth failed.\n");
-	midiCloseSeq();
-	return -1;
-    }
-
-    if (numsynthdevs > MAX_MIDIOUTDRV) {
-	ERR("MAX_MIDIOUTDRV (%d) was enough for the number of devices (%d). "
-	    "Some FM devices will not be available.\n",MAX_MIDIOUTDRV,numsynthdevs);
-	numsynthdevs = MAX_MIDIOUTDRV;
-    }
-
-    for (i = 0; i < numsynthdevs; i++) {
-	/* Manufac ID. We do not have access to this with soundcard.h
-	 * Does not seem to be a problem, because in mmsystem.h only
-	 * Microsoft's ID is listed.
-	 */
-	MidiOutDev[i].caps.wMid = 0x00FF;
-	MidiOutDev[i].caps.wPid = 0x0001; 	/* FIXME Product ID  */
-	/* Product Version. We simply say "1" */
-	MidiOutDev[i].caps.vDriverVersion = 0x001;
-	/* The following are mandatory for MOD_MIDIPORT */
-	MidiOutDev[i].caps.wChannelMask   = 0xFFFF;
-	MidiOutDev[i].caps.wVoices        = 0;
-	MidiOutDev[i].caps.wNotes         = 0;
-	MidiOutDev[i].caps.dwSupport      = 0;
-
-	sinfo.device = i;
-	status = ioctl(midiSeqFD, SNDCTL_SYNTH_INFO, &sinfo);
-	if (status == -1) {
-            static const WCHAR fmt[] = {'W','i','n','e',' ','O','S','S',' ','M','i','d','i',' ','O','u','t',' ','#','%','d',' ','d','i','s','a','b','l','e','d',0};
-	    ERR("ioctl for synth info failed on %d, disabling it.\n", i);
-
-            wsprintfW(MidiOutDev[i].caps.szPname, fmt, i);
-
-            MidiOutDev[i].caps.wTechnology = MOD_MIDIPORT;
-            MidiOutDev[i].bEnabled = FALSE;
-	} else {
-            MultiByteToWideChar(CP_UNIXCP, 0, sinfo.name, -1, MidiOutDev[i].caps.szPname,
-                                ARRAY_SIZE(MidiOutDev[i].caps.szPname));
-            MidiOutDev[i].caps.wTechnology = MIDI_UnixToWindowsDeviceType(sinfo.synth_type);
-
-            if (MOD_MIDIPORT != MidiOutDev[i].caps.wTechnology) {
-                /* FIXME Do we have this information?
-                 * Assuming the soundcards can handle
-                 * MIDICAPS_VOLUME and MIDICAPS_LRVOLUME but
-                 * not MIDICAPS_CACHE.
-                 */
-                MidiOutDev[i].caps.dwSupport = MIDICAPS_VOLUME|MIDICAPS_LRVOLUME;
-                MidiOutDev[i].caps.wVoices     = sinfo.nr_voices;
-
-                /* FIXME Is it possible to know the maximum
-                 * number of simultaneous notes of a soundcard ?
-                 * I believe we don't have this information, but
-                 * it's probably equal or more than wVoices
-                 */
-                MidiOutDev[i].caps.wNotes      = sinfo.nr_voices;
-            }
-            MidiOutDev[i].bEnabled = TRUE;
-
-            /* We also have the information sinfo.synth_subtype, not used here
-             */
-            if (sinfo.capabilities & SYNTH_CAP_INPUT) {
-                FIXME("Synthesizer supports MIDI in. Not yet supported.\n");
-            }
-            TRACE("SynthOut[%d]\tOSS info: synth type=%d/%d capa=%lx\n",
-                  i, sinfo.synth_type, sinfo.synth_subtype, (long)sinfo.capabilities);
-        }
-
-        TRACE("SynthOut[%d]\tname='%s' techn=%d voices=%d notes=%d chnMsk=%04x support=%d\n",
-	      i, wine_dbgstr_w(MidiOutDev[i].caps.szPname), 
-              MidiOutDev[i].caps.wTechnology, 
-              MidiOutDev[i].caps.wVoices, MidiOutDev[i].caps.wNotes, 
-              MidiOutDev[i].caps.wChannelMask, MidiOutDev[i].caps.dwSupport);
-    }
-
-    /* find how many MIDI devices are there in the system */
-    status = ioctl(midiSeqFD, SNDCTL_SEQ_NRMIDIS, &nummididevs);
-    if (status == -1) {
-	ERR("ioctl on nr midi failed.\n");
-        nummididevs = 0;
-        goto wrapup;
-    }
-
-    /* FIXME: the two restrictions below could be loosened in some cases */
-    if (numsynthdevs + nummididevs > MAX_MIDIOUTDRV) {
-	ERR("MAX_MIDIOUTDRV was not enough for the number of devices. "
-	    "Some MIDI devices will not be available.\n");
-	nummididevs = MAX_MIDIOUTDRV - numsynthdevs;
-    }
-
-    if (nummididevs > MAX_MIDIINDRV) {
-	ERR("MAX_MIDIINDRV (%d) was not enough for the number of devices (%d). "
-	    "Some MIDI devices will not be available.\n",MAX_MIDIINDRV,nummididevs);
-	nummididevs = MAX_MIDIINDRV;
-    }
-
-    for (i = 0; i < nummididevs; i++) {
-	minfo.device = i;
-	status = ioctl(midiSeqFD, SNDCTL_MIDI_INFO, &minfo);
-	if (status == -1) WARN("ioctl on midi info for device %d failed.\n", i);
-
-	/* This whole part is somewhat obscure to me. I'll keep trying to dig
-	   info about it. If you happen to know, please tell us. The very
-	   descriptive minfo.dev_type was not used here.
-	*/
-	/* Manufacturer ID. We do not have access to this with soundcard.h
-	   Does not seem to be a problem, because in mmsystem.h only
-	   Microsoft's ID is listed */
-	MidiOutDev[numsynthdevs + i].caps.wMid = 0x00FF;
-	MidiOutDev[numsynthdevs + i].caps.wPid = 0x0001; 	/* FIXME Product ID */
-	/* Product Version. We simply say "1" */
-	MidiOutDev[numsynthdevs + i].caps.vDriverVersion = 0x001;
-        if (status == -1) {
-            static const WCHAR fmt[] = {'W','i','n','e',' ','O','S','S',' ','M','i','d','i',' ','O','u','t',' ','#','%','d',' ','d','i','s','a','b','l','e','d',0};
-            wsprintfW(MidiOutDev[numsynthdevs + i].caps.szPname, fmt, numsynthdevs + i);
-            MidiOutDev[numsynthdevs + i].bEnabled = FALSE;
-        } else {
-            MultiByteToWideChar(CP_UNIXCP, 0, minfo.name, -1,
-                                MidiOutDev[numsynthdevs + i].caps.szPname,
-                                ARRAY_SIZE(MidiOutDev[numsynthdevs + i].caps.szPname));
-            MidiOutDev[numsynthdevs + i].bEnabled = TRUE;
-        }
-	MidiOutDev[numsynthdevs + i].caps.wTechnology = MOD_MIDIPORT;
-	MidiOutDev[numsynthdevs + i].caps.wVoices     = 0;
-	MidiOutDev[numsynthdevs + i].caps.wNotes      = 0;
-	MidiOutDev[numsynthdevs + i].caps.wChannelMask= 0xFFFF;
-	MidiOutDev[numsynthdevs + i].caps.dwSupport   = 0;
-
-	/* This whole part is somewhat obscure to me. I'll keep trying to dig
-	   info about it. If you happen to know, please tell us. The very
-	   descriptive minfo.dev_type was not used here.
-	*/
-	/* Manufac ID. We do not have access to this with soundcard.h
-	   Does not seem to be a problem, because in mmsystem.h only
-	   Microsoft's ID is listed */
-	MidiInDev[i].caps.wMid = 0x00FF;
-	MidiInDev[i].caps.wPid = 0x0001; 	/* FIXME Product ID */
-	/* Product Version. We simply say "1" */
-	MidiInDev[i].caps.vDriverVersion = 0x001;
-        if (status == -1) {
-            static const WCHAR fmt[] = {'W','i','n','e',' ','O','S','S',' ','M','i','d','i',' ','I','n',' ','#','%','d',' ','d','i','s','a','b','l','e','d',0};
-            wsprintfW(MidiInDev[i].caps.szPname, fmt, numsynthdevs + i);
-            MidiInDev[i].state = -1;
-        } else {
-            MultiByteToWideChar(CP_UNIXCP, 0, minfo.name, -1, MidiInDev[i].caps.szPname,
-                                ARRAY_SIZE(MidiInDev[i].caps.szPname));
-            MidiInDev[i].state = 0;
-        }
-	MidiInDev[i].caps.dwSupport   = 0; /* mandatory with MIDIINCAPS */
-
-        TRACE("OSS info: midi[%d] dev-type=%d capa=%lx\n"
-              "\tMidiOut[%d] name='%s' techn=%d voices=%d notes=%d chnMsk=%04x support=%d\n"
-              "\tMidiIn [%d] name='%s' support=%d\n",
-              i, minfo.dev_type, (long)minfo.capabilities,
-              numsynthdevs + i, wine_dbgstr_w(MidiOutDev[numsynthdevs + i].caps.szPname),
-              MidiOutDev[numsynthdevs + i].caps.wTechnology,
-	      MidiOutDev[numsynthdevs + i].caps.wVoices, MidiOutDev[numsynthdevs + i].caps.wNotes,
-	      MidiOutDev[numsynthdevs + i].caps.wChannelMask, MidiOutDev[numsynthdevs + i].caps.dwSupport,
-              i, wine_dbgstr_w(MidiInDev[i].caps.szPname), MidiInDev[i].caps.dwSupport);
-    }
-
- wrapup:
-    /* windows does not seem to differentiate Synth from MIDI devices */
-    MODM_NumFMSynthDevs = numsynthdevs;
-    MODM_NumDevs        = numsynthdevs + nummididevs;
-
-    MIDM_NumDevs        = nummididevs;
-
-    /* close file and exit */
-    midiCloseSeq();
-
-    return 0;
+    return err;
 }
 
 /**************************************************************************
@@ -369,8 +141,8 @@ static LRESULT OSS_MidiExit(void)
     if (--MIDI_loadcount)
         return 1;
 
-    ZeroMemory(MidiInDev, sizeof(MidiInDev));
-    ZeroMemory(MidiOutDev, sizeof(MidiOutDev));
+    MidiInDev = NULL;
+    MidiOutDev = NULL;
 
     MODM_NumDevs = 0;
     MODM_NumFMSynthDevs = 0;
@@ -749,8 +521,6 @@ static DWORD midOpen(WORD wDevID, LPMIDIOPENDESC lpDesc, DWORD dwFlags)
     MidiInDev[wDevID].wFlags = HIWORD(dwFlags & CALLBACK_TYPEMASK);
 
     MidiInDev[wDevID].lpQueueHdr = NULL;
-    MidiInDev[wDevID].dwTotalPlayed = 0;
-    MidiInDev[wDevID].bufsize = 0x3FFF;
     MidiInDev[wDevID].midiDesc = *lpDesc;
     MidiInDev[wDevID].state = 0;
     MidiInDev[wDevID].incLen = 0;
@@ -796,7 +566,6 @@ static DWORD midClose(WORD wDevID)
     }
     midiCloseSeq();
 
-    MidiInDev[wDevID].bufsize = 0;
     MIDI_NotifyClient(wDevID, MIM_CLOSE, 0L, 0L);
     MidiInDev[wDevID].midiDesc.hMidi = 0;
     return ret;
@@ -1130,8 +899,6 @@ static DWORD modOpen(WORD wDevID, LPMIDIOPENDESC lpDesc, DWORD dwFlags)
     MidiOutDev[wDevID].wFlags = HIWORD(dwFlags & CALLBACK_TYPEMASK);
 
     MidiOutDev[wDevID].lpQueueHdr = NULL;
-    MidiOutDev[wDevID].dwTotalPlayed = 0;
-    MidiOutDev[wDevID].bufsize = 0x3FFF;
     MidiOutDev[wDevID].midiDesc = *lpDesc;
 
     MIDI_NotifyClient(wDevID, MOM_OPEN, 0L, 0L);
@@ -1175,7 +942,6 @@ static DWORD modClose(WORD wDevID)
     HeapFree(GetProcessHeap(), 0, MidiOutDev[wDevID].lpExtra);
     MidiOutDev[wDevID].lpExtra = 0;
 
-    MidiOutDev[wDevID].bufsize = 0;
     MIDI_NotifyClient(wDevID, MOM_CLOSE, 0L, 0L);
     MidiOutDev[wDevID].midiDesc.hMidi = 0;
     return ret;
@@ -1626,8 +1392,6 @@ static DWORD modReset(WORD wDevID)
     return MMSYSERR_NOERROR;
 }
 
-#endif /* SNDCTL_SEQ_NRMIDIS */
-
 /*======================================================================*
  *                  	    MIDI entry points 				*
  *======================================================================*/
@@ -1641,7 +1405,6 @@ DWORD WINAPI OSS_midMessage(UINT wDevID, UINT wMsg, DWORD_PTR dwUser,
     TRACE("(%04X, %04X, %08lX, %08lX, %08lX);\n",
 	  wDevID, wMsg, dwUser, dwParam1, dwParam2);
     switch (wMsg) {
-#ifdef SNDCTL_SEQ_NRMIDIS
     case DRVM_INIT:
         return OSS_MidiInit();
     case DRVM_EXIT:
@@ -1670,11 +1433,6 @@ DWORD WINAPI OSS_midMessage(UINT wDevID, UINT wMsg, DWORD_PTR dwUser,
 	return midStart(wDevID);
     case MIDM_STOP:
 	return midStop(wDevID);
-#else
-    case DRVM_INIT:
-    case MIDM_GETNUMDEVS:
-        return 0;
-#endif
     default:
 	TRACE("Unsupported message\n");
     }
@@ -1691,7 +1449,6 @@ DWORD WINAPI OSS_modMessage(UINT wDevID, UINT wMsg, DWORD_PTR dwUser,
 	  wDevID, wMsg, dwUser, dwParam1, dwParam2);
 
     switch (wMsg) {
-#ifdef SNDCTL_SEQ_NRMIDIS
     case DRVM_INIT:
         return OSS_MidiInit();
     case DRVM_EXIT:
@@ -1722,11 +1479,6 @@ DWORD WINAPI OSS_modMessage(UINT wDevID, UINT wMsg, DWORD_PTR dwUser,
 	return 0;
     case MODM_RESET:
 	return modReset(wDevID);
-#else
-    case DRVM_INIT:
-    case MODM_GETNUMDEVS:
-        return 0;
-#endif
     default:
 	TRACE("Unsupported message\n");
     }

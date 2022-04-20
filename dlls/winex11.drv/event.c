@@ -478,8 +478,8 @@ static BOOL process_events( Display *display, Bool (*filter)(Display*, XEvent*,X
 DWORD X11DRV_MsgWaitForMultipleObjectsEx( DWORD count, const HANDLE *handles,
                                           DWORD timeout, DWORD mask, DWORD flags )
 {
+    struct x11drv_thread_data *data = x11drv_thread_data();
     DWORD ret;
-    struct x11drv_thread_data *data = TlsGetValue( thread_data_tls_index );
 
     if (!data)
     {
@@ -572,7 +572,7 @@ static void set_input_focus( struct x11drv_win_data *data )
     if (EVENT_x11_time_to_win32_time(0))
         /* ICCCM says don't use CurrentTime, so try to use last message time if possible */
         /* FIXME: this is not entirely correct */
-        timestamp = GetMessageTime() - EVENT_x11_time_to_win32_time(0);
+        timestamp = NtUserGetThreadInfo()->message_time - EVENT_x11_time_to_win32_time(0);
     else
         timestamp = CurrentTime;
 

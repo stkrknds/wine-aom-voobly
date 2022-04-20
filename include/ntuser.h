@@ -42,6 +42,22 @@ enum
     NtUserCallCount
 };
 
+/* TEB thread info, not compatible with Windows */
+struct ntuser_thread_info
+{
+    void      *driver_data;       /* driver-specific data */
+    DWORD      message_time;      /* value for GetMessageTime */
+    DWORD      message_pos;       /* value for GetMessagePos */
+    ULONG_PTR  message_extra;     /* value for GetMessageExtraInfo */
+    HWND       top_window;        /* desktop window */
+    HWND       msg_window;        /* HWND_MESSAGE parent window */
+};
+
+static inline struct ntuser_thread_info *NtUserGetThreadInfo(void)
+{
+    return (struct ntuser_thread_info *)NtCurrentTeb()->Win32ClientInfo;
+}
+
 /* NtUserCallEnumDisplayMonitor params */
 struct enum_display_monitor_params
 {
@@ -442,6 +458,8 @@ BOOL    WINAPI NtUserEnumDisplaySettings( UNICODE_STRING *device, DWORD mode,
 INT     WINAPI NtUserExcludeUpdateRgn( HDC hdc, HWND hwnd );
 HICON   WINAPI NtUserFindExistingCursorIcon( UNICODE_STRING *module, UNICODE_STRING *res_name,
                                              void *desc );
+HWND    WINAPI NtUserFindWindowEx( HWND parent, HWND child, UNICODE_STRING *class,
+                                   UNICODE_STRING *title, ULONG unk );
 BOOL    WINAPI NtUserFlashWindowEx( FLASHWINFO *info );
 HWND    WINAPI NtUserGetAncestor( HWND hwnd, UINT type );
 SHORT   WINAPI NtUserGetAsyncKeyState( INT key );
@@ -581,7 +599,6 @@ enum
 {
     NtUserCallNoParam_GetDesktopWindow,
     NtUserCallNoParam_GetInputState,
-    NtUserCallNoParam_GetMessagePos,
     NtUserCallNoParam_ReleaseCapture,
     /* temporary exports */
     NtUserExitingThread,
@@ -597,11 +614,6 @@ static inline HWND NtUserGetDesktopWindow(void)
 static inline BOOL NtUserGetInputState(void)
 {
     return NtUserCallNoParam( NtUserCallNoParam_GetInputState );
-}
-
-static inline DWORD NtUserGetMessagePos(void)
-{
-    return NtUserCallNoParam( NtUserCallNoParam_GetMessagePos );
 }
 
 static inline BOOL NtUserReleaseCapture(void)

@@ -28,6 +28,7 @@
 
 #include <limits.h>
 #include <stdarg.h>
+#include <stdlib.h>
 #include <pthread.h>
 #include <X11/Xlib.h>
 #include <X11/Xresource.h>
@@ -394,14 +395,10 @@ struct x11drv_thread_data
 };
 
 extern struct x11drv_thread_data *x11drv_init_thread_data(void) DECLSPEC_HIDDEN;
-extern DWORD thread_data_tls_index DECLSPEC_HIDDEN;
 
 static inline struct x11drv_thread_data *x11drv_thread_data(void)
 {
-    DWORD err = GetLastError();  /* TlsGetValue always resets last error */
-    struct x11drv_thread_data *data = TlsGetValue( thread_data_tls_index );
-    SetLastError( err );
-    return data;
+    return NtUserGetThreadInfo()->driver_data;
 }
 
 /* retrieve the thread display, or NULL if not created yet */
@@ -690,6 +687,7 @@ extern void move_resize_window( HWND hwnd, int dir ) DECLSPEC_HIDDEN;
 extern void X11DRV_InitKeyboard( Display *display ) DECLSPEC_HIDDEN;
 extern DWORD X11DRV_MsgWaitForMultipleObjectsEx( DWORD count, const HANDLE *handles, DWORD timeout,
                                                  DWORD mask, DWORD flags ) DECLSPEC_HIDDEN;
+extern HWND *build_hwnd_list(void) DECLSPEC_HIDDEN;
 
 typedef int (*x11drv_error_callback)( Display *display, XErrorEvent *event, void *arg );
 
