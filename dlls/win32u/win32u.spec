@@ -782,7 +782,7 @@
 @ stdcall NtUserCallOneParam(long long)
 @ stdcall NtUserCallTwoParam(long long long)
 @ stub NtUserCanBrokerForceForeground
-@ stub NtUserChangeClipboardChain
+@ stdcall NtUserChangeClipboardChain(long long)
 @ stdcall NtUserChangeDisplaySettings(ptr ptr long long ptr)
 @ stub NtUserChangeWindowMessageFilterEx
 @ stub NtUserCheckAccessForIntegrityLevel
@@ -1175,7 +1175,7 @@
 @ stdcall NtUserSetClassLongPtr(long long long long)
 @ stdcall NtUserSetClassWord(long long long)
 @ stub NtUserSetClipboardData
-@ stub NtUserSetClipboardViewer
+@ stdcall NtUserSetClipboardViewer(long)
 @ stub NtUserSetCoreWindow
 @ stub NtUserSetCoreWindowPartner
 @ stdcall NtUserSetCursor(long)
@@ -1208,7 +1208,7 @@
 @ stub NtUserSetManipulationInputTarget
 @ stdcall NtUserSetMenu(long long)
 @ stdcall -syscall NtUserSetMenuContextHelpId(long long)
-@ stub NtUserSetMenuDefaultItem
+@ stdcall -syscall NtUserSetMenuDefaultItem(long long long)
 @ stub NtUserSetMenuFlagRtoL
 @ stub NtUserSetMirrorRendering
 @ stub NtUserSetMonitorWorkArea
@@ -1230,7 +1230,7 @@
 @ stdcall NtUserSetSysColors(long ptr ptr)
 @ stub NtUserSetSystemCursor
 @ stub NtUserSetSystemMenu
-@ stdcall -syscall NtUserSetSystemTimer(long long long ptr)
+@ stdcall -syscall NtUserSetSystemTimer(long long long)
 @ stub NtUserSetTargetForResourceBrokering
 @ stdcall -syscall NtUserSetThreadDesktop(long)
 @ stub NtUserSetThreadInputBlocked
@@ -1274,7 +1274,7 @@
 @ stdcall NtUserSystemParametersInfo(long long ptr long)
 @ stdcall NtUserSystemParametersInfoForDpi(long long ptr long long)
 @ stub NtUserTestForInteractiveUser
-@ stub NtUserThunkedMenuInfo
+@ stdcall -syscall NtUserThunkedMenuInfo(long ptr)
 @ stub NtUserThunkedMenuItemInfo
 @ stdcall NtUserToUnicodeEx(long long ptr ptr long long long)
 @ stub NtUserTrackMouseEvent

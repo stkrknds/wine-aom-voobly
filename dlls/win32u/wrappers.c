@@ -755,6 +755,12 @@ BOOL WINAPI NtUserCloseClipboard(void)
     return unix_funcs->pNtUserCloseClipboard();
 }
 
+BOOL WINAPI NtUserChangeClipboardChain( HWND hwnd, HWND next )
+{
+    if (!unix_funcs) return DISP_CHANGE_FAILED;
+    return unix_funcs->pNtUserChangeClipboardChain( hwnd, next );
+}
+
 LONG WINAPI NtUserChangeDisplaySettings( UNICODE_STRING *devname, DEVMODEW *devmode, HWND hwnd,
                                          DWORD flags, void *lparam )
 {
@@ -1086,6 +1092,12 @@ WORD WINAPI NtUserSetClassWord( HWND hwnd, INT offset, WORD newval )
 {
     if (!unix_funcs) return 0;
     return unix_funcs->pNtUserSetClassWord( hwnd, offset, newval );
+}
+
+HWND WINAPI NtUserSetClipboardViewer( HWND hwnd )
+{
+    if (!unix_funcs) return 0;
+    return unix_funcs->pNtUserSetClipboardViewer( hwnd );
 }
 
 BOOL WINAPI NtUserSetCursorIconData( HCURSOR cursor, UNICODE_STRING *module, UNICODE_STRING *res_name,

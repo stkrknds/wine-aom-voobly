@@ -1621,12 +1621,13 @@ fallback:
     return dev->funcs->pGradientFill( dev, vert_array, nvert, grad_array, ngrad, mode );
 }
 
-static unsigned char *get_icm_profile( unsigned long *size )
+static char *get_icm_profile( unsigned long *size )
 {
     Atom type;
     int format;
     unsigned long count, remaining;
-    unsigned char *profile, *ret = NULL;
+    unsigned char *profile;
+    char *ret = NULL;
 
     XGetWindowProperty( gdi_display, DefaultRootWindow(gdi_display),
                         x11drv_atom(_ICC_PROFILE), 0, ~0UL, False, AnyPropertyType,
@@ -1659,7 +1660,7 @@ static const WCHAR mntr_key[] =
      'V','e','r','s','i','o','n','\\','I','C','M','\\','m','n','t','r'};
 
 static const WCHAR color_path[] =
-    {'c',':','\\','w','i','n','d','o','w','s','\\','s','y','s','t','e','m','3','2',
+    {'\\','?','?','\\','c',':','\\','w','i','n','d','o','w','s','\\','s','y','s','t','e','m','3','2',
      '\\','s','p','o','o','l','\\','d','r','i','v','e','r','s','\\','c','o','l','o','r','\\'};
 
 /***********************************************************************
@@ -1674,15 +1675,17 @@ BOOL CDECL X11DRV_GetICMProfile( PHYSDEV dev, BOOL allow_default, LPDWORD size, 
     DWORD required;
     char buf[4096];
     KEY_VALUE_FULL_INFORMATION *info = (void *)buf;
-    unsigned char *buffer;
-    unsigned long buflen;
+    char *buffer;
+    unsigned long buflen, i;
     ULONG full_size;
-    WCHAR profile[MAX_PATH], fullname[MAX_PATH + ARRAY_SIZE( color_path )];
+    WCHAR fullname[MAX_PATH + ARRAY_SIZE( color_path )], *p;
+    UNICODE_STRING name;
+    OBJECT_ATTRIBUTES attr;
 
     if (!size) return FALSE;
 
     memcpy( fullname, color_path, sizeof(color_path) );
-    fullname[ARRAYSIZE(color_path)] = 0;
+    p = fullname + ARRAYSIZE(color_path);
 
     hkey = reg_open_key( NULL, mntr_key, sizeof(mntr_key) );
 
@@ -1690,43 +1693,44 @@ BOOL CDECL X11DRV_GetICMProfile( PHYSDEV dev, BOOL allow_default, LPDWORD size, 
                                       info, sizeof(buf), &full_size ))
     {
         /* FIXME handle multiple values */
-        memcpy( fullname + ARRAYSIZE(color_path), info->Name, info->NameLength );
-        fullname[ARRAYSIZE(color_path) + info->NameLength / sizeof(WCHAR)] = 0;
+        memcpy( p, info->Name, info->NameLength );
+        p[info->NameLength / sizeof(WCHAR)] = 0;
     }
     else if ((buffer = get_icm_profile( &buflen )))
     {
-        static const WCHAR fmt[] = {'%','0','2','x',0};
         static const WCHAR icm[] = {'.','i','c','m',0};
-
-        unsigned char sha1sum[20];
-        unsigned int i;
-        sha_ctx ctx;
+        IO_STATUS_BLOCK io;
+        UINT64 hash = 0;
         HANDLE file;
+        NTSTATUS status;
 
-        A_SHAInit( &ctx );
-        A_SHAUpdate( &ctx, buffer, buflen );
-        A_SHAFinal( &ctx, sha1sum );
-
-        for (i = 0; i < sizeof(sha1sum); i++) sprintfW( &profile[i * 2], fmt, sha1sum[i] );
-        memcpy( &profile[i * 2], icm, sizeof(icm) );
-
-        strcatW( fullname, profile );
-        file = CreateFileW( fullname, GENERIC_WRITE, 0, NULL, CREATE_NEW, 0, 0 );
-        if (file != INVALID_HANDLE_VALUE)
+        for (i = 0; i < buflen; i++) hash = (hash << 16) - hash + buffer[i];
+        for (i = 0; i < sizeof(hash) * 2; i++)
         {
-            DWORD written;
+            int digit = hash & 0xf;
+            p[i] = digit < 10 ? '0' + digit : 'a' - 10 + digit;
+            hash >>= 4;
+        }
 
-            if (!WriteFile( file, buffer, buflen, &written, NULL ) || written != buflen)
-                ERR( "Unable to write color profile\n" );
-            CloseHandle( file );
+        memcpy( p + i, icm, sizeof(icm) );
+
+        RtlInitUnicodeString( &name, fullname );
+        InitializeObjectAttributes( &attr, &name, OBJ_CASE_INSENSITIVE, NULL, NULL );
+        status = NtCreateFile( &file, GENERIC_WRITE, &attr, &io, NULL, 0, 0, FILE_CREATE,
+                               FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE, NULL, 0 );
+        if (!status)
+        {
+            status = NtWriteFile( file, NULL, NULL, NULL, &io, buffer, buflen, NULL, NULL );
+            if (status) ERR( "Unable to write color profile: %x\n", status );
+            NtClose( file );
         }
         HeapFree( GetProcessHeap(), 0, buffer );
     }
     else if (!allow_default) return FALSE;
-    else strcatW( fullname, srgb );
+    else lstrcpyW( p, srgb );
 
     NtClose( hkey );
-    required = strlenW( fullname ) + 1;
+    required = strlenW( fullname ) + 1 - 4 /* skip NT prefix */;
     if (*size < required)
     {
         *size = required;
@@ -1735,9 +1739,12 @@ BOOL CDECL X11DRV_GetICMProfile( PHYSDEV dev, BOOL allow_default, LPDWORD size, 
     }
     if (filename)
     {
-        strcpyW( filename, fullname );
-        if (GetFileAttributesW( filename ) == INVALID_FILE_ATTRIBUTES)
-            WARN( "color profile not found\n" );
+        FILE_BASIC_INFORMATION info;
+        strcpyW( filename, fullname + 4 );
+        RtlInitUnicodeString( &name, fullname );
+        InitializeObjectAttributes( &attr, &name, OBJ_CASE_INSENSITIVE, NULL, NULL );
+        if (NtQueryAttributesFile( &attr, &info ))
+            WARN( "color profile not found in %s\n", debugstr_w(fullname) );
     }
     *size = required;
     return TRUE;

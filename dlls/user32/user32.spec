@@ -33,7 +33,7 @@
 @ stdcall CallWindowProcW(ptr long long long long)
 @ stdcall CascadeChildWindows(long long)
 @ stdcall CascadeWindows(long long ptr long ptr)
-@ stdcall ChangeClipboardChain(long long)
+@ stdcall ChangeClipboardChain(long long) NtUserChangeClipboardChain
 @ stdcall ChangeDisplaySettingsA(ptr long)
 @ stdcall ChangeDisplaySettingsExA(str ptr long long ptr)
 @ stdcall ChangeDisplaySettingsExW(wstr ptr long long ptr)
@@ -655,7 +655,7 @@
 @ stdcall SetClassLongW(long long long)
 @ stdcall SetClassWord(long long long) NtUserSetClassWord
 @ stdcall SetClipboardData(long long)
-@ stdcall SetClipboardViewer(long)
+@ stdcall SetClipboardViewer(long) NtUserSetClipboardViewer
 @ stdcall SetCoalescableTimer(long long long ptr long) NtUserSetTimer
 # @ stub SetConsoleReserveKeys
 @ stdcall -import SetCursor(long) NtUserSetCursor
@@ -680,7 +680,7 @@
 @ stdcall SetLogonNotifyWindow(long long)
 @ stdcall SetMenu(long long) NtUserSetMenu
 @ stdcall SetMenuContextHelpId(long long) NtUserSetMenuContextHelpId
-@ stdcall SetMenuDefaultItem(long long long)
+@ stdcall SetMenuDefaultItem(long long long) NtUserSetMenuDefaultItem
 @ stdcall SetMenuInfo(long ptr)
 @ stdcall SetMenuItemBitmaps(long long long long long)
 @ stdcall SetMenuItemInfoA(long long long ptr)
@@ -708,7 +708,7 @@
 @ stdcall SetSysColorsTemp(ptr ptr long)
 @ stdcall SetSystemCursor(long long)
 @ stdcall SetSystemMenu(long long)
-@ stdcall SetSystemTimer(long long long ptr) NtUserSetSystemTimer
+@ stdcall SetSystemTimer(long long long ptr)
 @ stdcall SetTaskmanWindow (long)
 @ stdcall SetThreadDesktop(long) NtUserSetThreadDesktop
 @ stdcall SetThreadDpiAwarenessContext(ptr)

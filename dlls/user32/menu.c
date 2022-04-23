@@ -375,7 +375,7 @@ static HMENU MENU_CopySysPopup(BOOL mdi)
         SetMenuItemInfoW( hMenu, SC_MAXIMIZE, FALSE, &miteminfo);
         miteminfo.hbmpItem = HBMMENU_POPUP_MINIMIZE;
         SetMenuItemInfoW( hMenu, SC_MINIMIZE, FALSE, &miteminfo);
-	SetMenuDefaultItem(hMenu, SC_CLOSE, FALSE);
+        NtUserSetMenuDefaultItem( hMenu, SC_CLOSE, FALSE );
     }
     else
 	ERR("Unable to load default system menu\n" );
@@ -4875,62 +4875,6 @@ BOOL WINAPI SetMenuItemInfoW(HMENU hmenu, UINT item, BOOL bypos,
     return ret;
 }
 
-static BOOL set_menu_default_item(POPUPMENU *menu, UINT uItem, UINT bypos)
-{
-    unsigned int i;
-    MENUITEM *item;
-
-    /* reset all default-item flags */
-    item = menu->items;
-    for (i = 0; i < menu->nItems; i++, item++)
-    {
-        item->fState &= ~MFS_DEFAULT;
-    }
-
-    /* no default item */
-    if (-1 == uItem)
-        return TRUE;
-
-    item = menu->items;
-    if ( bypos )
-    {
-        if ( uItem >= menu->nItems ) return FALSE;
-        item[uItem].fState |= MFS_DEFAULT;
-        return TRUE;
-    }
-    else
-    {
-        for (i = 0; i < menu->nItems; i++, item++)
-        {
-            if (item->wID == uItem)
-            {
-                item->fState |= MFS_DEFAULT;
-                return TRUE;
-            }
-        }
-    }
-
-    return FALSE;
-}
-
-/**********************************************************************
- *		SetMenuDefaultItem    (USER32.@)
- *
- */
-BOOL WINAPI SetMenuDefaultItem(HMENU hmenu, UINT uItem, UINT bypos)
-{
-    POPUPMENU *menu;
-    BOOL ret;
-
-    TRACE("(%p,%d,%d)\n", hmenu, uItem, bypos);
-
-    if (!(menu = grab_menu_ptr(hmenu))) return FALSE;
-    ret = set_menu_default_item(menu, uItem, bypos);
-    release_menu_ptr(menu);
-
-    return ret;
-}
-
 /**********************************************************************
  *		GetMenuDefaultItem    (USER32.@)
  */
@@ -5073,54 +5017,18 @@ BOOL WINAPI CheckMenuRadioItem(HMENU hMenu, UINT first, UINT last,
 
 /**********************************************************************
  *		SetMenuInfo    (USER32.@)
- *
- * FIXME
- *	actually use the items to draw the menu
- *      (recalculate and/or redraw)
  */
-static BOOL menu_SetMenuInfo( HMENU hMenu, LPCMENUINFO lpmi)
+BOOL WINAPI SetMenuInfo( HMENU menu, const MENUINFO *info )
 {
-    POPUPMENU *menu;
-    if( !(menu = MENU_GetMenu(hMenu))) return FALSE;
+    TRACE( "(%p %p)\n", menu, info );
 
-    if (lpmi->fMask & MIM_BACKGROUND)
-        menu->hbrBack = lpmi->hbrBack;
-
-    if (lpmi->fMask & MIM_HELPID)
-        menu->dwContextHelpID = lpmi->dwContextHelpID;
-
-    if (lpmi->fMask & MIM_MAXHEIGHT)
-        menu->cyMax = lpmi->cyMax;
-
-    if (lpmi->fMask & MIM_MENUDATA)
-        menu->dwMenuData = lpmi->dwMenuData;
-
-    if (lpmi->fMask & MIM_STYLE)
-        menu->dwStyle = lpmi->dwStyle;
-
-    if( lpmi->fMask & MIM_APPLYTOSUBMENUS) {
-        int i;
-        MENUITEM *item = menu->items;
-        for( i = menu->nItems; i; i--, item++)
-            if( item->fType & MF_POPUP)
-                menu_SetMenuInfo( item->hSubMenu, lpmi);
+    if (!info || info->cbSize != sizeof(*info))
+    {
+        SetLastError( ERROR_INVALID_PARAMETER);
+        return FALSE;
     }
-    return TRUE;
-}
 
-BOOL WINAPI SetMenuInfo (HMENU hMenu, LPCMENUINFO lpmi)
-{
-    TRACE("(%p %p)\n", hMenu, lpmi);
-    if( lpmi && (lpmi->cbSize == sizeof( MENUINFO)) && (menu_SetMenuInfo( hMenu, lpmi))) {
-	if( lpmi->fMask & MIM_STYLE) {
-	    if (lpmi->dwStyle & MNS_AUTODISMISS) FIXME("MNS_AUTODISMISS unimplemented\n");
-	    if (lpmi->dwStyle & MNS_DRAGDROP) FIXME("MNS_DRAGDROP unimplemented\n");
-	    if (lpmi->dwStyle & MNS_MODELESS) FIXME("MNS_MODELESS unimplemented\n");
-	}
-        return TRUE;
-    }
-    SetLastError( ERROR_INVALID_PARAMETER);
-    return FALSE;
+    return NtUserThunkedMenuInfo( menu, info );
 }
 
 /**********************************************************************

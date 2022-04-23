@@ -2451,7 +2451,7 @@ LRESULT dispatch_message( const MSG *msg, BOOL ansi )
     LRESULT retval = 0;
 
     /* Process timer messages */
-    if (msg->lParam && (msg->message == WM_TIMER || msg->message == WM_SYSTIMER))
+    if (msg->lParam && msg->message == WM_TIMER)
     {
         params.func = (WNDPROC)msg->lParam;
         params.result = &retval; /* FIXME */
@@ -2469,6 +2469,22 @@ LRESULT dispatch_message( const MSG *msg, BOOL ansi )
         __ENDTRY
         return retval;
     }
+    if (msg->message == WM_SYSTIMER)
+    {
+        switch (msg->wParam)
+        {
+            case SYSTEM_TIMER_CARET:
+                if (!user_callbacks) break;
+                user_callbacks->toggle_caret( msg->hwnd );
+                return 0;
+
+            case SYSTEM_TIMER_TRACK_MOUSE:
+                if (!user_callbacks) break;
+                user_callbacks->update_mouse_tracking_info( msg->hwnd );
+                return 0;
+        }
+    }
+
     if (!msg->hwnd) return 0;
 
     spy_enter_message( SPY_DISPATCHMESSAGE, msg->hwnd, msg->message, msg->wParam, msg->lParam );
@@ -2635,12 +2651,11 @@ UINT_PTR WINAPI NtUserSetTimer( HWND hwnd, UINT_PTR id, UINT timeout, TIMERPROC 
 /***********************************************************************
  *           NtUserSetSystemTimer (win32u.@)
  */
-UINT_PTR WINAPI NtUserSetSystemTimer( HWND hwnd, UINT_PTR id, UINT timeout, TIMERPROC proc )
+UINT_PTR WINAPI NtUserSetSystemTimer( HWND hwnd, UINT_PTR id, UINT timeout )
 {
     UINT_PTR ret;
-    WNDPROC winproc = 0;
 
-    if (proc) winproc = alloc_winproc( (WNDPROC)proc, TRUE );
+    TRACE( "window %p, id %#lx, timeout %u\n", hwnd, id, timeout );
 
     timeout = min( max( USER_TIMER_MINIMUM, timeout ), USER_TIMER_MAXIMUM );
 
@@ -2650,7 +2665,7 @@ UINT_PTR WINAPI NtUserSetSystemTimer( HWND hwnd, UINT_PTR id, UINT timeout, TIME
         req->msg    = WM_SYSTIMER;
         req->id     = id;
         req->rate   = timeout;
-        req->lparam = (ULONG_PTR)winproc;
+        req->lparam = 0;
         if (!wine_server_call_err( req ))
         {
             ret = reply->id;
@@ -2660,7 +2675,6 @@ UINT_PTR WINAPI NtUserSetSystemTimer( HWND hwnd, UINT_PTR id, UINT timeout, TIME
     }
     SERVER_END_REQ;
 
-    TRACE( "Added %p %lx %p timeout %d\n", hwnd, id, winproc, timeout );
     return ret;
 }
 

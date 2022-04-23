@@ -144,6 +144,7 @@
     SYSCALL_ENTRY( NtUserRemoveProp ) \
     SYSCALL_ENTRY( NtUserSetKeyboardState ) \
     SYSCALL_ENTRY( NtUserSetMenuContextHelpId ) \
+    SYSCALL_ENTRY( NtUserSetMenuDefaultItem ) \
     SYSCALL_ENTRY( NtUserSetObjectInformation ) \
     SYSCALL_ENTRY( NtUserSetProcessDpiAwarenessContext ) \
     SYSCALL_ENTRY( NtUserSetProcessWindowStation ) \
@@ -153,6 +154,7 @@
     SYSCALL_ENTRY( NtUserSetTimer ) \
     SYSCALL_ENTRY( NtUserSetWinEventHook ) \
     SYSCALL_ENTRY( NtUserSetWindowsHookEx ) \
+    SYSCALL_ENTRY( NtUserThunkedMenuInfo ) \
     SYSCALL_ENTRY( NtUserUnhookWinEvent ) \
     SYSCALL_ENTRY( NtUserUnhookWindowsHookEx ) \
     SYSCALL_ENTRY( NtUserWindowFromDC )

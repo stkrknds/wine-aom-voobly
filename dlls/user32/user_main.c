@@ -177,7 +177,9 @@ static const struct user_callbacks user_funcs =
     rawinput_device_get_usages,
     register_builtin_classes,
     SCROLL_SetStandardScrollPainted,
+    toggle_caret,
     unpack_dde_message,
+    update_mouse_tracking_info,
     register_imm,
     unregister_imm,
 };

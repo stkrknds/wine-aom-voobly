@@ -585,9 +585,8 @@ NTSTATUS WINAPI wow64_NtUserSetSystemTimer( UINT *args )
     HWND hwnd = get_handle( &args );
     UINT_PTR id = get_ulong( &args );
     UINT timeout = get_ulong( &args );
-    TIMERPROC proc = get_ptr( &args );
 
-    return NtUserSetSystemTimer( hwnd, id, timeout, proc );
+    return NtUserSetSystemTimer( hwnd, id, timeout );
 }
 
 NTSTATUS WINAPI wow64_NtUserSetTimer( UINT *args )
@@ -658,4 +657,42 @@ NTSTATUS WINAPI wow64_NtUserSetMenuContextHelpId( UINT *args )
     DWORD id = get_ulong( &args );
 
     return NtUserSetMenuContextHelpId( menu, id );
+}
+
+NTSTATUS WINAPI wow64_NtUserSetMenuDefaultItem( UINT *args )
+{
+    HMENU handle = get_handle( &args );
+    UINT item = get_ulong( &args );
+    UINT bypos = get_ulong( &args );
+
+    return NtUserSetMenuDefaultItem( handle, item, bypos );
+}
+
+NTSTATUS WINAPI wow64_NtUserThunkedMenuInfo( UINT *args )
+{
+    HMENU menu = get_handle( &args );
+    const struct
+    {
+        DWORD cbSize;
+        DWORD fMask;
+        DWORD dwStyle;
+        UINT  cyMax;
+        ULONG hbrBack;
+        DWORD dwContextHelpID;
+        ULONG dwMenuData;
+    } *info32 = get_ptr( &args );
+    MENUINFO info;
+
+    if (info32)
+    {
+        info.cbSize = sizeof(info);
+        info.fMask = info32->fMask;
+        info.dwStyle = info32->dwStyle;
+        info.cyMax = info32->cyMax;
+        info.hbrBack = UlongToHandle( info32->hbrBack );
+        info.dwContextHelpID = info32->dwContextHelpID;
+        info.dwMenuData = info32->dwMenuData;
+    }
+
+    return NtUserThunkedMenuInfo( menu, info32 ? &info : NULL );
 }

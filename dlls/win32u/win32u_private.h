@@ -191,6 +191,7 @@ struct unix_funcs
     ULONG_PTR (WINAPI *pNtUserCallNoParam)( ULONG code );
     ULONG_PTR (WINAPI *pNtUserCallOneParam)( ULONG_PTR arg, ULONG code );
     ULONG_PTR (WINAPI *pNtUserCallTwoParam)( ULONG_PTR arg1, ULONG_PTR arg2, ULONG code );
+    BOOL     (WINAPI *pNtUserChangeClipboardChain)( HWND hwnd, HWND next );
     LONG     (WINAPI *pNtUserChangeDisplaySettings)( UNICODE_STRING *devname, DEVMODEW *devmode, HWND hwnd,
                                                      DWORD flags, void *lparam );
     BOOL     (WINAPI *pNtUserClipCursor)( const RECT *rect );
@@ -263,6 +264,7 @@ struct unix_funcs
     DWORD    (WINAPI *pNtUserSetClassLong)( HWND hwnd, INT offset, LONG newval, BOOL ansi );
     ULONG_PTR (WINAPI *pNtUserSetClassLongPtr)( HWND hwnd, INT offset, LONG_PTR newval, BOOL ansi );
     WORD     (WINAPI *pNtUserSetClassWord)( HWND hwnd, INT offset, WORD newval );
+    HWND     (WINAPI *pNtUserSetClipboardViewer)( HWND hwnd );
     HCURSOR  (WINAPI *pNtUserSetCursor)( HCURSOR cursor );
     BOOL     (WINAPI *pNtUserSetCursorIconData)( HCURSOR cursor, UNICODE_STRING *module,
                                                  UNICODE_STRING *res_name, struct cursoricon_desc *desc );
@@ -311,6 +313,7 @@ struct unix_funcs
 };
 
 /* clipboard.c */
+extern UINT enum_clipboard_formats( UINT format ) DECLSPEC_HIDDEN;
 extern void release_clipboard_owner( HWND hwnd ) DECLSPEC_HIDDEN;
 
 /* cursoricon.c */
