@@ -32,7 +32,9 @@ enum
     NtUserCallWinEventHook,
     NtUserCallWinProc,
     NtUserCallWindowsHook,
+    NtUserFreeCachedClipboardData,
     NtUserLoadDriver,
+    NtUserRenderSynthesizedFormat,
     /* win16 hooks */
     NtUserCallFreeIcon,
     NtUserThunkLock,
@@ -140,6 +142,20 @@ struct win_hook_params
     WCHAR module[MAX_PATH];
 };
 
+/* NtUserFreeCachedClipboardData params */
+struct free_cached_data_params
+{
+    UINT format;
+    HANDLE handle;
+};
+
+/* NtUserRenderSynthesizedFormat params */
+struct render_synthesized_format_params
+{
+    UINT format;
+    UINT from;
+};
+
 /* process DPI awareness contexts */
 #define NTUSER_DPI_UNAWARE                0x00006010
 #define NTUSER_DPI_SYSTEM_AWARE           0x00006011
@@ -232,6 +248,24 @@ struct client_menu_name
     char  *nameA;
     WCHAR *nameW;
     UNICODE_STRING *nameUS;
+};
+
+/* NtUserGetClipboardData params, not compatible with Windows */
+struct get_clipboard_params
+{
+    void  *data;
+    size_t size;
+    size_t data_size;
+    UINT   seqno;
+};
+
+/* NtUserSetClipboardData params, not compatible with Windows */
+struct set_clipboard_params
+{
+    void  *data;
+    size_t size;
+    BOOL   cache_only;
+    UINT   seqno;
 };
 
 /* internal messages codes */
@@ -448,6 +482,7 @@ BOOL    WINAPI NtUserDestroyWindow( HWND hwnd );
 LRESULT WINAPI NtUserDispatchMessage( const MSG *msg );
 BOOL    WINAPI NtUserDrawIconEx( HDC hdc, INT x0, INT y0, HICON icon, INT width,
                                  INT height, UINT istep, HBRUSH hbr, UINT flags );
+BOOL    WINAPI NtUserEmptyClipboard(void);
 BOOL    WINAPI NtUserEnableMenuItem( HMENU handle, UINT id, UINT flags );
 BOOL    WINAPI NtUserEndDeferWindowPosEx( HDWP hdwp, BOOL async );
 BOOL    WINAPI NtUserEndPaint( HWND hwnd, const PAINTSTRUCT *ps );
@@ -468,6 +503,7 @@ ULONG   WINAPI NtUserGetAtomName( ATOM atom, UNICODE_STRING *name );
 ATOM    WINAPI NtUserGetClassInfoEx( HINSTANCE instance, UNICODE_STRING *name, WNDCLASSEXW *wc,
                                      struct client_menu_name *menu_name, BOOL ansi );
 INT     WINAPI NtUserGetClassName( HWND hwnd, BOOL real, UNICODE_STRING *name );
+HANDLE  WINAPI NtUserGetClipboardData( UINT format, struct get_clipboard_params *params );
 INT     WINAPI NtUserGetClipboardFormatName( UINT format, WCHAR *buffer, INT maxlen );
 HWND    WINAPI NtUserGetClipboardOwner(void);
 DWORD   WINAPI NtUserGetClipboardSequenceNumber(void);
@@ -526,6 +562,7 @@ DWORD   WINAPI NtUserMsgWaitForMultipleObjectsEx( DWORD count, const HANDLE *han
 void    WINAPI NtUserNotifyWinEvent( DWORD event, HWND hwnd, LONG object_id, LONG child_id );
 HWINSTA WINAPI NtUserOpenWindowStation( OBJECT_ATTRIBUTES *attr, ACCESS_MASK access );
 BOOL    WINAPI NtUserSetObjectInformation( HANDLE handle, INT index, void *info, DWORD len );
+BOOL    WINAPI NtUserOpenClipboard( HWND hwnd, ULONG unk );
 HDESK   WINAPI NtUserOpenDesktop( OBJECT_ATTRIBUTES *attr, DWORD flags, ACCESS_MASK access );
 HDESK   WINAPI NtUserOpenInputDesktop( DWORD flags, BOOL inherit, ACCESS_MASK access );
 BOOL    WINAPI NtUserPeekMessage( MSG *msg_out, HWND hwnd, UINT first, UINT last, UINT flags );
@@ -548,6 +585,7 @@ HWND     WINAPI NtUserSetCapture( HWND hwnd );
 DWORD    WINAPI NtUserSetClassLong( HWND hwnd, INT offset, LONG newval, BOOL ansi );
 ULONG_PTR WINAPI NtUserSetClassLongPtr( HWND hwnd, INT offset, LONG_PTR newval, BOOL ansi );
 WORD    WINAPI NtUserSetClassWord( HWND hwnd, INT offset, WORD newval );
+NTSTATUS WINAPI NtUserSetClipboardData( UINT format, HANDLE handle, struct set_clipboard_params *params );
 HWND    WINAPI NtUserSetClipboardViewer( HWND hwnd );
 HCURSOR WINAPI NtUserSetCursor( HCURSOR cursor );
 BOOL    WINAPI NtUserSetCursorIconData( HCURSOR cursor, UNICODE_STRING *module, UNICODE_STRING *res_name,
@@ -610,7 +648,6 @@ enum
     /* temporary exports */
     NtUserExitingThread,
     NtUserThreadDetach,
-    NtUserUpdateClipboard,
 };
 
 static inline HWND NtUserGetDesktopWindow(void)
