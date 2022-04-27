@@ -161,13 +161,10 @@ static const struct user_callbacks user_funcs =
 {
     AdjustWindowRectEx,
     CopyImage,
-    DestroyCaret,
     EndMenu,
-    HideCaret,
     ImmProcessKey,
     ImmTranslateMessage,
     SetSystemMenu,
-    ShowCaret,
     free_menu_items,
     free_win_ptr,
     MENU_IsMenuActive,
@@ -175,11 +172,8 @@ static const struct user_callbacks user_funcs =
     post_dde_message,
     process_rawinput_message,
     rawinput_device_get_usages,
-    register_builtin_classes,
     SCROLL_SetStandardScrollPainted,
-    toggle_caret,
     unpack_dde_message,
-    update_mouse_tracking_info,
     register_imm,
     unregister_imm,
 };
@@ -212,6 +206,7 @@ static const void *kernel_callback_table[NtUserCallCount] =
     User32CallWindowsHook,
     User32FreeCachedClipboardData,
     User32LoadDriver,
+    User32RegisterBuiltinClasses,
     User32RenderSsynthesizedFormat,
 };
 

@@ -586,7 +586,10 @@ static void init_gdi_shared(void)
     NtCurrentTeb()->Peb->GdiSharedHandleTable = gdi_shared;
 }
 
-HGDIOBJ get_stock_object( INT obj )
+/***********************************************************************
+ *           GetStockObject    (win32u.so)
+ */
+HGDIOBJ WINAPI GetStockObject( INT obj )
 {
     assert( obj >= 0 && obj <= STOCK_LAST + 1 && obj != 9 );
 
@@ -1144,6 +1147,7 @@ static struct unix_funcs unix_funcs =
     NtUserClipCursor,
     NtUserCloseClipboard,
     NtUserCountClipboardFormats,
+    NtUserCreateCaret,
     NtUserCreateWindowEx,
     NtUserDeferWindowPosAndBand,
     NtUserDestroyCursor,
@@ -1175,6 +1179,7 @@ static struct unix_funcs unix_funcs =
     NtUserGetUpdateRect,
     NtUserGetUpdateRgn,
     NtUserGetUpdatedClipboardFormats,
+    NtUserHideCaret,
     NtUserIsClipboardFormatAvailable,
     NtUserMapVirtualKeyEx,
     NtUserMessageCall,
@@ -1211,12 +1216,14 @@ static struct unix_funcs unix_funcs =
     NtUserSetWindowPos,
     NtUserSetWindowRgn,
     NtUserSetWindowWord,
+    NtUserShowCaret,
     NtUserShowCursor,
     NtUserShowWindow,
     NtUserShowWindowAsync,
     NtUserSystemParametersInfo,
     NtUserSystemParametersInfoForDpi,
     NtUserToUnicodeEx,
+    NtUserTrackMouseEvent,
     NtUserTranslateMessage,
     NtUserUnregisterClass,
     NtUserUnregisterHotKey,

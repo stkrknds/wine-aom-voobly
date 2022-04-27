@@ -37,6 +37,7 @@
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/soundcard.h>
+#include <pthread.h>
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -58,6 +59,8 @@ struct midi_dest
     MIDIOUTCAPSW        caps;
     int                 fd;
 };
+
+static pthread_mutex_t in_buffer_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static unsigned int num_dests, num_srcs, num_synths, seq_refs;
 static struct midi_dest dests[MAX_MIDIOUTDRV];
@@ -132,6 +135,24 @@ static int oss_to_win_device_type(int type)
             "Assuming FM Synth\n");
         return MOD_FMSYNTH;
     }
+}
+
+static void in_buffer_lock(void)
+{
+    pthread_mutex_lock(&in_buffer_mutex);
+}
+
+static void in_buffer_unlock(void)
+{
+    pthread_mutex_unlock(&in_buffer_mutex);
+}
+
+NTSTATUS midi_in_lock(void *args)
+{
+    if (args) in_buffer_lock();
+    else in_buffer_unlock();
+
+    return STATUS_SUCCESS;
 }
 
 static int seq_open(void)
@@ -1099,6 +1120,82 @@ static UINT midi_out_reset(WORD dev_id)
     return MMSYSERR_NOERROR;
 }
 
+static UINT midi_in_add_buffer(WORD dev_id, MIDIHDR *hdr, UINT hdr_size)
+{
+    struct midi_src *src;
+    MIDIHDR **next;
+
+    TRACE("(%04X, %p, %d);\n", dev_id, hdr, hdr_size);
+
+    if (dev_id >= num_srcs) return MMSYSERR_BADDEVICEID;
+    src = srcs + dev_id;
+    if (src->state == -1) return MIDIERR_NODEVICE;
+
+    if (!hdr || hdr_size < offsetof(MIDIHDR, dwOffset) || !hdr->dwBufferLength)
+        return MMSYSERR_INVALPARAM;
+    if (hdr->dwFlags & MHDR_INQUEUE) return MIDIERR_STILLPLAYING;
+    if (!(hdr->dwFlags & MHDR_PREPARED)) return MIDIERR_UNPREPARED;
+
+    in_buffer_lock();
+
+    hdr->dwFlags &= ~WHDR_DONE;
+    hdr->dwFlags |= MHDR_INQUEUE;
+    hdr->dwBytesRecorded = 0;
+    hdr->lpNext = NULL;
+
+    next = &src->lpQueueHdr;
+    while (*next) next = &(*next)->lpNext;
+    *next = hdr;
+
+    in_buffer_unlock();
+
+    return MMSYSERR_NOERROR;
+}
+
+static UINT midi_in_prepare(WORD dev_id, MIDIHDR *hdr, UINT hdr_size)
+{
+    TRACE("(%04X, %p, %d);\n", dev_id, hdr, hdr_size);
+
+    if (hdr_size < offsetof(MIDIHDR, dwOffset) || !hdr || !hdr->lpData)
+        return MMSYSERR_INVALPARAM;
+    if (hdr->dwFlags & MHDR_PREPARED)
+        return MMSYSERR_NOERROR;
+
+    hdr->lpNext = NULL;
+    hdr->dwFlags |= MHDR_PREPARED;
+    hdr->dwFlags &= ~(MHDR_DONE | MHDR_INQUEUE);
+
+    return MMSYSERR_NOERROR;
+}
+
+static UINT midi_in_unprepare(WORD dev_id, MIDIHDR *hdr, UINT hdr_size)
+{
+    TRACE("(%04X, %p, %d);\n", dev_id, hdr, hdr_size);
+
+    if (hdr_size < offsetof(MIDIHDR, dwOffset) || !hdr || !hdr->lpData)
+        return MMSYSERR_INVALPARAM;
+    if (!(hdr->dwFlags & MHDR_PREPARED))
+        return MMSYSERR_NOERROR;
+    if (hdr->dwFlags & MHDR_INQUEUE)
+        return MIDIERR_STILLPLAYING;
+
+    hdr->dwFlags &= ~MHDR_PREPARED;
+
+    return MMSYSERR_NOERROR;
+}
+
+static UINT midi_in_get_devcaps(WORD dev_id, MIDIINCAPSW *caps, UINT size)
+{
+    TRACE("(%04X, %p, %08X);\n", dev_id, caps, size);
+
+    if (dev_id >= num_srcs) return MMSYSERR_BADDEVICEID;
+    if (!caps) return MMSYSERR_INVALPARAM;
+
+    memcpy(caps, &srcs[dev_id].caps, min(size, sizeof(*caps)));
+
+    return MMSYSERR_NOERROR;
+}
+
 NTSTATUS midi_out_message(void *args)
 {
     struct midi_out_message_params *params = args;
@@ -1144,6 +1241,40 @@ NTSTATUS midi_out_message(void *args)
         break;
     case MODM_RESET:
         *params->err = midi_out_reset(params->dev_id);
+        break;
+    default:
+        TRACE("Unsupported message\n");
+        *params->err = MMSYSERR_NOTSUPPORTED;
+    }
+
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS midi_in_message(void *args)
+{
+    struct midi_in_message_params *params = args;
+
+    switch (params->msg)
+    {
+    case DRVM_ENABLE:
+    case DRVM_DISABLE:
+        /* FIXME: Pretend this is supported */
+        *params->err = MMSYSERR_NOERROR;
+        break;
+    case MIDM_ADDBUFFER:
+        *params->err = midi_in_add_buffer(params->dev_id, (MIDIHDR *)params->param_1, params->param_2);
+        break;
+    case MIDM_PREPARE:
+        *params->err = midi_in_prepare(params->dev_id, (MIDIHDR *)params->param_1, params->param_2);
+        break;
+    case MIDM_UNPREPARE:
+        *params->err = midi_in_unprepare(params->dev_id, (MIDIHDR *)params->param_1, params->param_2);
+        break;
+    case MIDM_GETDEVCAPS:
+        *params->err = midi_in_get_devcaps(params->dev_id, (MIDIINCAPSW *)params->param_1, params->param_2);
+        break;
+    case MIDM_GETNUMDEVS:
+        *params->err = num_srcs;
         break;
     default:
         TRACE("Unsupported message\n");

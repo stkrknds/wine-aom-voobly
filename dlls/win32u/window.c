@@ -3307,13 +3307,10 @@ BOOL set_window_pos( WINDOWPOS *winpos, int parent_x, int parent_y )
                            &new_window_rect, &new_client_rect, valid_rects ))
         goto done;
 
-    if (user_callbacks)
-    {
-        if (winpos->flags & SWP_HIDEWINDOW)
-            user_callbacks->pHideCaret( winpos->hwnd );
-        else if (winpos->flags & SWP_SHOWWINDOW)
-            user_callbacks->pShowCaret( winpos->hwnd );
-    }
+    if (winpos->flags & SWP_HIDEWINDOW)
+        NtUserHideCaret( winpos->hwnd );
+    else if (winpos->flags & SWP_SHOWWINDOW)
+        NtUserShowCaret( winpos->hwnd );
 
     if (!(winpos->flags & (SWP_NOACTIVATE|SWP_HIDEWINDOW)))
     {
@@ -4407,7 +4404,7 @@ static void send_destroy_message( HWND hwnd )
     info.cbSize = sizeof(info);
     if (NtUserGetGUIThreadInfo( GetCurrentThreadId(), &info ))
     {
-        if (hwnd == info.hwndCaret && user_callbacks) user_callbacks->pDestroyCaret();
+        if (hwnd == info.hwndCaret) destroy_caret();
         if (hwnd == info.hwndActive) activate_other_window( hwnd );
     }
 
@@ -4735,7 +4732,7 @@ static WND *create_window_handle( HWND parent, HWND owner, UNICODE_STRING *name,
             else assert( full_parent == thread_info->top_window );
             if (full_parent && !user_driver->pCreateDesktopWindow( thread_info->top_window ))
                 ERR( "failed to create desktop window\n" );
-            if (user_callbacks) user_callbacks->register_builtin_classes();
+            register_builtin_classes();
         }
         else  /* HWND_MESSAGE parent */
         {

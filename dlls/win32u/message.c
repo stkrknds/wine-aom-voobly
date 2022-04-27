@@ -2474,13 +2474,11 @@ LRESULT dispatch_message( const MSG *msg, BOOL ansi )
         switch (msg->wParam)
         {
             case SYSTEM_TIMER_CARET:
-                if (!user_callbacks) break;
-                user_callbacks->toggle_caret( msg->hwnd );
+                toggle_caret( msg->hwnd );
                 return 0;
 
             case SYSTEM_TIMER_TRACK_MOUSE:
-                if (!user_callbacks) break;
-                user_callbacks->update_mouse_tracking_info( msg->hwnd );
+                update_mouse_tracking_info( msg->hwnd );
                 return 0;
         }
     }

@@ -97,7 +97,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(clipboard);
 
 #define SELECTION_UPDATE_DELAY 2000   /* delay between checks of the X11 selection */
 
-typedef BOOL (*EXPORTFUNC)( Display *display, Window win, Atom prop, Atom target, HANDLE handle );
+typedef BOOL (*EXPORTFUNC)( Display *display, Window win, Atom prop, Atom target, void *data, size_t size );
 typedef HANDLE (*IMPORTFUNC)( Atom type, const void *data, size_t size );
 
 struct clipboard_format
@@ -121,19 +121,18 @@ static HANDLE import_text_html( Atom type, const void *data, size_t size );
 static HANDLE import_text_uri_list( Atom type, const void *data, size_t size );
 static HANDLE import_targets( Atom type, const void *data, size_t size );
 
-static BOOL export_data( Display *display, Window win, Atom prop, Atom target, HANDLE handle );
-static BOOL export_string( Display *display, Window win, Atom prop, Atom target, HANDLE handle );
-static BOOL export_utf8_string( Display *display, Window win, Atom prop, Atom target, HANDLE handle );
-static BOOL export_text( Display *display, Window win, Atom prop, Atom target, HANDLE handle );
-static BOOL export_compound_text( Display *display, Window win, Atom prop, Atom target, HANDLE handle );
-static BOOL export_pixmap( Display *display, Window win, Atom prop, Atom target, HANDLE handle );
-static BOOL export_image_bmp( Display *display, Window win, Atom prop, Atom target, HANDLE handle );
-static BOOL export_enhmetafile( Display *display, Window win, Atom prop, Atom target, HANDLE handle );
-static BOOL export_text_html( Display *display, Window win, Atom prop, Atom target, HANDLE handle );
-static BOOL export_hdrop( Display *display, Window win, Atom prop, Atom target, HANDLE handle );
-static BOOL export_targets( Display *display, Window win, Atom prop, Atom target, HANDLE handle );
-static BOOL export_multiple( Display *display, Window win, Atom prop, Atom target, HANDLE handle );
-static BOOL export_timestamp( Display *display, Window win, Atom prop, Atom target, HANDLE handle );
+static BOOL export_data( Display *display, Window win, Atom prop, Atom target, void *data, size_t size );
+static BOOL export_string( Display *display, Window win, Atom prop, Atom target, void *data, size_t size );
+static BOOL export_utf8_string( Display *display, Window win, Atom prop, Atom target, void *data, size_t size );
+static BOOL export_text( Display *display, Window win, Atom prop, Atom target, void *data, size_t size );
+static BOOL export_compound_text( Display *display, Window win, Atom prop, Atom target, void *data, size_t size );
+static BOOL export_pixmap( Display *display, Window win, Atom prop, Atom target, void *data, size_t size );
+static BOOL export_image_bmp( Display *display, Window win, Atom prop, Atom target, void *data, size_t size );
+static BOOL export_text_html( Display *display, Window win, Atom prop, Atom target, void *data, size_t size );
+static BOOL export_hdrop( Display *display, Window win, Atom prop, Atom target, void *data, size_t size );
+static BOOL export_targets( Display *display, Window win, Atom prop, Atom target, void *data, size_t size );
+static BOOL export_multiple( Display *display, Window win, Atom prop, Atom target, void *data, size_t size );
+static BOOL export_timestamp( Display *display, Window win, Atom prop, Atom target, void *data, size_t size );
 
 static BOOL read_property( Display *display, Window w, Atom prop,
                            Atom *type, unsigned char **data, unsigned long *datasize );
@@ -167,7 +166,7 @@ static const struct
     { 0, CF_PENDATA,         XATOM_WCF_PENDATA,         import_data,          export_data },
     { 0, CF_RIFF,            XATOM_WCF_RIFF,            import_data,          export_data },
     { 0, CF_WAVE,            XATOM_WCF_WAVE,            import_data,          export_data },
-    { 0, CF_ENHMETAFILE,     XATOM_WCF_ENHMETAFILE,     import_enhmetafile,   export_enhmetafile },
+    { 0, CF_ENHMETAFILE,     XATOM_WCF_ENHMETAFILE,     import_enhmetafile,   export_data },
     { 0, CF_HDROP,           XATOM_text_uri_list,       import_text_uri_list, export_hdrop },
     { 0, CF_DIB,             XATOM_image_bmp,           import_image_bmp,     export_image_bmp },
     { RichTextFormatW, 0,    XATOM_text_rtf,            import_data,          export_data },
@@ -204,7 +203,7 @@ static const char *debugstr_format( UINT id )
 {
     WCHAR buffer[256];
 
-    if (GetClipboardFormatNameW( id, buffer, 256 ))
+    if (NtUserGetClipboardFormatName( id, buffer, ARRAYSIZE(buffer) ))
         return wine_dbg_sprintf( "%04x %s", id, debugstr_w(buffer) );
 
     switch (id)
@@ -350,7 +349,8 @@ static void register_win32_formats( const UINT *ids, UINT size )
         for (count = 0; count < 256 && size; ids++, size--)
         {
             if (find_win32_format( *ids )) continue;  /* it already exists */
-            if (!GetClipboardFormatNameW( *ids, buffer, 256 )) continue;  /* not a named format */
+            if (!NtUserGetClipboardFormatName( *ids, buffer, ARRAYSIZE(buffer) ))
+                continue;  /* not a named format */
             if (!(len = WideCharToMultiByte( CP_UNIXCP, 0, buffer, -1, NULL, 0, NULL, NULL ))) continue;
             if (!(names[count] = malloc( len ))) continue;
             WideCharToMultiByte( CP_UNIXCP, 0, buffer, -1, names[count], len, NULL, NULL );
@@ -435,6 +435,14 @@ static void put_property( Display *display, Window win, Atom prop, Atom type, in
 }
 
 
+static void selection_sleep(void)
+{
+    LARGE_INTEGER timeout;
+    timeout.QuadPart = (ULONGLONG)SELECTION_WAIT * -10000;
+    NtDelayExecution( FALSE, &timeout );
+}
+
+
 /**************************************************************************
  *		convert_selection
  */
@@ -456,7 +464,7 @@ static BOOL convert_selection( Display *display, Window win, Atom selection,
         Bool res = XCheckTypedWindowEvent( display, win, SelectionNotify, &event );
         if (res && event.xselection.selection == selection && event.xselection.target == format->atom)
             return read_property( display, win, event.xselection.property, type, data, size );
-        Sleep( SELECTION_WAIT );
+        selection_sleep();
     }
     ERR( "Timed out waiting for SelectionNotify event\n" );
     return FALSE;
@@ -570,6 +578,29 @@ static HGLOBAL create_dib_from_bitmap(HBITMAP hBmp)
 }
 
 
+/* based on wine_get_dos_file_name */
+static WCHAR *get_dos_file_name( const char *path )
+{
+    ULONG len = strlen( path ) + 9; /* \??\unix prefix */
+    WCHAR *ret;
+
+    if (!(ret = malloc( len * sizeof(WCHAR) ))) return NULL;
+    if (wine_unix_to_nt_file_name( path, ret, &len ))
+    {
+        free( ret );
+        return NULL;
+    }
+
+    if (ret[5] == ':')
+    {
+        /* get rid of the \??\ prefix */
+        memmove( ret, ret + 4, (len - 4) * sizeof(WCHAR) );
+    }
+    else ret[1] = '\\';
+    return ret;
+}
+
+
 /***********************************************************************
  *           uri_to_dos
  *
@@ -617,7 +648,7 @@ static WCHAR* uri_to_dos(char *encodedURI)
             if (uri[7] == '/')
             {
                 /* file:///path/to/file (nautilus, thunar) */
-                ret = wine_get_dos_file_name(&uri[7]);
+                ret = get_dos_file_name( &uri[7] );
             }
             else if (uri[7])
             {
@@ -630,14 +661,14 @@ static WCHAR* uri_to_dos(char *encodedURI)
                     if (strcmp(&uri[7], "localhost") == 0)
                     {
                         *path = '/';
-                        ret = wine_get_dos_file_name(path);
+                        ret = get_dos_file_name( path );
                     }
                     else if (gethostname(hostname, sizeof(hostname)) == 0)
                     {
                         if (strcmp(hostname, &uri[7]) == 0)
                         {
                             *path = '/';
-                            ret = wine_get_dos_file_name(path);
+                            ret = get_dos_file_name( path );
                         }
                     }
                 }
@@ -646,7 +677,7 @@ static WCHAR* uri_to_dos(char *encodedURI)
         else if (uri[6])
         {
             /* file:/path/to/file (konqueror) */
-            ret = wine_get_dos_file_name(&uri[5]);
+            ret = get_dos_file_name( &uri[5] );
         }
     }
     free( uri );
@@ -922,7 +953,7 @@ static HANDLE import_text_uri_list( Atom type, const void *data, size_t size )
         lstrcpynA(uri, &uriList[start], end - start + 1);
         path = uri_to_dos(uri);
         TRACE("converted URI %s to DOS path %s\n", debugstr_a(uri), debugstr_w(path));
-        HeapFree( GetProcessHeap(), 0, uri );
+        free( uri );
 
         if (path)
         {
@@ -1099,13 +1130,9 @@ static HANDLE render_format( UINT id )
  *
  *  Generic export clipboard data routine.
  */
-static BOOL export_data( Display *display, Window win, Atom prop, Atom target, HANDLE handle )
+static BOOL export_data( Display *display, Window win, Atom prop, Atom target, void *data, size_t size )
 {
-    void *ptr = GlobalLock( handle );
-
-    if (!ptr) return FALSE;
-    put_property( display, win, prop, target, 8, ptr, GlobalSize( handle ));
-    GlobalUnlock( handle );
+    put_property( display, win, prop, target, 8, data, size );
     return TRUE;
 }
 
@@ -1115,18 +1142,19 @@ static BOOL export_data( Display *display, Window win, Atom prop, Atom target, H
  *
  * Convert CF_UNICODETEXT data to a string in the specified codepage.
  */
-static char *string_from_unicode_text( UINT codepage, HANDLE handle, UINT *size )
+static char *string_from_unicode_text( UINT codepage, const WCHAR *string, size_t string_size, size_t *size )
 {
     UINT i, j;
     char *str;
-    WCHAR *strW = GlobalLock( handle );
-    UINT lenW = GlobalSize( handle ) / sizeof(WCHAR);
-    DWORD len = WideCharToMultiByte( codepage, 0, strW, lenW, NULL, 0, NULL, NULL );
+    UINT lenW = string_size / sizeof(WCHAR);
+    DWORD len;
 
+    if (!string_size) return NULL;
+
+    len = WideCharToMultiByte( codepage, 0, string, lenW, NULL, 0, NULL, NULL );
     if ((str = malloc( len )))
     {
-        WideCharToMultiByte( codepage, 0, strW, lenW, str, len, NULL, NULL);
-        GlobalUnlock( handle );
+        WideCharToMultiByte( codepage, 0, string, lenW, str, len, NULL, NULL);
 
         /* remove carriage returns */
         for (i = j = 0; i < len; i++)
@@ -1138,7 +1166,6 @@ static char *string_from_unicode_text( UINT codepage, HANDLE handle, UINT *size 
         *size = j;
         TRACE( "returning %s\n", debugstr_an( str, j ));
     }
-    GlobalUnlock( handle );
     return str;
 }
 
@@ -1148,15 +1175,13 @@ static char *string_from_unicode_text( UINT codepage, HANDLE handle, UINT *size 
  *
  * Export CF_UNICODETEXT converting the string to XA_STRING.
  */
-static BOOL export_string( Display *display, Window win, Atom prop, Atom target, HANDLE handle )
+static BOOL export_string( Display *display, Window win, Atom prop, Atom target, void *data, size_t size )
 {
-    UINT size;
-    char *text = string_from_unicode_text( 28591, handle, &size );
+    char *text = string_from_unicode_text( 28591, data, size, &size );
 
     if (!text) return FALSE;
     put_property( display, win, prop, target, 8, text, size );
     free( text );
-    GlobalUnlock( handle );
     return TRUE;
 }
 
@@ -1166,15 +1191,14 @@ static BOOL export_string( Display *display, Window win, Atom prop, Atom target,
  *
  *  Export CF_UNICODE converting the string to UTF8.
  */
-static BOOL export_utf8_string( Display *display, Window win, Atom prop, Atom target, HANDLE handle )
+static BOOL export_utf8_string( Display *display, Window win, Atom prop, Atom target,
+                                void *data, size_t size )
 {
-    UINT size;
-    char *text = string_from_unicode_text( CP_UTF8, handle, &size );
+    char *text = string_from_unicode_text( CP_UTF8, data, size, &size );
 
     if (!text) return FALSE;
     put_property( display, win, prop, target, 8, text, size );
     free( text );
-    GlobalUnlock( handle );
     return TRUE;
 }
 
@@ -1184,9 +1208,9 @@ static BOOL export_utf8_string( Display *display, Window win, Atom prop, Atom ta
  *
  *  Export CF_UNICODE to the polymorphic TEXT type, using UTF8.
  */
-static BOOL export_text( Display *display, Window win, Atom prop, Atom target, HANDLE handle )
+static BOOL export_text( Display *display, Window win, Atom prop, Atom target, void *data, size_t size )
 {
-    return export_utf8_string( display, win, prop, x11drv_atom(UTF8_STRING), handle );
+    return export_utf8_string( display, win, prop, x11drv_atom(UTF8_STRING), data, size );
 }
 
 
@@ -1195,12 +1219,12 @@ static BOOL export_text( Display *display, Window win, Atom prop, Atom target, H
  *
  *  Export CF_UNICODE to COMPOUND_TEXT
  */
-static BOOL export_compound_text( Display *display, Window win, Atom prop, Atom target, HANDLE handle )
+static BOOL export_compound_text( Display *display, Window win, Atom prop, Atom target,
+                                  void *data, size_t size )
 {
     XTextProperty textprop;
     XICCEncodingStyle style;
-    UINT size;
-    char *text = string_from_unicode_text( CP_UNIXCP, handle, &size );
+    char *text = string_from_unicode_text( CP_UNIXCP, data, size, &size );
 
     if (!text) return FALSE;
     if (target == x11drv_atom(COMPOUND_TEXT))
@@ -1225,18 +1249,16 @@ static BOOL export_compound_text( Display *display, Window win, Atom prop, Atom 
  *
  *  Export CF_DIB to XA_PIXMAP.
  */
-static BOOL export_pixmap( Display *display, Window win, Atom prop, Atom target, HANDLE handle )
+static BOOL export_pixmap( Display *display, Window win, Atom prop, Atom target, void *data, size_t size )
 {
     Pixmap pixmap;
-    BITMAPINFO *pbmi;
+    BITMAPINFO *pbmi = data;
     struct gdi_image_bits bits;
 
-    pbmi = GlobalLock( handle );
     bits.ptr = (LPBYTE)pbmi + bitmap_info_size( pbmi, DIB_RGB_COLORS );
     bits.free = NULL;
     bits.is_copy = FALSE;
     pixmap = create_pixmap_from_image( 0, &default_visual, pbmi, &bits, DIB_RGB_COLORS );
-    GlobalUnlock( handle );
 
     put_property( display, win, prop, target, 32, &pixmap, 1 );
     /* FIXME: free the pixmap when the property is deleted */
@@ -1249,13 +1271,13 @@ static BOOL export_pixmap( Display *display, Window win, Atom prop, Atom target,
  *
  *  Export CF_DIB to image/bmp.
  */
-static BOOL export_image_bmp( Display *display, Window win, Atom prop, Atom target, HANDLE handle )
+static BOOL export_image_bmp( Display *display, Window win, Atom prop, Atom target, void *data, size_t size )
 {
-    LPBYTE dibdata = GlobalLock( handle );
+    LPBYTE dibdata = data;
     UINT bmpsize;
     BITMAPFILEHEADER *bfh;
 
-    bmpsize = sizeof(BITMAPFILEHEADER) + GlobalSize( handle );
+    bmpsize = sizeof(BITMAPFILEHEADER) + size;
     bfh = malloc( bmpsize );
     if (bfh)
     {
@@ -1269,29 +1291,8 @@ static BOOL export_image_bmp( Display *display, Window win, Atom prop, Atom targ
         /* rest of bitmap is the same as the packed dib */
         memcpy(bfh+1, dibdata, bmpsize-sizeof(BITMAPFILEHEADER));
     }
-    GlobalUnlock( handle );
     put_property( display, win, prop, target, 8, bfh, bmpsize );
     free( bfh );
-    return TRUE;
-}
-
-
-/**************************************************************************
- *		export_enhmetafile
- *
- *  Export EnhMetaFile.
- */
-static BOOL export_enhmetafile( Display *display, Window win, Atom prop, Atom target, HANDLE handle )
-{
-    unsigned int size;
-    void *ptr;
-
-    if (!(size = GetEnhMetaFileBits( handle, 0, NULL ))) return FALSE;
-    if (!(ptr = malloc( size ))) return FALSE;
-
-    GetEnhMetaFileBits( handle, size, ptr );
-    put_property( display, win, prop, target, 8, ptr, size );
-    free( ptr );
     return TRUE;
 }
 
@@ -1303,13 +1304,11 @@ static BOOL export_enhmetafile( Display *display, Window win, Atom prop, Atom ta
  *
  * FIXME: We should attempt to add an <a base> tag and convert windows paths.
  */
-static BOOL export_text_html( Display *display, Window win, Atom prop, Atom target, HANDLE handle )
+static BOOL export_text_html( Display *display, Window win, Atom prop, Atom target, void *data, size_t size )
 {
-    const char *p, *data;
+    const char *p;
     UINT start = 0, end = 0;
     BOOL ret = TRUE;
-
-    if (!(data = GlobalLock( handle ))) return FALSE;
 
     p = data;
     while (*p && *p != '<')
@@ -1319,12 +1318,11 @@ static BOOL export_text_html( Display *display, Window win, Atom prop, Atom targ
         if (!(p = strpbrk( p, "\r\n" ))) break;
         while (*p == '\r' || *p == '\n') p++;
     }
-    if (start && start < end && end <= GlobalSize( handle ))
-        put_property( display, win, prop, target, 8, data + start, end - start );
+    if (start && start < end && end <= size)
+        put_property( display, win, prop, target, 8, (char *)data + start, end - start );
     else
         ret = FALSE;
 
-    GlobalUnlock( handle );
     return ret;
 }
 
@@ -1334,32 +1332,40 @@ static BOOL export_text_html( Display *display, Window win, Atom prop, Atom targ
  *
  *  Export CF_HDROP format to text/uri-list.
  */
-static BOOL export_hdrop( Display *display, Window win, Atom prop, Atom target, HANDLE handle )
+static BOOL export_hdrop( Display *display, Window win, Atom prop, Atom target, void *data, size_t size )
 {
-    UINT i;
-    UINT numFiles;
-    char *textUriList;
+    char *textUriList = NULL;
     UINT textUriListSize = 32;
     UINT next = 0;
+    const WCHAR *ptr;
+    WCHAR *unicode_data = NULL;
+    DROPFILES *drop_files = data;
 
-    textUriList = malloc( textUriListSize );
-    if (!textUriList) return FALSE;
-    numFiles = DragQueryFileW( handle, 0xFFFFFFFF, NULL, 0 );
-    for (i = 0; i < numFiles; i++)
+    if (!drop_files->fWide)
     {
-        UINT dosFilenameSize;
-        WCHAR *dosFilename = NULL;
+        char *p, *files = (char *)data + drop_files->pFiles;
+        p = files;
+        while (*p) p += strlen( p ) + 1;
+        p++;
+
+        if (!(unicode_data = malloc( (p - files) * sizeof(WCHAR) ))) goto failed;
+        MultiByteToWideChar( CP_ACP, 0, files, p - files, unicode_data, p - files );
+        ptr = unicode_data;
+    }
+    else ptr = (const WCHAR *)((char *)data + drop_files->pFiles);
+
+    if (!(textUriList = malloc( textUriListSize ))) goto failed;
+
+    while (*ptr)
+    {
         char *unixFilename = NULL;
         UINT uriSize;
         UINT u;
 
-        dosFilenameSize = 1 + DragQueryFileW( handle, i, NULL, 0 );
-        dosFilename = malloc( dosFilenameSize * sizeof(WCHAR) );
-        if (dosFilename == NULL) goto failed;
-        DragQueryFileW( handle, i, dosFilename, dosFilenameSize );
-        unixFilename = wine_get_unix_file_name(dosFilename);
-        free( dosFilename );
+        unixFilename = wine_get_unix_file_name( ptr );
         if (unixFilename == NULL) goto failed;
+        ptr += lstrlenW( ptr ) + 1;
+
         uriSize = 8 + /* file:/// */
                 3 * (lstrlenA(unixFilename) - 1) + /* "%xy" per char except first '/' */
                 2; /* \r\n */
@@ -1397,6 +1403,7 @@ static BOOL export_hdrop( Display *display, Window win, Atom prop, Atom target, 
     return TRUE;
 
 failed:
+    free( unicode_data );
     free( textUriList );
     return FALSE;
 }
@@ -1416,7 +1423,7 @@ static UINT *get_clipboard_formats( UINT *size )
     for (;;)
     {
         if (!(ids = malloc( *size * sizeof(*ids) ))) return NULL;
-        if (GetUpdatedClipboardFormats( ids, *size, size )) break;
+        if (NtUserGetUpdatedClipboardFormats( ids, *size, size )) break;
         free( ids );
         if (GetLastError() != ERROR_INSUFFICIENT_BUFFER) return NULL;
     }
@@ -1443,7 +1450,7 @@ static BOOL is_format_available( UINT format, const UINT *ids, unsigned int coun
  *
  *  Service a TARGETS selection request event
  */
-static BOOL export_targets( Display *display, Window win, Atom prop, Atom target, HANDLE handle )
+static BOOL export_targets( Display *display, Window win, Atom prop, Atom target, void *data, size_t size )
 {
     struct clipboard_format *format;
     UINT pos, count, *formats;
@@ -1482,9 +1489,10 @@ static BOOL export_targets( Display *display, Window win, Atom prop, Atom target
  */
 static BOOL export_selection( Display *display, Window win, Atom prop, Atom target )
 {
+    struct get_clipboard_params params = { .data_only = TRUE };
     struct clipboard_format *format;
-    HANDLE handle = 0;
     BOOL open = FALSE, ret = FALSE;
+    size_t buffer_size = 0;
 
     LIST_FOR_EACH_ENTRY( format, &format_list, struct clipboard_format, entry )
     {
@@ -1493,26 +1501,44 @@ static BOOL export_selection( Display *display, Window win, Atom prop, Atom targ
         if (!format->id)
         {
             TRACE( "win %lx prop %s target %s\n", win, debugstr_xatom( prop ), debugstr_xatom( target ));
-            ret = format->export( display, win, prop, target, 0 );
+            ret = format->export( display, win, prop, target, NULL, 0 );
             break;
         }
-        if (!open && !(open = OpenClipboard( clipboard_hwnd )))
+        if (!open && !(open = NtUserOpenClipboard( clipboard_hwnd, 0 )))
         {
             ERR( "failed to open clipboard for %s\n", debugstr_xatom( target ));
             return FALSE;
         }
-        if ((handle = GetClipboardData( format->id )))
-        {
-            TRACE( "win %lx prop %s target %s exporting %s %p\n",
-                   win, debugstr_xatom( prop ), debugstr_xatom( target ),
-                   debugstr_format( format->id ), handle );
 
-            ret = format->export( display, win, prop, target, handle );
-            break;
+        if (!buffer_size)
+        {
+            buffer_size = 1024;
+            if (!(params.data = malloc( buffer_size ))) break;
+        }
+
+        for (;;)
+        {
+            params.size = buffer_size;
+            if (NtUserGetClipboardData( format->id, &params ))
+            {
+                TRACE( "win %lx prop %s target %s exporting %s\n",
+                       win, debugstr_xatom( prop ), debugstr_xatom( target ),
+                       debugstr_format( format->id ) );
+
+                ret = format->export( display, win, prop, target, params.data, params.size );
+                goto done;
+            }
+            if (!params.data_size) break;
+            free( params.data );
+            if (!(params.data = malloc( params.data_size ))) goto done;
+            buffer_size = params.data_size;
+            params.data_size = 0;
         }
         /* keep looking for another Win32 format mapping to the same target */
     }
-    if (open) CloseClipboard();
+done:
+    free( params.data );
+    if (open) NtUserCloseClipboard();
     return ret;
 }
 
@@ -1530,7 +1556,7 @@ static BOOL export_selection( Display *display, Window win, Atom prop, Atom targ
  *  2. If we fail to convert the target named by an atom in the MULTIPLE property,
  *  we replace the atom in the property by None.
  */
-static BOOL export_multiple( Display *display, Window win, Atom prop, Atom target, HANDLE handle )
+static BOOL export_multiple( Display *display, Window win, Atom prop, Atom target, void *data, size_t size )
 {
     Atom atype;
     int aformat;
@@ -1576,7 +1602,7 @@ static BOOL export_multiple( Display *display, Window win, Atom prop, Atom targe
  *
  * Export the timestamp that was used to acquire the selection
  */
-static BOOL export_timestamp( Display *display, Window win, Atom prop, Atom target, HANDLE handle )
+static BOOL export_timestamp( Display *display, Window win, Atom prop, Atom target, void *data, size_t size )
 {
     Time time = CurrentTime;  /* FIXME */
     put_property( display, win, prop, XA_INTEGER, 32, &time, 1 );
@@ -1689,7 +1715,7 @@ static BOOL read_property( Display *display, Window w, Atom prop,
                 if (res && xe.xproperty.atom == prop &&
                     xe.xproperty.state == PropertyNewValue)
                     break;
-                Sleep(SELECTION_WAIT);
+                selection_sleep();
             }
 
             if (i >= SELECTION_RETRIES ||
@@ -1846,14 +1872,14 @@ static BOOL request_selection_contents( Display *display, BOOL changed )
                last_size != size ||
                memcmp( last_data, data, size ));
 
-    if (!changed || !OpenClipboard( clipboard_hwnd ))
+    if (!changed || !NtUserOpenClipboard( clipboard_hwnd, 0 ))
     {
         free( data );
         return FALSE;
     }
 
     TRACE( "selection changed, importing\n" );
-    EmptyClipboard();
+    NtUserEmptyClipboard();
     is_clipboard_owner = TRUE;
     rendered_formats = 0;
 
@@ -1867,9 +1893,9 @@ static BOOL request_selection_contents( Display *display, BOOL changed )
     last_data = data;
     last_size = size;
     last_clipboard_update = GetTickCount64();
-    CloseClipboard();
+    NtUserCloseClipboard();
     if (!use_xfixes)
-        SetTimer( clipboard_hwnd, 1, SELECTION_UPDATE_DELAY, NULL );
+        NtUserSetTimer( clipboard_hwnd, 1, SELECTION_UPDATE_DELAY, NULL, TIMERV_DEFAULT_COALESCING );
     return TRUE;
 }
 
