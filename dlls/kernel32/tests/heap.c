@@ -338,7 +338,7 @@ static void test_HeapCreate(void)
     ok( !!heap, "HeapCreate failed, error %lu\n", GetLastError() );
     ok( !((ULONG_PTR)heap & 0xffff), "wrong heap alignment\n" );
 
-    /* theshold between failure and success varies, and w7pro64 has a much larger overhead. */
+    /* threshold between failure and success varies, and w7pro64 has a much larger overhead. */
 
     ptr = HeapAlloc( heap, 0, alloc_size - (0x400 + 0x100 * sizeof(void *)) );
     ok( !!ptr, "HeapAlloc failed, error %lu\n", GetLastError() );
@@ -1915,7 +1915,7 @@ static void test_block_layout( HANDLE heap, DWORD global_flags, DWORD heap_flags
         tmp_flags = 0xdeadbeef;
         ret = pRtlGetUserInfoHeap( heap, 0, ptr0, (void **)&tmp_ptr, &tmp_flags );
         ok( ret, "RtlGetUserInfoHeap failed, error %lu\n", GetLastError() );
-        ok( tmp_ptr == (void *)NULL, "got ptr %p\n", tmp_ptr );
+        ok( tmp_ptr == NULL, "got ptr %p\n", tmp_ptr );
         todo_wine
         ok( tmp_flags == 0xc00, "got flags %#lx\n", tmp_flags );
 
@@ -1923,7 +1923,7 @@ static void test_block_layout( HANDLE heap, DWORD global_flags, DWORD heap_flags
         tmp_flags = 0xdeadbeef;
         ret = pRtlGetUserInfoHeap( heap, 0, ptr1, (void **)&tmp_ptr, &tmp_flags );
         ok( ret, "RtlGetUserInfoHeap failed, error %lu\n", GetLastError() );
-        ok( tmp_ptr == (void *)NULL, "got ptr %p\n", tmp_ptr );
+        ok( tmp_ptr == NULL, "got ptr %p\n", tmp_ptr );
         todo_wine
         ok( tmp_flags == 0x200, "got flags %#lx\n", tmp_flags );
 
