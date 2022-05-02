@@ -61,6 +61,7 @@ typedef int Status;
 #include "winbase.h"
 #include "ntgdi.h"
 #include "wine/gdi_driver.h"
+#include "unixlib.h"
 #include "wine/list.h"
 
 #define MAX_DASHLEN 16
@@ -293,17 +294,9 @@ extern BOOL IME_SetCompositionString(DWORD dwIndex, LPCVOID lpComp,
                                      DWORD dwReadLen) DECLSPEC_HIDDEN;
 extern void IME_SetResultString(LPWSTR lpResult, DWORD dwResultlen) DECLSPEC_HIDDEN;
 
-extern void X11DRV_XDND_EnterEvent( HWND hWnd, XClientMessageEvent *event ) DECLSPEC_HIDDEN;
-extern void X11DRV_XDND_PositionEvent( HWND hWnd, XClientMessageEvent *event ) DECLSPEC_HIDDEN;
-extern void X11DRV_XDND_DropEvent( HWND hWnd, XClientMessageEvent *event ) DECLSPEC_HIDDEN;
-extern void X11DRV_XDND_LeaveEvent( HWND hWnd, XClientMessageEvent *event ) DECLSPEC_HIDDEN;
 
-struct format_entry
-{
-    UINT format;
-    UINT size;
-    char data[1];
-};
+extern void handle_dnd_enter_event( struct format_entry *formats, ULONG size ) DECLSPEC_HIDDEN;
+extern UINT handle_dnd_event( void *params ) DECLSPEC_HIDDEN;
 
 extern struct format_entry *import_xdnd_selection( Display *display, Window win, Atom selection,
                                                    Atom *targets, UINT count,
@@ -890,6 +883,15 @@ static inline HWND get_active_window(void)
     GUITHREADINFO info;
     info.cbSize = sizeof(info);
     return NtUserGetGUIThreadInfo( GetCurrentThreadId(), &info ) ? info.hwndActive : 0;
+}
+
+static inline BOOL intersect_rect( RECT *dst, const RECT *src1, const RECT *src2 )
+{
+    dst->left   = max( src1->left, src2->left );
+    dst->top    = max( src1->top, src2->top );
+    dst->right  = min( src1->right, src2->right );
+    dst->bottom = min( src1->bottom, src2->bottom );
+    return !IsRectEmpty( dst );
 }
 
 /* registry helpers */

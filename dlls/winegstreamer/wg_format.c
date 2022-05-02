@@ -437,7 +437,8 @@ static GstCaps *wg_format_to_caps_h264(const struct wg_format *format)
     const char *profile, *level;
     GstCaps *caps;
 
-    caps = gst_caps_new_empty_simple("video/x-h264");
+    if (!(caps = gst_caps_new_empty_simple("video/x-h264")))
+        return NULL;
     gst_caps_set_simple(caps, "stream-format", G_TYPE_STRING, "byte-stream", NULL);
     gst_caps_set_simple(caps, "alignment", G_TYPE_STRING, "au", NULL);
 
@@ -455,6 +456,8 @@ static GstCaps *wg_format_to_caps_h264(const struct wg_format *format)
         case eAVEncH264VProfile_444:  profile = "high-4:4:4"; break;
         default:
             GST_FIXME("H264 profile attribute %u not implemented.", format->u.h264.profile);
+            /* fallthrough */
+        case eAVEncH264VProfile_unknown:
             profile = NULL;
             break;
     }
@@ -481,6 +484,8 @@ static GstCaps *wg_format_to_caps_h264(const struct wg_format *format)
         case eAVEncH264VLevel5_2: level = "5.2"; break;
         default:
             GST_FIXME("H264 level attribute %u not implemented.", format->u.h264.level);
+            /* fallthrough */
+        case 0:
             level = NULL;
             break;
     }

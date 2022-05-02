@@ -49,6 +49,7 @@
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(event);
+WINE_DECLARE_DEBUG_CHANNEL(xdnd);
 
 extern BOOL ximInComposeMode;
 
@@ -1752,6 +1753,180 @@ static void handle_dnd_protocol( HWND hwnd, XClientMessageEvent *event )
 }
 
 
+/**************************************************************************
+ *           handle_xdnd_enter_event
+ *
+ * Handle an XdndEnter event.
+ */
+static void handle_xdnd_enter_event( HWND hWnd, XClientMessageEvent *event )
+{
+    struct format_entry *data;
+    unsigned long count = 0;
+    Atom *xdndtypes;
+    size_t size;
+    int version;
+
+    version = (event->data.l[1] & 0xFF000000) >> 24;
+
+    TRACE( "ver(%d) check-XdndTypeList(%ld) data=%ld,%ld,%ld,%ld,%ld\n",
+           version, (event->data.l[1] & 1),
+           event->data.l[0], event->data.l[1], event->data.l[2],
+           event->data.l[3], event->data.l[4] );
+
+    if (version > WINE_XDND_VERSION)
+    {
+        ERR("ignoring unsupported XDND version %d\n", version);
+        return;
+    }
+
+    /* If the source supports more than 3 data types we retrieve
+     * the entire list. */
+    if (event->data.l[1] & 1)
+    {
+        Atom acttype;
+        int actfmt;
+        unsigned long bytesret;
+
+        /* Request supported formats from source window */
+        XGetWindowProperty( event->display, event->data.l[0], x11drv_atom(XdndTypeList),
+                            0, 65535, FALSE, AnyPropertyType, &acttype, &actfmt, &count,
+                            &bytesret, (unsigned char **)&xdndtypes );
+    }
+    else
+    {
+        count = 3;
+        xdndtypes = (Atom *)&event->data.l[2];
+    }
+
+    if (TRACE_ON(xdnd))
+    {
+        unsigned int i;
+
+        for (i = 0; i < count; i++)
+        {
+            if (xdndtypes[i] != 0)
+            {
+                char * pn = XGetAtomName( event->display, xdndtypes[i] );
+                TRACE( "XDNDEnterAtom %ld: %s\n", xdndtypes[i], pn );
+                XFree( pn );
+            }
+        }
+    }
+
+    data = import_xdnd_selection( event->display, event->window, x11drv_atom(XdndSelection),
+                                  xdndtypes, count, &size );
+    if (data)
+    {
+        handle_dnd_enter_event( data, size );
+        free( data );
+    }
+
+    if (event->data.l[1] & 1)
+        XFree(xdndtypes);
+}
+
+
+static DWORD xdnd_action_to_drop_effect( long action )
+{
+    /* In Windows, nothing but the given effects is allowed.
+     * In X the given action is just a hint, and you can always
+     * XdndActionCopy and XdndActionPrivate, so be more permissive. */
+    if (action == x11drv_atom(XdndActionCopy))
+        return DROPEFFECT_COPY;
+    else if (action == x11drv_atom(XdndActionMove))
+        return DROPEFFECT_MOVE | DROPEFFECT_COPY;
+    else if (action == x11drv_atom(XdndActionLink))
+        return DROPEFFECT_LINK | DROPEFFECT_COPY;
+    else if (action == x11drv_atom(XdndActionAsk))
+        /* FIXME: should we somehow ask the user what to do here? */
+        return DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
+
+    FIXME( "unknown action %ld, assuming DROPEFFECT_COPY\n", action );
+    return DROPEFFECT_COPY;
+}
+
+
+static long drop_effect_to_xdnd_action( DWORD effect )
+{
+    if (effect == DROPEFFECT_COPY)
+        return x11drv_atom(XdndActionCopy);
+    else if (effect == DROPEFFECT_MOVE)
+        return x11drv_atom(XdndActionMove);
+    else if (effect == DROPEFFECT_LINK)
+        return x11drv_atom(XdndActionLink);
+    else if (effect == DROPEFFECT_NONE)
+        return None;
+
+    FIXME( "unknown drop effect %u, assuming XdndActionCopy\n", effect );
+    return x11drv_atom(XdndActionCopy);
+}
+
+
+static void handle_xdnd_position_event( HWND hwnd, XClientMessageEvent *event )
+{
+    struct dnd_position_event_params params;
+    XClientMessageEvent e;
+    DWORD effect;
+
+    params.type = DND_POSITION_EVENT;
+    params.hwnd = hwnd;
+    params.point = root_to_virtual_screen( event->data.l[2] >> 16, event->data.l[2] & 0xFFFF );
+    params.effect = effect = xdnd_action_to_drop_effect( event->data.l[4] );
+
+    effect = handle_dnd_event( &params );
+
+    TRACE( "actionRequested(%ld) chosen(0x%x) at x(%d),y(%d)\n",
+           event->data.l[4], effect, params.point.x, params.point.y );
+
+    /*
+     * Let source know if we're accepting the drop by
+     * sending a status message.
+     */
+    e.type = ClientMessage;
+    e.display = event->display;
+    e.window = event->data.l[0];
+    e.message_type = x11drv_atom(XdndStatus);
+    e.format = 32;
+    e.data.l[0] = event->window;
+    e.data.l[1] = !!effect;
+    e.data.l[2] = 0; /* Empty Rect */
+    e.data.l[3] = 0; /* Empty Rect */
+    e.data.l[4] = drop_effect_to_xdnd_action( effect );
+    XSendEvent( event->display, event->data.l[0], False, NoEventMask, (XEvent *)&e );
+}
+
+
+static void handle_xdnd_drop_event( HWND hwnd, XClientMessageEvent *event )
+{
+    struct dnd_drop_event_params params;
+    XClientMessageEvent e;
+    DWORD effect;
+
+    params.type = DND_DROP_EVENT;
+    params.hwnd = hwnd;
+    effect = handle_dnd_event( &params );
+
+    /* Tell the target we are finished. */
+    memset( &e, 0, sizeof(e) );
+    e.type = ClientMessage;
+    e.display = event->display;
+    e.window = event->data.l[0];
+    e.message_type = x11drv_atom(XdndFinished);
+    e.format = 32;
+    e.data.l[0] = event->window;
+    e.data.l[1] = !!effect;
+    e.data.l[2] = drop_effect_to_xdnd_action( effect );
+    XSendEvent( event->display, event->data.l[0], False, NoEventMask, (XEvent *)&e );
+}
+
+
+static void handle_xdnd_leave_event( HWND hwnd, XClientMessageEvent *event )
+{
+    UINT type = DND_LEAVE_EVENT;
+    handle_dnd_event( &type );
+}
+
+
 struct client_message_handler
 {
     int    atom;                                  /* protocol atom */
@@ -1764,10 +1939,10 @@ static const struct client_message_handler client_messages[] =
     { XATOM_WM_PROTOCOLS, handle_wm_protocols },
     { XATOM__XEMBED,      handle_xembed_protocol },
     { XATOM_DndProtocol,  handle_dnd_protocol },
-    { XATOM_XdndEnter,    X11DRV_XDND_EnterEvent },
-    { XATOM_XdndPosition, X11DRV_XDND_PositionEvent },
-    { XATOM_XdndDrop,     X11DRV_XDND_DropEvent },
-    { XATOM_XdndLeave,    X11DRV_XDND_LeaveEvent }
+    { XATOM_XdndEnter,    handle_xdnd_enter_event },
+    { XATOM_XdndPosition, handle_xdnd_position_event },
+    { XATOM_XdndDrop,     handle_xdnd_drop_event },
+    { XATOM_XdndLeave,    handle_xdnd_leave_event }
 };
 
 

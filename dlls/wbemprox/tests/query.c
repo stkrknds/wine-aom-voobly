@@ -752,6 +752,7 @@ static void test_Win32_ComputerSystem( IWbemServices *services )
     }
 
     check_property( obj, L"NumberOfProcessors", VT_I4, CIM_UINT32 );
+    check_property( obj, L"SystemType", VT_BSTR, CIM_STRING );
 
     type = 0xdeadbeef;
     VariantInit( &value );
@@ -1388,7 +1389,9 @@ static void test_Win32_OperatingSystem( IWbemServices *services )
     hr = IWbemClassObject_EndEnumeration( obj );
     ok( hr == S_OK, "got %#lx\n", hr );
 
+    check_property( obj, L"BootDevice", VT_BSTR, CIM_STRING );
     check_property( obj, L"BuildNumber", VT_BSTR, CIM_STRING );
+    check_property( obj, L"BuildType", VT_BSTR, CIM_STRING );
     check_property( obj, L"Caption", VT_BSTR, CIM_STRING );
 
     type = 0xdeadbeef;
@@ -1401,6 +1404,7 @@ static void test_Win32_OperatingSystem( IWbemServices *services )
     VariantClear( &val );
 
     check_property( obj, L"FreePhysicalMemory", VT_BSTR, CIM_UINT64 );
+    check_property( obj, L"FreeVirtualMemory", VT_BSTR, CIM_UINT64 );
     check_property( obj, L"Name", VT_BSTR, CIM_STRING );
 
     type = 0xdeadbeef;
@@ -1427,8 +1431,10 @@ static void test_Win32_OperatingSystem( IWbemServices *services )
     check_property( obj, L"CSName", VT_BSTR, CIM_STRING );
     check_property( obj, L"CurrentTimeZone", VT_I2, CIM_SINT16 );
     check_property( obj, L"Manufacturer", VT_BSTR, CIM_STRING );
+    check_property( obj, L"Organization", VT_BSTR, CIM_STRING );
     check_property( obj, L"OSType", VT_I4, CIM_UINT16 );
     check_property( obj, L"ProductType", VT_I4, CIM_UINT32 );
+    check_property( obj, L"RegisteredUser", VT_BSTR, CIM_STRING );
     check_property( obj, L"ServicePackMajorVersion", VT_I4, CIM_UINT16 );
     check_property( obj, L"ServicePackMinorVersion", VT_I4, CIM_UINT16 );
     check_property( obj, L"SuiteMask", VT_I4, CIM_UINT32 );
@@ -1437,6 +1443,7 @@ static void test_Win32_OperatingSystem( IWbemServices *services )
     check_property( obj, L"TotalVirtualMemorySize", VT_BSTR, CIM_UINT64 );
     check_property( obj, L"Status", VT_BSTR, CIM_STRING );
     check_property( obj, L"SystemDrive", VT_BSTR, CIM_STRING );
+    check_property( obj, L"WindowsDirectory", VT_BSTR, CIM_STRING );
 
     IWbemClassObject_Release( obj );
     IEnumWbemClassObject_Release( result );

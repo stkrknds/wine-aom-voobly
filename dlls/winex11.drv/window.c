@@ -437,22 +437,23 @@ static void sync_window_opacity( Display *display, Window win,
  */
 static void sync_window_text( Display *display, Window win, const WCHAR *text )
 {
-    UINT count;
+    DWORD count, len;
     char *buffer, *utf8_buffer;
     XTextProperty prop;
 
     /* allocate new buffer for window text */
+    len = lstrlenW( text );
     count = WideCharToMultiByte(CP_UNIXCP, 0, text, -1, NULL, 0, NULL, NULL);
     if (!(buffer = malloc( count ))) return;
     WideCharToMultiByte(CP_UNIXCP, 0, text, -1, buffer, count, NULL, NULL);
 
-    count = WideCharToMultiByte(CP_UTF8, 0, text, strlenW(text), NULL, 0, NULL, NULL);
+    RtlUnicodeToUTF8N( NULL, 0, &count, text, len * sizeof(WCHAR) );
     if (!(utf8_buffer = malloc( count )))
     {
         free( buffer );
         return;
     }
-    WideCharToMultiByte(CP_UTF8, 0, text, strlenW(text), utf8_buffer, count, NULL, NULL);
+    RtlUnicodeToUTF8N( utf8_buffer, count, &count, text, len * sizeof(WCHAR) );
 
     if (XmbTextListToTextProperty( display, &buffer, 1, XStdICCTextStyle, &prop ) == Success)
     {
@@ -2309,7 +2310,7 @@ static inline BOOL get_surface_rect( const RECT *visible_rect, RECT *surface_rec
 {
     *surface_rect = NtUserGetVirtualScreenRect();
 
-    if (!IntersectRect( surface_rect, surface_rect, visible_rect )) return FALSE;
+    if (!intersect_rect( surface_rect, surface_rect, visible_rect )) return FALSE;
     OffsetRect( surface_rect, -visible_rect->left, -visible_rect->top );
     surface_rect->left &= ~31;
     surface_rect->top  &= ~31;
@@ -2761,7 +2762,7 @@ BOOL X11DRV_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWINFO *info,
 
     if (info->prcDirty)
     {
-        IntersectRect( &rect, &rect, info->prcDirty );
+        intersect_rect( &rect, &rect, info->prcDirty );
         memcpy( src_bits, dst_bits, bmi->bmiHeader.biSizeImage );
         NtGdiPatBlt( hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, BLACKNESS );
     }
