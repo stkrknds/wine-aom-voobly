@@ -475,6 +475,13 @@ struct ot_gdef_classdef_format2
     struct ot_gdef_class_range ranges[1];
 };
 
+struct ot_gdef_markglyphsets
+{
+    uint16_t format;
+    uint16_t count;
+    uint32_t offsets[1];
+};
+
 struct gpos_gsub_header
 {
     uint16_t major_version;
@@ -3619,10 +3626,10 @@ struct lookup
 {
     unsigned short index;
     unsigned short type;
-    unsigned short flags;
     unsigned short subtable_count;
 
     unsigned int mask;
+    unsigned int flags;
     unsigned int offset;
     unsigned int auto_zwnj : 1;
     unsigned int auto_zwj : 1;
@@ -3762,7 +3769,7 @@ static BOOL opentype_match_coverage_func(UINT16 glyph, UINT16 glyph_data, const 
 static BOOL opentype_layout_mark_set_covers(const struct scriptshaping_cache *cache, unsigned int set_index,
         UINT16 glyph)
 {
-    unsigned int format, offset = cache->gdef.markglyphsetdef, coverage_offset, set_count;
+    unsigned int format, offset = cache->gdef.markglyphsetdef, coverage_offset, count;
 
     if (!offset)
         return FALSE;
@@ -3771,11 +3778,12 @@ static BOOL opentype_layout_mark_set_covers(const struct scriptshaping_cache *ca
 
     if (format == 1)
     {
-        set_count = table_read_be_word(&cache->gdef.table, offset + 2);
-        if (!set_count || set_index >= set_count)
+        count = table_read_be_word(&cache->gdef.table, offset + FIELD_OFFSET(struct ot_gdef_markglyphsets, count));
+        if (!count || set_index >= count)
             return FALSE;
 
-        coverage_offset = table_read_be_dword(&cache->gdef.table, offset + 2 + set_index * sizeof(coverage_offset));
+        coverage_offset = table_read_be_dword(&cache->gdef.table, offset +
+                FIELD_OFFSET(struct ot_gdef_markglyphsets, offsets[set_index]));
         return opentype_layout_is_glyph_covered(&cache->gdef.table, offset + coverage_offset, glyph) != GLYPH_NOT_COVERED;
     }
     else
@@ -4312,7 +4320,7 @@ static BOOL opentype_layout_apply_mark_array(struct scriptshaping_context *conte
     if (context->is_rtl)
         context->offsets[context->cur].advanceOffset = mark_x - base_x;
     else
-        context->offsets[context->cur].advanceOffset = -context->advances[glyph_pos] + base_x - mark_x;
+        context->offsets[context->cur].advanceOffset = base_x - mark_x;
     context->offsets[context->cur].ascenderOffset = base_y - mark_y;
     opentype_set_glyph_attach_type(context, context->cur, GLYPH_ATTACH_MARK);
     context->glyph_infos[context->cur].attach_chain = (int)glyph_pos - (int)context->cur;
@@ -4542,9 +4550,9 @@ static int __cdecl lookups_sorting_compare(const void *a, const void *b)
 static BOOL opentype_layout_init_lookup(const struct ot_gsubgpos_table *table, unsigned short lookup_index,
         const struct shaping_feature *feature, struct lookup *lookup)
 {
-    unsigned short subtable_count, lookup_type, flags, mark_filtering_set;
+    unsigned short subtable_count, lookup_type, mark_filtering_set;
     const struct ot_lookup_table *lookup_table;
-    unsigned int offset;
+    unsigned int offset, flags;
 
     if (!(offset = table_read_be_word(&table->table, table->lookup_list +
             FIELD_OFFSET(struct ot_lookup_list, lookup[lookup_index]))))

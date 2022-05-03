@@ -30,7 +30,10 @@
 #include <stdarg.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdint.h>
+#include <time.h>
 #include <unistd.h>
+#include <poll.h>
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -43,6 +46,7 @@
 #define WIN32_NO_STATUS
 #include "winternl.h"
 #include "audioclient.h"
+#include "mmddk.h"
 
 #include "wine/debug.h"
 #include "wine/unixlib.h"
@@ -60,11 +64,38 @@ struct midi_dest
     int                 fd;
 };
 
+struct midi_src
+{
+    int                 state; /* -1 disabled, 0 is no recording started, 1 in recording, bit 2 set if in sys exclusive recording */
+    MIDIOPENDESC        midiDesc;
+    WORD                wFlags;
+    MIDIHDR            *lpQueueHdr;
+    unsigned char       incoming[3];
+    unsigned char       incPrev;
+    char                incLen;
+    UINT                startTime;
+    MIDIINCAPSW         caps;
+    int                 fd;
+};
+
 static pthread_mutex_t in_buffer_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static unsigned int num_dests, num_srcs, num_synths, seq_refs;
 static struct midi_dest dests[MAX_MIDIOUTDRV];
 static struct midi_src srcs[MAX_MIDIINDRV];
+static int load_count;
+
+static unsigned int num_midi_in_started;
+static int rec_cancel_pipe[2];
+static pthread_t rec_thread_id;
+
+static pthread_mutex_t notify_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t notify_read_cond = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t notify_write_cond = PTHREAD_COND_INITIALIZER;
+static BOOL notify_quit;
+#define NOTIFY_BUFFER_SIZE 64 + 1 /* + 1 for the sentinel */
+static struct notify_context notify_buffer[NOTIFY_BUFFER_SIZE];
+static struct notify_context *notify_read = notify_buffer, *notify_write = notify_buffer;
 
 typedef struct sVoice
 {
@@ -147,12 +178,75 @@ static void in_buffer_unlock(void)
     pthread_mutex_unlock(&in_buffer_mutex);
 }
 
-NTSTATUS midi_in_lock(void *args)
+static uint64_t get_time_msec(void)
 {
-    if (args) in_buffer_lock();
-    else in_buffer_unlock();
+    struct timespec now = {0, 0};
 
-    return STATUS_SUCCESS;
+#ifdef CLOCK_MONOTONIC_RAW
+    if (!clock_gettime(CLOCK_MONOTONIC_RAW, &now))
+        return (uint64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+#endif
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (uint64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
+
+/*
+ * notify buffer: The notification ring buffer is implemented so that
+ * there is always at least one unused sentinel before the current
+ * read position in order to allow detection of the full vs empty
+ * state.
+ */
+static struct notify_context *notify_buffer_next(struct notify_context *notify)
+{
+    if (++notify >= notify_buffer + ARRAY_SIZE(notify_buffer))
+        notify = notify_buffer;
+
+    return notify;
+}
+
+static BOOL notify_buffer_empty(void)
+{
+    return notify_read == notify_write;
+}
+
+static BOOL notify_buffer_full(void)
+{
+    return notify_buffer_next(notify_write) == notify_read;
+}
+
+static BOOL notify_buffer_add(struct notify_context *notify)
+{
+    if (notify_buffer_full()) return FALSE;
+
+    *notify_write = *notify;
+    notify_write = notify_buffer_next(notify_write);
+    return TRUE;
+}
+
+static BOOL notify_buffer_remove(struct notify_context *notify)
+{
+    if (notify_buffer_empty()) return FALSE;
+
+    *notify = *notify_read;
+    notify_read = notify_buffer_next(notify_read);
+    return TRUE;
+}
+
+static void notify_post(struct notify_context *notify)
+{
+    pthread_mutex_lock(&notify_mutex);
+
+    if (notify)
+    {
+        while (notify_buffer_full())
+            pthread_cond_wait(&notify_write_cond, &notify_mutex);
+
+        notify_buffer_add(notify);
+    }
+    else notify_quit = TRUE;
+    pthread_cond_signal(&notify_read_cond);
+
+    pthread_mutex_unlock(&notify_mutex);
 }
 
 static void set_in_notify(struct notify_context *notify, struct midi_src *src, WORD dev_id, WORD msg,
@@ -208,34 +302,23 @@ static int seq_close(int fd)
     return 0;
 }
 
-NTSTATUS midi_seq_open(void *args)
+static UINT midi_init(void)
 {
-    struct midi_seq_open_params *params = args;
-
-    if (!params->close)
-        params->fd = seq_open();
-    else
-        seq_close(params->fd);
-
-    return STATUS_SUCCESS;
-}
-
-NTSTATUS midi_init(void *args)
-{
-    struct midi_init_params *params = args;
     int i, status, synth_devs = 255, midi_devs = 255, fd, len;
     struct synth_info sinfo;
     struct midi_info minfo;
     struct midi_dest *dest;
     struct midi_src *src;
 
+    TRACE("(%i)\n", load_count);
+
+    if (load_count++)
+        return 1;
+
     /* try to open device */
     fd = seq_open();
     if (fd == -1)
-    {
-        *params->err = -1;
-        return STATUS_SUCCESS;
-    }
+        return -1;
 
     /* find how many Synth devices are there in the system */
     status = ioctl(fd, SNDCTL_SEQ_NRSYNTHS, &synth_devs);
@@ -243,8 +326,7 @@ NTSTATUS midi_init(void *args)
     {
         ERR("ioctl for nr synth failed.\n");
         seq_close(fd);
-        *params->err = -1;
-        return STATUS_SUCCESS;
+        return -1;
     }
 
     if (synth_devs > MAX_MIDIOUTDRV)
@@ -425,9 +507,23 @@ wrapup:
     /* close file and exit */
     seq_close(fd);
 
-    *params->err = 0;
-    params->num_srcs = num_srcs;
-    params->srcs = srcs;
+    return 0;
+}
+
+static UINT midi_exit(void)
+{
+    TRACE("(%i)\n", load_count);
+
+    if (--load_count)
+        return 1;
+
+    return 0;
+}
+
+NTSTATUS midi_release(void *args)
+{
+    /* stop the notify_wait thread */
+    notify_post(NULL);
 
     return STATUS_SUCCESS;
 }
@@ -1134,6 +1230,276 @@ static UINT midi_out_reset(WORD dev_id)
     return MMSYSERR_NOERROR;
 }
 
+static void handle_sysex_data(struct midi_src *src, unsigned char value, UINT time)
+{
+    struct notify_context notify;
+    MIDIHDR *hdr;
+    BOOL done = FALSE;
+
+    src->state |= 2;
+    src->incLen = 0;
+
+    in_buffer_lock();
+
+    hdr = src->lpQueueHdr;
+    if (hdr)
+    {
+        BYTE *data = (BYTE *)hdr->lpData;
+
+        data[hdr->dwBytesRecorded++] = value;
+        if (hdr->dwBytesRecorded == hdr->dwBufferLength)
+            done = TRUE;
+    }
+
+    if (value == 0xf7) /* end */
+    {
+        src->state &= ~2;
+        done = TRUE;
+    }
+
+    if (done && hdr)
+    {
+        src->lpQueueHdr = hdr->lpNext;
+        hdr->dwFlags &= ~MHDR_INQUEUE;
+        hdr->dwFlags |= MHDR_DONE;
+        set_in_notify(&notify, src, src - srcs, MIM_LONGDATA, (UINT_PTR)hdr, time);
+        notify_post(&notify);
+    }
+
+    in_buffer_unlock();
+}
+
+static void handle_regular_data(struct midi_src *src, unsigned char value, UINT time)
+{
+    struct notify_context notify;
+    UINT to_send = 0;
+
+#define IS_CMD(_x)     (((_x) & 0x80) == 0x80)
+#define IS_SYS_CMD(_x) (((_x) & 0xF0) == 0xF0)
+
+    if (!IS_CMD(value) && src->incLen == 0) /* try to reuse old cmd */
+    {
+        if (IS_CMD(src->incPrev) && !IS_SYS_CMD(src->incPrev))
+        {
+            src->incoming[0] = src->incPrev;
+            src->incLen = 1;
+        }
+        else
+        {
+            /* FIXME: should generate MIM_ERROR notification */
+            return;
+        }
+    }
+    src->incoming[(int)src->incLen++] = value;
+    if (src->incLen == 1 && !IS_SYS_CMD(src->incoming[0]))
+        /* store new cmd, just in case */
+        src->incPrev = src->incoming[0];
+
+#undef IS_CMD
+#undef IS_SYS_CMD
+
+    switch (src->incoming[0] & 0xF0)
+    {
+    case MIDI_NOTEOFF:
+    case MIDI_NOTEON:
+    case MIDI_KEY_PRESSURE:
+    case MIDI_CTL_CHANGE:
+    case MIDI_PITCH_BEND:
+        if (src->incLen == 3)
+            to_send = (src->incoming[2] << 16) | (src->incoming[1] << 8) |
+                src->incoming[0];
+        break;
+    case MIDI_PGM_CHANGE:
+    case MIDI_CHN_PRESSURE:
+        if (src->incLen == 2)
+            to_send = (src->incoming[1] << 8) | src->incoming[0];
+        break;
+    case MIDI_SYSTEM_PREFIX:
+        if (src->incLen == 1)
+            to_send = src->incoming[0];
+        break;
+    }
+
+    if (to_send)
+    {
+        src->incLen = 0;
+        set_in_notify(&notify, src, src - srcs, MIM_DATA, to_send, time);
+        notify_post(&notify);
+    }
+}
+
+static void handle_midi_data(unsigned char *buffer, unsigned int len)
+{
+    unsigned int time = get_time_msec(), i;
+    struct midi_src *src;
+    unsigned char value;
+    WORD dev_id;
+
+    for (i = 0; i < len; i += (buffer[i] & 0x80) ? 8 : 4)
+    {
+        if (buffer[i] != SEQ_MIDIPUTC) continue;
+
+        dev_id = buffer[i + 2];
+        value = buffer[i + 1];
+
+        if (dev_id >= num_srcs) continue;
+        src = srcs + dev_id;
+        if (src->state <= 0) continue;
+
+        if (value == 0xf0 || src->state & 2) /* system exclusive */
+            handle_sysex_data(src, value, time - src->startTime);
+        else
+            handle_regular_data(src, value, time - src->startTime);
+    }
+}
+
+static void *rec_thread_proc(void *arg)
+{
+    int fd = PtrToLong(arg);
+    unsigned char buffer[256];
+    int len;
+    struct pollfd pollfd[2];
+
+    pollfd[0].fd = rec_cancel_pipe[0];
+    pollfd[0].events = POLLIN;
+    pollfd[1].fd = fd;
+    pollfd[1].events = POLLIN;
+
+    while (1)
+    {
+        /* Check if an event is present */
+        if (poll(pollfd, ARRAY_SIZE(pollfd), -1) <= 0)
+            continue;
+
+        if (pollfd[0].revents & POLLIN) /* cancelled */
+            break;
+
+        len = read(fd, buffer, sizeof(buffer));
+
+        if (len > 0 && len % 4 == 0)
+            handle_midi_data(buffer, len);
+    }
+    return NULL;
+}
+
+static UINT midi_in_open(WORD dev_id, MIDIOPENDESC *desc, UINT flags, struct notify_context *notify)
+{
+    struct midi_src *src;
+    int fd;
+
+    TRACE("(%04X, %p, %08X);\n", dev_id, desc, flags);
+
+    if (desc == NULL)
+    {
+        WARN("Invalid Parameter !\n");
+        return MMSYSERR_INVALPARAM;
+    }
+
+    /* FIXME :
+     * how to check that content of lpDesc is correct ?
+     */
+    if (dev_id >= num_srcs)
+    {
+        WARN("wDevID too large (%u) !\n", dev_id);
+        return MMSYSERR_BADDEVICEID;
+    }
+    src = srcs + dev_id;
+    if (src->state == -1)
+    {
+        WARN("device disabled\n");
+        return MIDIERR_NODEVICE;
+    }
+    if (src->midiDesc.hMidi != 0)
+    {
+        WARN("device already open !\n");
+        return MMSYSERR_ALLOCATED;
+    }
+    if ((flags & MIDI_IO_STATUS) != 0)
+    {
+        WARN("No support for MIDI_IO_STATUS in dwFlags yet, ignoring it\n");
+        flags &= ~MIDI_IO_STATUS;
+    }
+    if ((flags & ~CALLBACK_TYPEMASK) != 0)
+    {
+        FIXME("Bad flags\n");
+        return MMSYSERR_INVALFLAG;
+    }
+
+    fd = seq_open();
+    if (fd < 0)
+        return MMSYSERR_ERROR;
+
+    if (num_midi_in_started++ == 0)
+    {
+        pipe(rec_cancel_pipe);
+        if (pthread_create(&rec_thread_id, NULL, rec_thread_proc, LongToPtr(fd)))
+        {
+            close(rec_cancel_pipe[0]);
+            close(rec_cancel_pipe[1]);
+            num_midi_in_started = 0;
+            WARN("Couldn't create thread for midi-in\n");
+            seq_close(fd);
+            return MMSYSERR_ERROR;
+        }
+        TRACE("Created thread for midi-in\n");
+    }
+
+    src->wFlags = HIWORD(flags & CALLBACK_TYPEMASK);
+
+    src->lpQueueHdr = NULL;
+    src->midiDesc = *desc;
+    src->state = 0;
+    src->incLen = 0;
+    src->startTime = 0;
+    src->fd = fd;
+
+    set_in_notify(notify, src, dev_id, MIM_OPEN, 0, 0);
+    return MMSYSERR_NOERROR;
+}
+
+static UINT midi_in_close(WORD dev_id, struct notify_context *notify)
+{
+    struct midi_src *src;
+
+    TRACE("(%04X);\n", dev_id);
+
+    if (dev_id >= num_srcs)
+    {
+        WARN("dev_id too big (%u) !\n", dev_id);
+        return MMSYSERR_BADDEVICEID;
+    }
+    src = srcs + dev_id;
+    if (src->midiDesc.hMidi == 0)
+    {
+        WARN("device not opened !\n");
+        return MMSYSERR_ERROR;
+    }
+    if (src->lpQueueHdr != 0)
+        return MIDIERR_STILLPLAYING;
+
+    if (src->fd == -1)
+    {
+        WARN("ooops !\n");
+        return MMSYSERR_ERROR;
+    }
+    if (--num_midi_in_started == 0)
+    {
+        TRACE("Stopping thread for midi-in\n");
+        write(rec_cancel_pipe[1], "x", 1);
+        pthread_join(rec_thread_id, NULL);
+        close(rec_cancel_pipe[0]);
+        close(rec_cancel_pipe[1]);
+        TRACE("Stopped thread for midi-in\n");
+    }
+    seq_close(src->fd);
+    src->fd = -1;
+
+    set_in_notify(notify, src, dev_id, MIM_CLOSE, 0, 0);
+    src->midiDesc.hMidi = 0;
+
+    return MMSYSERR_NOERROR;
+}
+
 static UINT midi_in_add_buffer(WORD dev_id, MIDIHDR *hdr, UINT hdr_size)
 {
     struct midi_src *src;
@@ -1221,7 +1587,7 @@ static UINT midi_in_start(WORD dev_id)
     if (src->state == -1) return MIDIERR_NODEVICE;
 
     src->state = 1;
-    src->startTime = NtGetTickCount();
+    src->startTime = get_time_msec();
     return MMSYSERR_NOERROR;
 }
 
@@ -1241,7 +1607,7 @@ static UINT midi_in_stop(WORD dev_id)
 
 static UINT midi_in_reset(WORD dev_id, struct notify_context *notify)
 {
-    UINT cur_time = NtGetTickCount();
+    UINT cur_time = get_time_msec();
     UINT err = MMSYSERR_NOERROR;
     struct midi_src *src;
     MIDIHDR *hdr;
@@ -1277,6 +1643,12 @@ NTSTATUS midi_out_message(void *args)
 
     switch (params->msg)
     {
+    case DRVM_INIT:
+        *params->err = midi_init();
+        break;
+    case DRVM_EXIT:
+        *params->err = midi_exit();
+        break;
     case DRVM_ENABLE:
     case DRVM_DISABLE:
         /* FIXME: Pretend this is supported */
@@ -1331,10 +1703,22 @@ NTSTATUS midi_in_message(void *args)
 
     switch (params->msg)
     {
+    case DRVM_INIT:
+        *params->err = midi_init();
+        break;
+    case DRVM_EXIT:
+        *params->err = midi_exit();
+        break;
     case DRVM_ENABLE:
     case DRVM_DISABLE:
         /* FIXME: Pretend this is supported */
         *params->err = MMSYSERR_NOERROR;
+        break;
+    case MIDM_OPEN:
+        *params->err = midi_in_open(params->dev_id, (MIDIOPENDESC *)params->param_1, params->param_2, params->notify);
+        break;
+    case MIDM_CLOSE:
+        *params->err = midi_in_close(params->dev_id, params->notify);
         break;
     case MIDM_ADDBUFFER:
         *params->err = midi_in_add_buffer(params->dev_id, (MIDIHDR *)params->param_1, params->param_2);
@@ -1364,6 +1748,26 @@ NTSTATUS midi_in_message(void *args)
         TRACE("Unsupported message\n");
         *params->err = MMSYSERR_NOTSUPPORTED;
     }
+
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS midi_notify_wait(void *args)
+{
+    struct midi_notify_wait_params *params = args;
+
+    pthread_mutex_lock(&notify_mutex);
+
+    while (!notify_quit && notify_buffer_empty())
+        pthread_cond_wait(&notify_read_cond, &notify_mutex);
+
+    *params->quit = notify_quit;
+    if (!notify_quit)
+    {
+        notify_buffer_remove(params->notify);
+        pthread_cond_signal(&notify_write_cond);
+    }
+    pthread_mutex_unlock(&notify_mutex);
 
     return STATUS_SUCCESS;
 }

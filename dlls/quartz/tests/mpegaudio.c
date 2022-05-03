@@ -175,13 +175,14 @@ static inline BOOL compare_media_types(const AM_MEDIA_TYPE *a, const AM_MEDIA_TY
 static void init_pcm_mt(AM_MEDIA_TYPE *mt, WAVEFORMATEX *format,
         WORD channels, DWORD sample_rate, WORD depth)
 {
+    memset(format, 0, sizeof(WAVEFORMATEX));
     format->wFormatTag = WAVE_FORMAT_PCM;
     format->nChannels = channels;
     format->nSamplesPerSec = sample_rate;
     format->wBitsPerSample = depth;
     format->nBlockAlign = channels * depth / 8;
     format->nAvgBytesPerSec = format->nBlockAlign * format->nSamplesPerSec;
-    format->cbSize = 0;
+    memset(mt, 0, sizeof(AM_MEDIA_TYPE));
     mt->majortype = MEDIATYPE_Audio;
     mt->subtype = MEDIASUBTYPE_PCM;
     mt->bFixedSizeSamples = TRUE;
@@ -831,6 +832,7 @@ struct testfilter
 {
     struct strmbase_filter filter;
     struct strmbase_source source;
+    struct strmbase_sink sink;
     const AM_MEDIA_TYPE *mt;
 };
 
@@ -851,6 +853,7 @@ static void testfilter_destroy(struct strmbase_filter *iface)
 {
     struct testfilter *filter = impl_from_strmbase_filter(iface);
     strmbase_source_cleanup(&filter->source);
+    strmbase_sink_cleanup(&filter->sink);
     strmbase_filter_cleanup(&filter->filter);
 }
 
@@ -872,37 +875,241 @@ static const struct strmbase_source_ops testsource_ops =
     .pfnDecideAllocator = testsource_DecideAllocator,
 };
 
+static HRESULT testsink_query_interface(struct strmbase_pin *iface, REFIID iid, void **out)
+{
+    struct testfilter *filter = impl_from_strmbase_filter(iface->filter);
+
+    if (IsEqualGUID(iid, &IID_IMemInputPin))
+        *out = &filter->sink.IMemInputPin_iface;
+    else
+        return E_NOINTERFACE;
+
+    IUnknown_AddRef((IUnknown *)*out);
+    return S_OK;
+}
+
+static HRESULT testsink_get_media_type(struct strmbase_pin *iface, unsigned int index, AM_MEDIA_TYPE *mt)
+{
+    struct testfilter *filter = impl_from_strmbase_filter(iface->filter);
+    if (!index && filter->mt)
+    {
+        CopyMediaType(mt, filter->mt);
+        return S_OK;
+    }
+    return VFW_S_NO_MORE_ITEMS;
+}
+
+static HRESULT testsink_connect(struct strmbase_sink *iface, IPin *peer, const AM_MEDIA_TYPE *mt)
+{
+    struct testfilter *filter = impl_from_strmbase_filter(iface->pin.filter);
+    if (filter->mt && !IsEqualGUID(&mt->majortype, &filter->mt->majortype))
+        return VFW_E_TYPE_NOT_ACCEPTED;
+    return S_OK;
+}
+
+static const struct strmbase_sink_ops testsink_ops =
+{
+    .base.pin_query_interface = testsink_query_interface,
+    .base.pin_get_media_type = testsink_get_media_type,
+    .sink_connect = testsink_connect,
+};
+
 static void testfilter_init(struct testfilter *filter)
 {
     static const GUID clsid = {0xabacab};
     memset(filter, 0, sizeof(*filter));
     strmbase_filter_init(&filter->filter, NULL, &clsid, &testfilter_ops);
     strmbase_source_init(&filter->source, &filter->filter, L"source", &testsource_ops);
+    strmbase_sink_init(&filter->sink, &filter->filter, L"sink", &testsink_ops, NULL);
+}
+
+static void test_sink_allocator(IMemInputPin *input)
+{
+    IMemAllocator *req_allocator, *ret_allocator;
+    ALLOCATOR_PROPERTIES props, ret_props;
+    HRESULT hr;
+
+    hr = IMemInputPin_GetAllocatorRequirements(input, &props);
+    ok(hr == E_NOTIMPL, "Got hr %#lx.\n", hr);
+
+    hr = IMemInputPin_GetAllocator(input, &ret_allocator);
+    todo_wine ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    if (hr == S_OK)
+    {
+        hr = IMemAllocator_GetProperties(ret_allocator, &props);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        ok(!props.cBuffers, "Got %ld buffers.\n", props.cBuffers);
+        ok(!props.cbBuffer, "Got size %ld.\n", props.cbBuffer);
+        ok(!props.cbAlign, "Got alignment %ld.\n", props.cbAlign);
+        ok(!props.cbPrefix, "Got prefix %ld.\n", props.cbPrefix);
+
+        hr = IMemInputPin_NotifyAllocator(input, ret_allocator, TRUE);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        IMemAllocator_Release(ret_allocator);
+    }
+
+    hr = IMemInputPin_NotifyAllocator(input, NULL, TRUE);
+    ok(hr == E_POINTER, "Got hr %#lx.\n", hr);
+
+    CoCreateInstance(&CLSID_MemoryAllocator, NULL, CLSCTX_INPROC_SERVER,
+            &IID_IMemAllocator, (void **)&req_allocator);
+
+    props.cBuffers = 1;
+    props.cbBuffer = 256;
+    props.cbAlign = 1;
+    props.cbPrefix = 0;
+    hr = IMemAllocator_SetProperties(req_allocator, &props, &ret_props);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IMemInputPin_NotifyAllocator(input, req_allocator, TRUE);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IMemInputPin_GetAllocator(input, &ret_allocator);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(ret_allocator == req_allocator, "Allocators didn't match.\n");
+
+    IMemAllocator_Release(req_allocator);
+    IMemAllocator_Release(ret_allocator);
+}
+
+static void test_source_allocator(IFilterGraph2 *graph, IMediaControl *control,
+        IPin *sink, IPin *source, struct testfilter *testsource, struct testfilter *testsink)
+{
+    ALLOCATOR_PROPERTIES props, req_props = {2, 30000, 32, 0};
+    IMemAllocator *allocator;
+    IMediaSample *sample;
+    WAVEFORMATEX format;
+    AM_MEDIA_TYPE mt;
+    HRESULT hr;
+
+    hr = IFilterGraph2_ConnectDirect(graph, &testsource->source.pin.IPin_iface, sink, &mp2_mt);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    init_pcm_mt(&mt, &format, 1, 32000, 16);
+    hr = IFilterGraph2_ConnectDirect(graph, source, &testsink->sink.pin.IPin_iface, &mt);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    ok(!!testsink->sink.pAllocator, "Expected an allocator.\n");
+    hr = IMemAllocator_GetProperties(testsink->sink.pAllocator, &props);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(props.cBuffers == 8, "Got %ld buffers.\n", props.cBuffers);
+    ok(props.cbBuffer == 9216, "Got size %ld.\n", props.cbBuffer);
+    ok(props.cbAlign == 1, "Got alignment %ld.\n", props.cbAlign);
+    ok(!props.cbPrefix, "Got prefix %ld.\n", props.cbPrefix);
+
+    hr = IMemAllocator_GetBuffer(testsink->sink.pAllocator, &sample, NULL, NULL, 0);
+    ok(hr == VFW_E_NOT_COMMITTED, "Got hr %#lx.\n", hr);
+
+    hr = IMediaControl_Pause(control);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IMemAllocator_GetBuffer(testsink->sink.pAllocator, &sample, NULL, NULL, 0);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    if (hr == S_OK)
+        IMediaSample_Release(sample);
+
+    hr = IMediaControl_Stop(control);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IMemAllocator_GetBuffer(testsink->sink.pAllocator, &sample, NULL, NULL, 0);
+    ok(hr == VFW_E_NOT_COMMITTED, "Got hr %#lx.\n", hr);
+
+    IFilterGraph2_Disconnect(graph, source);
+    IFilterGraph2_Disconnect(graph, &testsink->sink.pin.IPin_iface);
+
+    init_pcm_mt(&mt, &format, 1, 32000, 8);
+    hr = IFilterGraph2_ConnectDirect(graph, source, &testsink->sink.pin.IPin_iface, &mt);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    ok(!!testsink->sink.pAllocator, "Expected an allocator.\n");
+    hr = IMemAllocator_GetProperties(testsink->sink.pAllocator, &props);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(props.cBuffers == 8, "Got %ld buffers.\n", props.cBuffers);
+    ok(props.cbBuffer == 4608, "Got size %ld.\n", props.cbBuffer);
+    ok(props.cbAlign == 1, "Got alignment %ld.\n", props.cbAlign);
+    ok(!props.cbPrefix, "Got prefix %ld.\n", props.cbPrefix);
+
+    IFilterGraph2_Disconnect(graph, source);
+    IFilterGraph2_Disconnect(graph, &testsink->sink.pin.IPin_iface);
+
+    CoCreateInstance(&CLSID_MemoryAllocator, NULL, CLSCTX_INPROC_SERVER,
+            &IID_IMemAllocator, (void **)&allocator);
+    testsink->sink.pAllocator = allocator;
+
+    hr = IMemAllocator_SetProperties(allocator, &req_props, &props);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    init_pcm_mt(&mt, &format, 1, 32000, 16);
+    hr = IFilterGraph2_ConnectDirect(graph, source, &testsink->sink.pin.IPin_iface, &mt);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    ok(testsink->sink.pAllocator == allocator, "Expected an allocator.\n");
+    hr = IMemAllocator_GetProperties(testsink->sink.pAllocator, &props);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(props.cBuffers == 8, "Got %ld buffers.\n", props.cBuffers);
+    ok(props.cbBuffer == 9216, "Got size %ld.\n", props.cbBuffer);
+    ok(props.cbAlign == 1, "Got alignment %ld.\n", props.cbAlign);
+    ok(!props.cbPrefix, "Got prefix %ld.\n", props.cbPrefix);
+
+    IFilterGraph2_Disconnect(graph, source);
+    IFilterGraph2_Disconnect(graph, &testsink->sink.pin.IPin_iface);
+
+    IFilterGraph2_Disconnect(graph, sink);
+    IFilterGraph2_Disconnect(graph, &testsource->source.pin.IPin_iface);
+
+    hr = IFilterGraph2_ConnectDirect(graph, &testsource->source.pin.IPin_iface, sink, &mp1_mt);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    init_pcm_mt(&mt, &format, 1, 32000, 16);
+    hr = IFilterGraph2_ConnectDirect(graph, source, &testsink->sink.pin.IPin_iface, &mt);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    ok(!!testsink->sink.pAllocator, "Expected an allocator.\n");
+    hr = IMemAllocator_GetProperties(testsink->sink.pAllocator, &props);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(props.cBuffers == 8, "Got %ld buffers.\n", props.cBuffers);
+    ok(props.cbBuffer == 3072, "Got size %ld.\n", props.cbBuffer);
+    ok(props.cbAlign == 1, "Got alignment %ld.\n", props.cbAlign);
+    ok(!props.cbPrefix, "Got prefix %ld.\n", props.cbPrefix);
+
+    IFilterGraph2_Disconnect(graph, source);
+    IFilterGraph2_Disconnect(graph, &testsink->sink.pin.IPin_iface);
+
+    IFilterGraph2_Disconnect(graph, sink);
+    IFilterGraph2_Disconnect(graph, &testsource->source.pin.IPin_iface);
 }
 
 static void test_connect_pin(void)
 {
     IBaseFilter *filter = create_mpeg_audio_codec();
-    struct testfilter testsource;
+    struct testfilter testsource, testsink;
+    AM_MEDIA_TYPE mt, source_mt, *pmt;
+    WAVEFORMATEX source_format;
     IPin *sink, *source, *peer;
+    IEnumMediaTypes *enummt;
     WAVEFORMATEX req_format;
     IMediaControl *control;
     IMemInputPin *meminput;
     AM_MEDIA_TYPE req_mt;
     IFilterGraph2 *graph;
-    AM_MEDIA_TYPE mt;
+    unsigned int i;
     HRESULT hr;
     ULONG ref;
 
     CoCreateInstance(&CLSID_FilterGraph, NULL, CLSCTX_INPROC_SERVER,
             &IID_IFilterGraph2, (void **)&graph);
     testfilter_init(&testsource);
+    testfilter_init(&testsink);
+    IFilterGraph2_AddFilter(graph, &testsink.filter.IBaseFilter_iface, L"sink");
     IFilterGraph2_AddFilter(graph, &testsource.filter.IBaseFilter_iface, L"source");
     IFilterGraph2_AddFilter(graph, filter, L"MPEG audio decoder");
     IBaseFilter_FindPin(filter, L"In", &sink);
     IBaseFilter_FindPin(filter, L"Out", &source);
     IPin_QueryInterface(sink, &IID_IMemInputPin, (void **)&meminput);
     IFilterGraph2_QueryInterface(graph, &IID_IMediaControl, (void **)&control);
+
+    test_source_allocator(graph, control, sink, source, &testsource, &testsink);
 
     /* Test sink connection. */
 
@@ -995,6 +1202,181 @@ static void test_connect_pin(void)
     hr = IMediaControl_Stop(control);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
+    hr = IPin_EnumMediaTypes(source, &enummt);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    for (i = 0; i < 2; ++i)
+    {
+        WAVEFORMATEX expect_format;
+        AM_MEDIA_TYPE expect_mt;
+
+        init_pcm_mt(&expect_mt, &expect_format, 1, 32000, i ? 8 : 16);
+
+        hr = IEnumMediaTypes_Next(enummt, 1, &pmt, NULL);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        if (hr != S_OK)
+            break;
+        ok(!memcmp(pmt, &expect_mt, offsetof(AM_MEDIA_TYPE, cbFormat)),
+                "%u: Media types didn't match.\n", i);
+        ok(!memcmp(pmt->pbFormat, &expect_format, sizeof(WAVEFORMATEX)),
+                "%u: Format blocks didn't match.\n", i);
+
+        DeleteMediaType(pmt);
+    }
+
+    hr = IEnumMediaTypes_Next(enummt, 1, &pmt, NULL);
+    ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
+
+    IEnumMediaTypes_Release(enummt);
+
+    test_sink_allocator(meminput);
+
+    /* Test source connection. */
+
+    peer = (IPin *)0xdeadbeef;
+    hr = IPin_ConnectedTo(source, &peer);
+    ok(hr == VFW_E_NOT_CONNECTED, "Got hr %#lx.\n", hr);
+    ok(!peer, "Got peer %p.\n", peer);
+
+    hr = IPin_ConnectionMediaType(source, &mt);
+    ok(hr == VFW_E_NOT_CONNECTED, "Got hr %#lx.\n", hr);
+
+    /* Exact connection. */
+
+    hr = IMediaControl_Pause(control);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    init_pcm_mt(&req_mt, &req_format, 1, 32000, 16);
+    hr = IFilterGraph2_ConnectDirect(graph, source, &testsink.sink.pin.IPin_iface, &req_mt);
+    ok(hr == VFW_E_NOT_STOPPED, "Got hr %#lx.\n", hr);
+    hr = IMediaControl_Stop(control);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    init_pcm_mt(&req_mt, &req_format, 1, 32000, 16);
+    hr = IFilterGraph2_ConnectDirect(graph, source, &testsink.sink.pin.IPin_iface, &req_mt);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IPin_ConnectedTo(source, &peer);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(peer == &testsink.sink.pin.IPin_iface, "Got peer %p.\n", peer);
+    IPin_Release(peer);
+
+    hr = IPin_ConnectionMediaType(source, &mt);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(compare_media_types(&mt, &req_mt), "Media types didn't match.\n");
+    ok(compare_media_types(&testsink.sink.pin.mt, &req_mt), "Media types didn't match.\n");
+    FreeMediaType(&mt);
+
+    hr = IMediaControl_Pause(control);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IFilterGraph2_Disconnect(graph, source);
+    ok(hr == VFW_E_NOT_STOPPED, "Got hr %#lx.\n", hr);
+    hr = IMediaControl_Stop(control);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IFilterGraph2_Disconnect(graph, source);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IFilterGraph2_Disconnect(graph, source);
+    ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
+    ok(testsink.sink.pin.peer == source, "Got peer %p.\n", testsink.sink.pin.peer);
+    IFilterGraph2_Disconnect(graph, &testsink.sink.pin.IPin_iface);
+
+    init_pcm_mt(&req_mt, &req_format, 1, 32000, 16);
+    req_mt.lSampleSize = 999;
+    req_mt.bTemporalCompression = TRUE;
+    hr = IFilterGraph2_ConnectDirect(graph, source, &testsink.sink.pin.IPin_iface, &req_mt);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(compare_media_types(&testsink.sink.pin.mt, &req_mt), "Media types didn't match.\n");
+    IFilterGraph2_Disconnect(graph, source);
+    IFilterGraph2_Disconnect(graph, &testsink.sink.pin.IPin_iface);
+
+    init_pcm_mt(&req_mt, &req_format, 1, 32000, 16);
+    req_mt.formattype = FORMAT_None;
+    hr = IFilterGraph2_ConnectDirect(graph, source, &testsink.sink.pin.IPin_iface, &req_mt);
+    ok(hr == VFW_E_TYPE_NOT_ACCEPTED, "Got hr %#lx.\n", hr);
+
+    /* Connection with wildcards. */
+
+    init_pcm_mt(&source_mt, &source_format, 1, 32000, 16);
+
+    init_pcm_mt(&req_mt, &req_format, 1, 32000, 16);
+    hr = IFilterGraph2_ConnectDirect(graph, source, &testsink.sink.pin.IPin_iface, NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(compare_media_types(&testsink.sink.pin.mt, &source_mt), "Media types didn't match.\n");
+    IFilterGraph2_Disconnect(graph, source);
+    IFilterGraph2_Disconnect(graph, &testsink.sink.pin.IPin_iface);
+
+    init_pcm_mt(&req_mt, &req_format, 1, 32000, 16);
+    req_mt.majortype = GUID_NULL;
+    hr = IFilterGraph2_ConnectDirect(graph, source, &testsink.sink.pin.IPin_iface, &req_mt);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(compare_media_types(&testsink.sink.pin.mt, &source_mt), "Media types didn't match.\n");
+    IFilterGraph2_Disconnect(graph, source);
+    IFilterGraph2_Disconnect(graph, &testsink.sink.pin.IPin_iface);
+
+    init_pcm_mt(&req_mt, &req_format, 1, 32000, 16);
+    req_mt.majortype = GUID_NULL;
+    req_mt.subtype = GUID_NULL;
+    hr = IFilterGraph2_ConnectDirect(graph, source, &testsink.sink.pin.IPin_iface, &req_mt);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(compare_media_types(&testsink.sink.pin.mt, &source_mt), "Media types didn't match.\n");
+    IFilterGraph2_Disconnect(graph, source);
+    IFilterGraph2_Disconnect(graph, &testsink.sink.pin.IPin_iface);
+
+    init_pcm_mt(&req_mt, &req_format, 1, 32000, 16);
+    req_mt.majortype = GUID_NULL;
+    req_mt.subtype = GUID_NULL;
+    req_mt.formattype = FORMAT_None;
+    hr = IFilterGraph2_ConnectDirect(graph, source, &testsink.sink.pin.IPin_iface, &req_mt);
+    ok(hr == VFW_E_NO_ACCEPTABLE_TYPES, "Got hr %#lx.\n", hr);
+
+    init_pcm_mt(&req_mt, &req_format, 1, 32000, 16);
+    req_mt.formattype = GUID_NULL;
+    hr = IFilterGraph2_ConnectDirect(graph, source, &testsink.sink.pin.IPin_iface, &req_mt);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(compare_media_types(&testsink.sink.pin.mt, &source_mt), "Media types didn't match.\n");
+    IFilterGraph2_Disconnect(graph, source);
+    IFilterGraph2_Disconnect(graph, &testsink.sink.pin.IPin_iface);
+
+    init_pcm_mt(&req_mt, &req_format, 1, 32000, 16);
+    req_mt.subtype = GUID_NULL;
+    req_mt.formattype = GUID_NULL;
+    hr = IFilterGraph2_ConnectDirect(graph, source, &testsink.sink.pin.IPin_iface, &req_mt);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(compare_media_types(&testsink.sink.pin.mt, &source_mt), "Media types didn't match.\n");
+    IFilterGraph2_Disconnect(graph, source);
+    IFilterGraph2_Disconnect(graph, &testsink.sink.pin.IPin_iface);
+
+    init_pcm_mt(&req_mt, &req_format, 1, 32000, 16);
+    req_mt.majortype = MEDIATYPE_Video;
+    req_mt.subtype = GUID_NULL;
+    req_mt.formattype = GUID_NULL;
+    hr = IFilterGraph2_ConnectDirect(graph, source, &testsink.sink.pin.IPin_iface, &req_mt);
+    ok(hr == VFW_E_NO_ACCEPTABLE_TYPES, "Got hr %#lx.\n", hr);
+
+    /* Test enumeration of sink media types. */
+
+    init_pcm_mt(&req_mt, &req_format, 1, 32000, 16);
+    req_mt.majortype = MEDIATYPE_Video;
+    req_mt.subtype = GUID_NULL;
+    req_mt.formattype = GUID_NULL;
+    testsink.mt = &req_mt;
+    hr = IFilterGraph2_ConnectDirect(graph, source, &testsink.sink.pin.IPin_iface, NULL);
+    ok(hr == VFW_E_NO_ACCEPTABLE_TYPES, "Got hr %#lx.\n", hr);
+
+    init_pcm_mt(&req_mt, &req_format, 1, 32000, 16);
+    req_mt.lSampleSize = 444;
+    testsink.mt = &req_mt;
+    hr = IFilterGraph2_ConnectDirect(graph, source, &testsink.sink.pin.IPin_iface, NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(compare_media_types(&testsink.sink.pin.mt, &req_mt), "Media types didn't match.\n");
+
+    hr = IFilterGraph2_Disconnect(graph, sink);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IFilterGraph2_Disconnect(graph, sink);
+    ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
+    ok(testsource.source.pin.peer == sink, "Got peer %p.\n", testsource.source.pin.peer);
+    IFilterGraph2_Disconnect(graph, &testsource.source.pin.IPin_iface);
+
     IMemInputPin_Release(meminput);
     IPin_Release(sink);
     IPin_Release(source);
@@ -1004,6 +1386,8 @@ static void test_connect_pin(void)
     ref = IBaseFilter_Release(filter);
     ok(!ref, "Got outstanding refcount %ld.\n", ref);
     ref = IBaseFilter_Release(&testsource.filter.IBaseFilter_iface);
+    ok(!ref, "Got outstanding refcount %ld.\n", ref);
+    ref = IBaseFilter_Release(&testsink.filter.IBaseFilter_iface);
     ok(!ref, "Got outstanding refcount %ld.\n", ref);
 }
 

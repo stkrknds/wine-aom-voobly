@@ -159,14 +159,12 @@ static void CDECL free_win_ptr( WND *win )
 
 static const struct user_callbacks user_funcs =
 {
-    AdjustWindowRectEx,
     CopyImage,
     EndMenu,
     ImmProcessKey,
     ImmTranslateMessage,
-    SetSystemMenu,
-    free_menu_items,
     free_win_ptr,
+    MENU_GetSysMenu,
     MENU_IsMenuActive,
     notify_ime,
     post_dde_message,

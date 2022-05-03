@@ -209,29 +209,6 @@ struct is_started_params
     HRESULT result;
 };
 
-#include <mmddk.h> /* temporary */
-
-typedef struct midi_src
-{
-    int                 state; /* -1 disabled, 0 is no recording started, 1 in recording, bit 2 set if in sys exclusive recording */
-    MIDIOPENDESC        midiDesc;
-    WORD                wFlags;
-    MIDIHDR            *lpQueueHdr;
-    unsigned char       incoming[3];
-    unsigned char       incPrev;
-    char                incLen;
-    UINT                startTime;
-    MIDIINCAPSW         caps;
-    int                 fd;
-} WINE_MIDIIN;
-
-struct midi_init_params
-{
-    UINT *err;
-    unsigned int num_srcs;
-    struct midi_src *srcs;
-};
-
 struct notify_context
 {
     BOOL send_notify;
@@ -267,10 +244,10 @@ struct midi_in_message_params
     struct notify_context *notify;
 };
 
-struct midi_seq_open_params
+struct midi_notify_wait_params
 {
-    int close;
-    int fd;
+    BOOL *quit;
+    struct notify_context *notify;
 };
 
 enum oss_funcs
@@ -298,19 +275,16 @@ enum oss_funcs
     oss_set_volumes,
     oss_set_event_handle,
     oss_is_started,
-    oss_midi_init,
+    oss_midi_release,
     oss_midi_out_message,
     oss_midi_in_message,
-
-    oss_midi_seq_open, /* temporary */
-    oss_midi_in_lock,
+    oss_midi_notify_wait,
 };
 
-NTSTATUS midi_init(void *args) DECLSPEC_HIDDEN;
+NTSTATUS midi_release(void *args) DECLSPEC_HIDDEN;
 NTSTATUS midi_out_message(void *args) DECLSPEC_HIDDEN;
 NTSTATUS midi_in_message(void *args) DECLSPEC_HIDDEN;
-NTSTATUS midi_seq_open(void *args) DECLSPEC_HIDDEN;
-NTSTATUS midi_in_lock(void *args) DECLSPEC_HIDDEN;
+NTSTATUS midi_notify_wait(void *args) DECLSPEC_HIDDEN;
 
 extern unixlib_handle_t oss_handle;
 

@@ -36,6 +36,8 @@ struct transform_ops
 {
     HRESULT (*sink_query_accept)(struct transform *filter, const AM_MEDIA_TYPE *mt);
     HRESULT (*source_query_accept)(struct transform *filter, const AM_MEDIA_TYPE *mt);
+    HRESULT (*source_get_media_type)(struct transform *filter, unsigned int index, AM_MEDIA_TYPE *mt);
+    HRESULT (*source_decide_buffer_size)(struct transform *filter, IMemAllocator *allocator, ALLOCATOR_PROPERTIES *props);
 };
 
 static inline struct transform *impl_from_strmbase_filter(struct strmbase_filter *iface)
@@ -64,10 +66,37 @@ static void transform_destroy(struct strmbase_filter *iface)
     free(filter);
 }
 
+static HRESULT transform_init_stream(struct strmbase_filter *iface)
+{
+    struct transform *filter = impl_from_strmbase_filter(iface);
+    HRESULT hr;
+
+    if (filter->source.pin.peer)
+    {
+        hr = IMemAllocator_Commit(filter->source.pAllocator);
+        if (FAILED(hr))
+            ERR("Failed to commit allocator, hr %#lx.\n", hr);
+    }
+
+    return S_OK;
+}
+
+static HRESULT transform_cleanup_stream(struct strmbase_filter *iface)
+{
+    struct transform *filter = impl_from_strmbase_filter(iface);
+
+    if (filter->source.pin.peer)
+        IMemAllocator_Decommit(filter->source.pAllocator);
+
+    return S_OK;
+}
+
 static const struct strmbase_filter_ops filter_ops =
 {
     .filter_get_pin = transform_get_pin,
     .filter_destroy = transform_destroy,
+    .filter_init_stream = transform_init_stream,
+    .filter_cleanup_stream = transform_cleanup_stream,
 };
 
 static HRESULT transform_sink_query_accept(struct strmbase_pin *pin, const AM_MEDIA_TYPE *mt)
@@ -103,11 +132,27 @@ static HRESULT transform_source_query_accept(struct strmbase_pin *pin, const AM_
     return filter->ops->source_query_accept(filter, mt);
 }
 
+static HRESULT transform_source_get_media_type(struct strmbase_pin *pin, unsigned int index, AM_MEDIA_TYPE *mt)
+{
+    struct transform *filter = impl_from_strmbase_filter(pin->filter);
+
+    return filter->ops->source_get_media_type(filter, index, mt);
+}
+
+static HRESULT WINAPI transform_source_DecideBufferSize(struct strmbase_source *pin, IMemAllocator *allocator, ALLOCATOR_PROPERTIES *props)
+{
+    struct transform *filter = impl_from_strmbase_filter(pin->pin.filter);
+
+    return filter->ops->source_decide_buffer_size(filter, allocator, props);
+}
+
 static const struct strmbase_source_ops source_ops =
 {
     .base.pin_query_accept = transform_source_query_accept,
+    .base.pin_get_media_type = transform_source_get_media_type,
     .pfnAttemptConnection = BaseOutputPinImpl_AttemptConnection,
     .pfnDecideAllocator = BaseOutputPinImpl_DecideAllocator,
+    .pfnDecideBufferSize = transform_source_DecideBufferSize,
 };
 
 static HRESULT transform_create(IUnknown *outer, const CLSID *clsid, const struct transform_ops *ops, struct transform **out)
@@ -189,10 +234,64 @@ static HRESULT mpeg_audio_codec_source_query_accept(struct transform *filter, co
     return S_OK;
 }
 
+static HRESULT mpeg_audio_codec_source_get_media_type(struct transform *filter, unsigned int index, AM_MEDIA_TYPE *mt)
+{
+    const MPEG1WAVEFORMAT *input_format;
+    WAVEFORMATEX *output_format;
+
+    if (!filter->sink.pin.peer)
+        return VFW_S_NO_MORE_ITEMS;
+
+    if (index > 1)
+        return VFW_S_NO_MORE_ITEMS;
+
+    input_format = (const MPEG1WAVEFORMAT *)filter->sink.pin.mt.pbFormat;
+
+    output_format = CoTaskMemAlloc(sizeof(*output_format));
+    if (!output_format)
+        return E_OUTOFMEMORY;
+
+    memset(output_format, 0, sizeof(*output_format));
+    output_format->wFormatTag = WAVE_FORMAT_PCM;
+    output_format->nSamplesPerSec = input_format->wfx.nSamplesPerSec;
+    output_format->nChannels = input_format->wfx.nChannels;
+    output_format->wBitsPerSample = index ? 8 : 16;
+    output_format->nBlockAlign = output_format->nChannels * output_format->wBitsPerSample / 8;
+    output_format->nAvgBytesPerSec = output_format->nBlockAlign * output_format->nSamplesPerSec;
+
+    memset(mt, 0, sizeof(*mt));
+    mt->majortype = MEDIATYPE_Audio;
+    mt->subtype = MEDIASUBTYPE_PCM;
+    mt->bFixedSizeSamples = TRUE;
+    mt->lSampleSize = output_format->nBlockAlign;
+    mt->formattype = FORMAT_WaveFormatEx;
+    mt->cbFormat = sizeof(*output_format);
+    mt->pbFormat = (BYTE *)output_format;
+
+    return S_OK;
+}
+
+static HRESULT mpeg_audio_codec_source_decide_buffer_size(struct transform *filter, IMemAllocator *allocator, ALLOCATOR_PROPERTIES *props)
+{
+    MPEG1WAVEFORMAT *input_format = (MPEG1WAVEFORMAT *)filter->sink.pin.mt.pbFormat;
+    WAVEFORMATEX *output_format = (WAVEFORMATEX *)filter->source.pin.mt.pbFormat;
+    LONG frame_samples = (input_format->fwHeadLayer & ACM_MPEG_LAYER2) ? 1152 : 384;
+    LONG frame_size = frame_samples * output_format->nBlockAlign;
+    ALLOCATOR_PROPERTIES ret_props;
+
+    props->cBuffers = max(props->cBuffers, 8);
+    props->cbBuffer = max(props->cbBuffer, frame_size * 4);
+    props->cbAlign = max(props->cbAlign, 1);
+
+    return IMemAllocator_SetProperties(allocator, props, &ret_props);
+}
+
 static const struct transform_ops mpeg_audio_codec_transform_ops =
 {
     mpeg_audio_codec_sink_query_accept,
     mpeg_audio_codec_source_query_accept,
+    mpeg_audio_codec_source_get_media_type,
+    mpeg_audio_codec_source_decide_buffer_size,
 };
 
 HRESULT mpeg_audio_codec_create(IUnknown *outer, IUnknown **out)
