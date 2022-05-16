@@ -6449,3 +6449,846 @@ BOOL WINAPI SetUserGeoName(PWSTR geo_name)
     }
     return SetUserGeoID( geo->id );
 }
+
+
+static void grouping_to_string( UINT grouping, WCHAR *buffer )
+{
+    WCHAR tmp[10], *p = tmp;
+
+    while (grouping)
+    {
+        *p++ = '0' + grouping % 10;
+        grouping /= 10;
+    }
+    while (p > tmp)
+    {
+        *buffer++ = *(--p);
+        if (p > tmp) *buffer++ = ';';
+    }
+    *buffer = 0;
+}
+
+
+static WCHAR *prepend_str( WCHAR *end, const WCHAR *str )
+{
+    UINT len = wcslen( str );
+    return memcpy( end - len, str, len * sizeof(WCHAR) );
+}
+
+
+/* format a positive number with decimal part; helper for get_number_format */
+static WCHAR *format_number( WCHAR *end, const WCHAR *value, const WCHAR *decimal_sep,
+                             const WCHAR *thousand_sep, const WCHAR *grouping, UINT digits, BOOL lzero )
+{
+    const WCHAR *frac = NULL;
+    BOOL round = FALSE;
+    UINT i, len = 0;
+
+    *(--end) = 0;
+
+    for (i = 0; value[i]; i++)
+    {
+        if (value[i] >= '0' && value[i] <= '9') continue;
+        if (value[i] != '.') return NULL;
+        if (frac) return NULL;
+        frac = value + i + 1;
+    }
+
+    /* format fractional part */
+
+    len = frac ? wcslen( frac ) : 0;
+
+    if (len > digits)
+    {
+        round = frac[digits] >= '5';
+        len = digits;
+    }
+    while (digits > len)
+    {
+        (*--end) = '0';
+        digits--;
+    }
+    while (len)
+    {
+        WCHAR ch = frac[--len];
+        if (round)
+        {
+            if (ch != '9')
+            {
+                ch++;
+                round = FALSE;
+            }
+            else ch = '0';
+        }
+        *(--end) = ch;
+    }
+    if (*end) end = prepend_str( end, decimal_sep );
+
+    /* format integer part */
+
+    len = frac ? frac - value - 1 : wcslen( value );
+
+    while (len && *value == '0')
+    {
+        value++;
+        len--;
+    }
+    if (len) lzero = FALSE;
+
+    while (len)
+    {
+        UINT limit = *grouping == '0' ? ~0u : *grouping - '0';
+        while (len && limit--)
+        {
+            WCHAR ch = value[--len];
+            if (round)
+            {
+                if (ch != '9')
+                {
+                    ch++;
+                    round = FALSE;
+                }
+                else ch = '0';
+            }
+            *(--end) = ch;
+        }
+        if (len) end = prepend_str( end, thousand_sep );
+        if (grouping[1] == ';') grouping += 2;
+    }
+    if (round) *(--end) = '1';
+    else if (lzero) *(--end) = '0';
+    return end;
+}
+
+
+static int get_number_format( const NLS_LOCALE_DATA *locale, DWORD flags, const WCHAR *value,
+                              const NUMBERFMTW *format, WCHAR *buffer, int len )
+{
+    WCHAR *num, fmt_decimal[4], fmt_thousand[4], fmt_neg[5], grouping[20], output[256];
+    const WCHAR *decimal_sep = fmt_decimal, *thousand_sep = fmt_thousand;
+    DWORD digits, lzero, order;
+    int ret = 0;
+    BOOL negative = (*value == '-');
+
+    flags &= LOCALE_NOUSEROVERRIDE;
+
+    if (!format)
+    {
+        get_locale_info( locale, 0, LOCALE_SGROUPING | flags, grouping, ARRAY_SIZE(grouping) );
+        get_locale_info( locale, 0, LOCALE_SDECIMAL | flags, fmt_decimal, ARRAY_SIZE(fmt_decimal) );
+        get_locale_info( locale, 0, LOCALE_STHOUSAND | flags, fmt_thousand, ARRAY_SIZE(fmt_thousand) );
+        get_locale_info( locale, 0, LOCALE_IDIGITS | LOCALE_RETURN_NUMBER | flags,
+                         (WCHAR *)&digits, sizeof(DWORD)/sizeof(WCHAR) );
+        get_locale_info( locale, 0, LOCALE_ILZERO | LOCALE_RETURN_NUMBER | flags,
+                         (WCHAR *)&lzero, sizeof(DWORD)/sizeof(WCHAR) );
+        get_locale_info( locale, 0, LOCALE_INEGNUMBER | LOCALE_RETURN_NUMBER | flags,
+                         (WCHAR *)&order, sizeof(DWORD)/sizeof(WCHAR) );
+    }
+    else
+    {
+        if (flags)
+        {
+            SetLastError( ERROR_INVALID_FLAGS );
+            return 0;
+        }
+        decimal_sep = format->lpDecimalSep;
+        thousand_sep = format->lpThousandSep;
+        grouping_to_string( format->Grouping, grouping );
+        digits = format->NumDigits;
+        lzero = format->LeadingZero;
+        order = format->NegativeOrder;
+        if (!decimal_sep || !thousand_sep)
+        {
+            SetLastError( ERROR_INVALID_PARAMETER );
+            return 0;
+        }
+    }
+
+    if (negative)
+    {
+        value++;
+        get_locale_info( locale, 0, LOCALE_SNEGATIVESIGN | flags, fmt_neg, ARRAY_SIZE(fmt_neg) );
+    }
+
+    if (!(num = format_number( output + ARRAY_SIZE(output) - 6, value,
+                               decimal_sep, thousand_sep, grouping, digits, lzero )))
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return 0;
+    }
+
+    if (negative)
+    {
+        switch (order)
+        {
+        case 0:  /* (1.1) */
+            num = prepend_str( num, L"(" );
+            wcscat( num, L")" );
+            break;
+        case 2:  /* - 1.1 */
+            num = prepend_str( num, L" " );
+            /* fall through */
+        case 1:  /* -1.1 */
+            num = prepend_str( num, fmt_neg );
+            break;
+        case 4:  /* 1.1 - */
+            wcscat( num, L" " );
+            /* fall through */
+        case 3:  /* 1.1- */
+            wcscat( num, fmt_neg );
+            break;
+        default:
+            SetLastError( ERROR_INVALID_PARAMETER );
+            return 0;
+        }
+    }
+
+    ret = wcslen( num ) + 1;
+    if (!len) return ret;
+    lstrcpynW( buffer, num, len );
+    if (ret > len)
+    {
+        SetLastError( ERROR_INSUFFICIENT_BUFFER );
+        return 0;
+    }
+    return ret;
+}
+
+
+static int get_currency_format( const NLS_LOCALE_DATA *locale, DWORD flags, const WCHAR *value,
+                                const CURRENCYFMTW *format, WCHAR *buffer, int len )
+{
+    WCHAR *num, fmt_decimal[4], fmt_thousand[4], fmt_symbol[13], fmt_neg[5], grouping[20], output[256];
+    const WCHAR *decimal_sep = fmt_decimal, *thousand_sep = fmt_thousand, *symbol = fmt_symbol;
+    DWORD digits, lzero, pos_order, neg_order;
+    int ret = 0;
+    BOOL negative = (*value == '-');
+
+    flags &= LOCALE_NOUSEROVERRIDE;
+
+    if (!format)
+    {
+        get_locale_info( locale, 0, LOCALE_SCURRENCY | flags, fmt_symbol, ARRAY_SIZE(fmt_symbol) );
+        get_locale_info( locale, 0, LOCALE_SMONGROUPING | flags, grouping, ARRAY_SIZE(grouping) );
+        get_locale_info( locale, 0, LOCALE_SMONDECIMALSEP | flags, fmt_decimal, ARRAY_SIZE(fmt_decimal) );
+        get_locale_info( locale, 0, LOCALE_SMONTHOUSANDSEP | flags, fmt_thousand, ARRAY_SIZE(fmt_thousand) );
+        get_locale_info( locale, 0, LOCALE_ICURRDIGITS | LOCALE_RETURN_NUMBER | flags,
+                         (WCHAR *)&digits, sizeof(DWORD)/sizeof(WCHAR) );
+        get_locale_info( locale, 0, LOCALE_ILZERO | LOCALE_RETURN_NUMBER | flags,
+                         (WCHAR *)&lzero, sizeof(DWORD)/sizeof(WCHAR) );
+        get_locale_info( locale, 0, LOCALE_ICURRENCY | LOCALE_RETURN_NUMBER | flags,
+                         (WCHAR *)&pos_order, sizeof(DWORD)/sizeof(WCHAR) );
+        get_locale_info( locale, 0, LOCALE_INEGCURR | LOCALE_RETURN_NUMBER | flags,
+                         (WCHAR *)&neg_order, sizeof(DWORD)/sizeof(WCHAR) );
+    }
+    else
+    {
+        if (flags)
+        {
+            SetLastError( ERROR_INVALID_FLAGS );
+            return 0;
+        }
+        decimal_sep = format->lpDecimalSep;
+        thousand_sep = format->lpThousandSep;
+        symbol = format->lpCurrencySymbol;
+        grouping_to_string( format->Grouping, grouping );
+        digits = format->NumDigits;
+        lzero = format->LeadingZero;
+        pos_order = format->PositiveOrder;
+        neg_order = format->NegativeOrder;
+        if (!decimal_sep || !thousand_sep || !symbol)
+        {
+            SetLastError( ERROR_INVALID_PARAMETER );
+            return 0;
+        }
+    }
+
+    if (negative)
+    {
+        value++;
+        get_locale_info( locale, 0, LOCALE_SNEGATIVESIGN | flags, fmt_neg, ARRAY_SIZE(fmt_neg) );
+    }
+
+    if (!(num = format_number( output + ARRAY_SIZE(output) - 20, value,
+                               decimal_sep, thousand_sep, grouping, digits, lzero )))
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return 0;
+    }
+
+    if (negative)
+    {
+        switch (neg_order)
+        {
+        case 14:  /* ($ 1.1) */
+            num = prepend_str( num, L" " );
+            /* fall through */
+        case 0:  /* ($1.1) */
+            num = prepend_str( num, symbol );
+            num = prepend_str( num, L"(" );
+            wcscat( num, L")" );
+            break;
+        case 9:  /* -$ 1.1 */
+            num = prepend_str( num, L" " );
+            /* fall through */
+        case 1:  /* -$1.1 */
+            num = prepend_str( num, symbol );
+            num = prepend_str( num, fmt_neg );
+            break;
+        case 2:  /* $-1.1 */
+            num = prepend_str( num, fmt_neg );
+            num = prepend_str( num, symbol );
+            break;
+        case 11:  /* $ 1.1- */
+            num = prepend_str( num, L" " );
+            /* fall through */
+        case 3:  /* $1.1- */
+            num = prepend_str( num, symbol );
+            wcscat( num, fmt_neg );
+            break;
+        case 15:  /* (1.1 $) */
+            wcscat( num, L" " );
+            /* fall through */
+        case 4:  /* (1.1$) */
+            wcscat( num, symbol );
+            num = prepend_str( num, L"(" );
+            wcscat( num, L")" );
+            break;
+        case 8:  /* -1.1 $ */
+            wcscat( num, L" " );
+            /* fall through */
+        case 5:  /* -1.1$ */
+            num = prepend_str( num, fmt_neg );
+            wcscat( num, symbol );
+            break;
+        case 6:  /* 1.1-$ */
+            wcscat( num, fmt_neg );
+            wcscat( num, symbol );
+            break;
+        case 10:  /* 1.1 $- */
+            wcscat( num, L" " );
+            /* fall through */
+        case 7:  /* 1.1$- */
+            wcscat( num, symbol );
+            wcscat( num, fmt_neg );
+            break;
+        case 12:  /* $ -1.1 */
+            num = prepend_str( num, fmt_neg );
+            num = prepend_str( num, L" " );
+            num = prepend_str( num, symbol );
+            break;
+        case 13:  /* 1.1- $ */
+            wcscat( num, fmt_neg );
+            wcscat( num, L" " );
+            wcscat( num, symbol );
+            break;
+        default:
+            SetLastError( ERROR_INVALID_PARAMETER );
+            return 0;
+        }
+    }
+    else
+    {
+        switch (pos_order)
+        {
+        case 2: /* $ 1.1 */
+            num = prepend_str( num, L" " );
+            /* fall through */
+        case 0: /* $1.1 */
+            num = prepend_str( num, symbol );
+            break;
+        case 3: /* 1.1 $ */
+            wcscat( num, L" " );
+            /* fall through */
+        case 1: /* 1.1$ */
+            wcscat( num, symbol );
+            break;
+        default:
+            SetLastError( ERROR_INVALID_PARAMETER );
+            return 0;
+        }
+    }
+
+    ret = wcslen( num ) + 1;
+    if (!len) return ret;
+    lstrcpynW( buffer, num, len );
+    if (ret > len)
+    {
+        SetLastError( ERROR_INSUFFICIENT_BUFFER );
+        return 0;
+    }
+    return ret;
+}
+
+
+/* get the length of a date/time formatting pattern */
+static int get_pattern_len( const WCHAR *pattern, const WCHAR *accept )
+{
+    int i;
+
+    if (*pattern == '\'')
+    {
+        for (i = 1; pattern[i]; i++)
+        {
+            if (pattern[i] != '\'') continue;
+            if (pattern[++i] != '\'') return i;
+        }
+        return i;
+    }
+    if (!wcschr( accept, *pattern )) return 1;
+    for (i = 1; pattern[i]; i++) if (pattern[i] != pattern[0]) break;
+    return i;
+}
+
+
+static int get_date_format( const NLS_LOCALE_DATA *locale, DWORD flags, const SYSTEMTIME *systime,
+                            const WCHAR *format, WCHAR *buffer, int len )
+{
+    DWORD override = flags & LOCALE_NOUSEROVERRIDE;
+    DWORD genitive = 0;
+    WCHAR *p, fmt[80], output[256];
+    SYSTEMTIME time;
+    int ret, val, count, i;
+
+    if (!format)
+    {
+        if (flags & DATE_USE_ALT_CALENDAR) FIXME( "alt calendar not supported\n" );
+        switch (flags & (DATE_SHORTDATE | DATE_LONGDATE | DATE_YEARMONTH | DATE_MONTHDAY))
+        {
+        case 0:
+        case DATE_SHORTDATE:
+            get_locale_info( locale, 0, LOCALE_SSHORTDATE | override, fmt, ARRAY_SIZE(fmt) );
+            break;
+        case DATE_LONGDATE:
+            get_locale_info( locale, 0, LOCALE_SLONGDATE | override, fmt, ARRAY_SIZE(fmt) );
+            break;
+        case DATE_YEARMONTH:
+            get_locale_info( locale, 0, LOCALE_SYEARMONTH | override, fmt, ARRAY_SIZE(fmt) );
+            break;
+        case DATE_MONTHDAY:
+            get_locale_info( locale, 0, LOCALE_SMONTHDAY | override, fmt, ARRAY_SIZE(fmt) );
+            break;
+        default:
+            SetLastError( ERROR_INVALID_FLAGS );
+            return 0;
+        }
+        format = fmt;
+    }
+    else if (override || (flags & (DATE_SHORTDATE | DATE_LONGDATE | DATE_YEARMONTH | DATE_MONTHDAY)))
+    {
+        SetLastError( ERROR_INVALID_FLAGS );
+        return 0;
+    }
+
+    if (systime)
+    {
+        FILETIME ft;
+
+        time = *systime;
+        time.wHour = time.wMinute = time.wSecond = time.wMilliseconds = 0;
+        if (!SystemTimeToFileTime( &time, &ft ) || !FileTimeToSystemTime( &ft, &time )) return 0;
+    }
+    else GetLocalTime( &time );
+
+    for (p = output; *format; format += count)
+    {
+        count = get_pattern_len( format, L"yMd" );
+
+        switch (*format)
+        {
+        case '\'':
+            for (i = 1; i < count; i++)
+            {
+                if (format[i] == '\'') i++;
+                if (i < count) *p++ = format[i];
+            }
+            break;
+
+        case 'y':
+            p += swprintf( p, output + ARRAY_SIZE(output) - p, L"%02u",
+                           (count <= 2) ? time.wYear % 100 : time.wYear );
+            break;
+
+        case 'M':
+            if (count <= 2)
+            {
+                p += swprintf( p, output + ARRAY_SIZE(output) - p, L"%.*u", count, time.wMonth );
+                break;
+            }
+            val = (count == 3 ? LOCALE_SABBREVMONTHNAME1 : LOCALE_SMONTHNAME1) + time.wMonth - 1;
+            if (!genitive)
+            {
+                for (i = count; format[i]; i += get_pattern_len( format, L"yMd" ))
+                {
+                    if (format[i] != 'd') continue;
+                    if (format[i + 1] != 'd' || format[i + 2] != 'd')
+                        genitive = LOCALE_RETURN_GENITIVE_NAMES;
+                    break;
+                }
+            }
+            p += get_locale_info( locale, 0, val | override | genitive,
+                                  p, output + ARRAY_SIZE(output) - p ) - 1;
+            break;
+
+        case 'd':
+            if (count <= 2)
+            {
+                genitive = LOCALE_RETURN_GENITIVE_NAMES;
+                p += swprintf( p, output + ARRAY_SIZE(output) - p, L"%.*u", count, time.wDay );
+                break;
+            }
+            genitive = 0;
+            val = (count == 3 ? LOCALE_SABBREVDAYNAME1 : LOCALE_SDAYNAME1) + (time.wDayOfWeek + 6) % 7;
+            p += get_locale_info( locale, 0, val | override, p, output + ARRAY_SIZE(output) - p ) - 1;
+            break;
+
+        case 'g':
+            p += locale_return_string( count >= 2 ? locale->serastring : locale->sabbreverastring,
+                                       override, p, output + ARRAY_SIZE(output) - p ) - 1;
+            break;
+
+        default:
+            *p++ = *format;
+            break;
+        }
+    }
+    *p++ = 0;
+    ret = p - output;
+
+    if (!len) return ret;
+    lstrcpynW( buffer, output, len );
+    if (ret > len)
+    {
+        SetLastError( ERROR_INSUFFICIENT_BUFFER );
+        return 0;
+    }
+    return ret;
+}
+
+
+static int get_time_format( const NLS_LOCALE_DATA *locale, DWORD flags, const SYSTEMTIME *systime,
+                            const WCHAR *format, WCHAR *buffer, int len )
+{
+    DWORD override = flags & LOCALE_NOUSEROVERRIDE;
+    WCHAR *p, *last, fmt[80], output[256];
+    SYSTEMTIME time;
+    int i, ret, val, count;
+    BOOL skip = FALSE;
+
+    if (!format)
+    {
+        get_locale_info( locale, 0, LOCALE_STIMEFORMAT | override, fmt, ARRAY_SIZE(fmt) );
+        format = fmt;
+    }
+    else if (override)
+    {
+        SetLastError( ERROR_INVALID_FLAGS );
+        return 0;
+    }
+
+    if (systime)
+    {
+        time = *systime;
+        if (time.wMilliseconds > 999 || time.wSecond > 59 || time.wMinute > 59 || time.wHour > 23)
+        {
+            SetLastError( ERROR_INVALID_PARAMETER );
+            return 0;
+        }
+    }
+    else GetLocalTime( &time );
+
+    for (p = last = output; *format; format += count)
+    {
+        count = get_pattern_len( format, L"Hhmst" );
+
+        switch (*format)
+        {
+        case '\'':
+            for (i = 1; i < count; i++)
+            {
+                if (format[i] == '\'') i++;
+                if (!skip && i < count) *p++ = format[i];
+            }
+            continue;
+
+        case 'H':
+            val = time.wHour;
+            break;
+
+        case 'h':
+            val = time.wHour;
+            if (!(flags & TIME_FORCE24HOURFORMAT))
+            {
+                val %= 12;
+                if (!val) val = 12;
+            }
+            break;
+
+        case 'm':
+            if (flags & TIME_NOMINUTESORSECONDS)
+            {
+                p = last;
+                skip = TRUE;
+                continue;
+            }
+            val = time.wMinute;
+            break;
+
+        case 's':
+            if (flags & (TIME_NOMINUTESORSECONDS | TIME_NOSECONDS))
+            {
+                p = last;
+                skip = TRUE;
+                continue;
+            }
+            val = time.wSecond;
+            break;
+
+        case 't':
+            if (flags & TIME_NOTIMEMARKER)
+            {
+                p = last;
+                skip = TRUE;
+                continue;
+            }
+            val = time.wHour < 12 ? LOCALE_S1159 : LOCALE_S2359;
+            ret = get_locale_info( locale, 0, val | override, p, output + ARRAY_SIZE(output) - p );
+            p += (count > 1) ? ret - 1 : 1;
+            skip = FALSE;
+            continue;
+
+        default:
+            if (!skip || *format == ' ') *p++ = *format;
+            continue;
+        }
+
+        p += swprintf( p, output + ARRAY_SIZE(output) - p, L"%.*u", min( 2, count ), val );
+        last = p;
+        skip = FALSE;
+    }
+    *p++ = 0;
+    ret = p - output;
+
+    if (!len) return ret;
+    lstrcpynW( buffer, output, len );
+    if (ret > len)
+    {
+        SetLastError( ERROR_INSUFFICIENT_BUFFER );
+        return 0;
+    }
+    return ret;
+}
+
+
+/**************************************************************************
+ *	GetNumberFormatW  (kernelbase.@)
+ */
+int WINAPI GetNumberFormatW( LCID lcid, DWORD flags, const WCHAR *value,
+                             const NUMBERFMTW *format, WCHAR *buffer, int len )
+{
+    const NLS_LOCALE_DATA *locale = NlsValidateLocale( &lcid, 0 );
+
+    if (len < 0 || (len && !buffer) || !value || !locale)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return 0;
+    }
+
+    TRACE( "(%04lx,%lx,%s,%p,%p,%d)\n", lcid, flags, debugstr_w(value), format, buffer, len );
+    return get_number_format( locale, flags, value, format, buffer, len );
+}
+
+
+/**************************************************************************
+ *	GetNumberFormatEx  (kernelbase.@)
+ */
+int WINAPI GetNumberFormatEx( const WCHAR *name, DWORD flags, const WCHAR *value,
+                              const NUMBERFMTW *format, WCHAR *buffer, int len )
+{
+    LCID lcid;
+    const NLS_LOCALE_DATA *locale = get_locale_by_name( name, &lcid );
+
+    if (len < 0 || (len && !buffer) || !value || !locale)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return 0;
+    }
+
+    TRACE( "(%s,%lx,%s,%p,%p,%d)\n", debugstr_w(name), flags, debugstr_w(value), format, buffer, len );
+    return get_number_format( locale, flags, value, format, buffer, len );
+}
+
+
+/***********************************************************************
+ *	GetCurrencyFormatW  (kernelbase.@)
+ */
+int WINAPI GetCurrencyFormatW( LCID lcid, DWORD flags, const WCHAR *value,
+                               const CURRENCYFMTW *format, WCHAR *buffer, int len )
+{
+    const NLS_LOCALE_DATA *locale = NlsValidateLocale( &lcid, 0 );
+
+    if (len < 0 || (len && !buffer) || !value || !locale)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return 0;
+    }
+
+    TRACE( "(%04lx,%lx,%s,%p,%p,%d)\n", lcid, flags, debugstr_w(value), format, buffer, len );
+    return get_currency_format( locale, flags, value, format, buffer, len );
+}
+
+
+/***********************************************************************
+ *	GetCurrencyFormatEx  (kernelbase.@)
+ */
+int WINAPI GetCurrencyFormatEx( const WCHAR *name, DWORD flags, const WCHAR *value,
+                                const CURRENCYFMTW *format, WCHAR *buffer, int len )
+{
+    LCID lcid;
+    const NLS_LOCALE_DATA *locale = get_locale_by_name( name, &lcid );
+
+    if (len < 0 || (len && !buffer) || !value || !locale)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return 0;
+    }
+
+    TRACE( "(%s,%lx,%s,%p,%p,%d)\n", debugstr_w(name), flags, debugstr_w(value), format, buffer, len );
+    return get_currency_format( locale, flags, value, format, buffer, len );
+}
+
+
+/******************************************************************************
+ *           GetDateFormatA (KERNEL32.@)
+ */
+int WINAPI GetDateFormatA( LCID lcid, DWORD flags, const SYSTEMTIME *time,
+                           const char *format, char *buffer, int len )
+{
+    UINT cp = get_lcid_codepage( lcid, flags );
+    WCHAR formatW[128], output[128];
+    int ret;
+
+    TRACE( "(0x%04lx,0x%08lx,%p,%s,%p,%d)\n", lcid, flags, time, debugstr_a(format), buffer, len );
+
+    if (len < 0 || (len && !buffer))
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return 0;
+    }
+    if (format)
+    {
+        MultiByteToWideChar( cp, 0, format, -1, formatW, ARRAY_SIZE(formatW) );
+        ret = GetDateFormatW( lcid, flags, time, formatW, output, ARRAY_SIZE(output) );
+    }
+    else ret = GetDateFormatW( lcid, flags, time, NULL, output, ARRAY_SIZE(output) );
+
+    if (ret) ret = WideCharToMultiByte( cp, 0, output, -1, buffer, len, 0, 0 );
+    return ret;
+}
+
+
+/***********************************************************************
+ *	GetDateFormatW  (kernelbase.@)
+ */
+int WINAPI GetDateFormatW( LCID lcid, DWORD flags, const SYSTEMTIME *systime,
+                           const WCHAR *format, WCHAR *buffer, int len )
+{
+    const NLS_LOCALE_DATA *locale = NlsValidateLocale( &lcid, 0 );
+
+    if (len < 0 || (len && !buffer) || !locale)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return 0;
+    }
+
+    TRACE( "(%04lx,%lx,%p,%s,%p,%d)\n", lcid, flags, systime, debugstr_w(format), buffer, len );
+    return get_date_format( locale, flags, systime, format, buffer, len );
+}
+
+
+/***********************************************************************
+ *	GetDateFormatEx  (kernelbase.@)
+ */
+int WINAPI GetDateFormatEx( const WCHAR *name, DWORD flags, const SYSTEMTIME *systime,
+                            const WCHAR *format, WCHAR *buffer, int len, const WCHAR *calendar )
+{
+    LCID lcid;
+    const NLS_LOCALE_DATA *locale = get_locale_by_name( name, &lcid );
+
+    if (len < 0 || (len && !buffer) || !locale || calendar)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return 0;
+    }
+
+    TRACE( "(%s,%lx,%p,%s,%p,%d)\n", debugstr_w(name), flags, systime, debugstr_w(format), buffer, len );
+    return get_date_format( locale, flags, systime, format, buffer, len );
+}
+
+
+/******************************************************************************
+ *	GetTimeFormatA  (kernelbase.@)
+ */
+int WINAPI GetTimeFormatA( LCID lcid, DWORD flags, const SYSTEMTIME *time,
+                           const char *format, char *buffer, int len )
+{
+    UINT cp = get_lcid_codepage( lcid, flags );
+    WCHAR formatW[128], output[128];
+    int ret;
+
+    TRACE( "(0x%04lx,0x%08lx,%p,%s,%p,%d)\n", lcid, flags, time, debugstr_a(format), buffer, len );
+
+    if (len < 0 || (len && !buffer))
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return 0;
+    }
+    if (format)
+    {
+        MultiByteToWideChar( cp, 0, format, -1, formatW, ARRAY_SIZE(formatW) );
+        ret = GetTimeFormatW( lcid, flags, time, formatW, output, ARRAY_SIZE(output) );
+    }
+    else ret = GetTimeFormatW( lcid, flags, time, NULL, output, ARRAY_SIZE(output) );
+
+    if (ret) ret = WideCharToMultiByte( cp, 0, output, -1, buffer, len, 0, 0 );
+    return ret;
+}
+
+
+/***********************************************************************
+ *	GetTimeFormatW  (kernelbase.@)
+ */
+int WINAPI GetTimeFormatW( LCID lcid, DWORD flags, const SYSTEMTIME *systime,
+                            const WCHAR *format, WCHAR *buffer, int len )
+{
+    const NLS_LOCALE_DATA *locale = NlsValidateLocale( &lcid, 0 );
+
+    if (len < 0 || (len && !buffer) || !locale)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return 0;
+    }
+
+    TRACE( "(%04lx,%lx,%p,%s,%p,%d)\n", lcid, flags, systime, debugstr_w(format), buffer, len );
+    return get_time_format( locale, flags, systime, format, buffer, len );
+}
+
+
+/***********************************************************************
+ *	GetTimeFormatEx  (kernelbase.@)
+ */
+int WINAPI GetTimeFormatEx( const WCHAR *name, DWORD flags, const SYSTEMTIME *systime,
+                            const WCHAR *format, WCHAR *buffer, int len )
+{
+    LCID lcid;
+    const NLS_LOCALE_DATA *locale = get_locale_by_name( name, &lcid );
+
+    if (len < 0 || (len && !buffer) || !locale)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return 0;
+    }
+
+    TRACE( "(%s,%lx,%p,%s,%p,%d)\n", debugstr_w(name), flags, systime, debugstr_w(format), buffer, len );
+    return get_time_format( locale, flags, systime, format, buffer, len );
+}

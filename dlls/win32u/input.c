@@ -268,7 +268,8 @@ BOOL WINAPI NtUserGetCursorInfo( CURSORINFO *info )
 
 static void check_for_events( UINT flags )
 {
-    if (user_driver->pMsgWaitForMultipleObjectsEx( 0, NULL, 0, flags, 0 ) == WAIT_TIMEOUT)
+    LARGE_INTEGER zero = { .QuadPart = 0 };
+    if (user_driver->pMsgWaitForMultipleObjectsEx( 0, NULL, &zero, flags, 0 ) == WAIT_TIMEOUT)
         flush_window_surfaces( TRUE );
 }
 
@@ -1796,15 +1797,6 @@ static void display_caret( HWND hwnd, const RECT *r )
         NtGdiDeleteObjectApp( mem_dc );
     }
     NtUserReleaseDC( hwnd, dc );
-}
-
-static void fill_rect( HDC dc, const RECT *rect, HBRUSH hbrush )
-{
-    HBRUSH prev_brush;
-
-    prev_brush = NtGdiSelectBrush( dc, hbrush );
-    NtGdiPatBlt( dc, rect->left, rect->top, rect->right - rect->left, rect->bottom - rect->top, PATCOPY );
-    if (prev_brush) NtGdiSelectBrush( dc, prev_brush );
 }
 
 static unsigned int get_caret_registry_timeout(void)

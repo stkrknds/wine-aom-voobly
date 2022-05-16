@@ -20,6 +20,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#if 0
+#pragma makedep unix
+#endif
+
 #include "config.h"
 
 #include <stdarg.h>
@@ -45,7 +49,6 @@
 #include "winbase.h"
 #include "wingdi.h"
 #include "winuser.h"
-#include "wine/unicode.h"
 
 #include "x11drv.h"
 #include "wine/debug.h"
@@ -53,6 +56,7 @@
 #include "mwm.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(x11drv);
+WINE_DECLARE_DEBUG_CHANNEL(systray);
 
 #define _NET_WM_MOVERESIZE_SIZE_TOPLEFT      0
 #define _NET_WM_MOVERESIZE_SIZE_TOP          1
@@ -69,6 +73,10 @@ WINE_DEFAULT_DEBUG_CHANNEL(x11drv);
 #define _NET_WM_STATE_REMOVE  0
 #define _NET_WM_STATE_ADD     1
 #define _NET_WM_STATE_TOGGLE  2
+
+#define SYSTEM_TRAY_REQUEST_DOCK    0
+#define SYSTEM_TRAY_BEGIN_MESSAGE   1
+#define SYSTEM_TRAY_CANCEL_MESSAGE  2
 
 static const unsigned int net_wm_state_atoms[NB_NET_WM_STATES] =
 {
@@ -443,9 +451,9 @@ static void sync_window_text( Display *display, Window win, const WCHAR *text )
 
     /* allocate new buffer for window text */
     len = lstrlenW( text );
-    count = WideCharToMultiByte(CP_UNIXCP, 0, text, -1, NULL, 0, NULL, NULL);
+    count = len * 3 + 1;
     if (!(buffer = malloc( count ))) return;
-    WideCharToMultiByte(CP_UNIXCP, 0, text, -1, buffer, count, NULL, NULL);
+    ntdll_wcstoumbs( text, len + 1, buffer, count, FALSE );
 
     RtlUnicodeToUTF8N( NULL, 0, &count, text, len * sizeof(WCHAR) );
     if (!(utf8_buffer = malloc( count )))
@@ -622,7 +630,10 @@ static void fetch_icon_data( HWND hwnd, HICON icon_big, HICON icon_small )
         if (!icon_big)
             icon_big = get_icon_info( (HICON)NtUserGetClassLongPtrW( hwnd, GCLP_HICON ), &ii );
         if (!icon_big)
-            icon_big = get_icon_info( LoadIconW( 0, (LPWSTR)IDI_WINLOGO ), &ii);
+        {
+            UINT winlogo = x11drv_client_call( client_load_icon, IDI_WINLOGO );
+            icon_big = get_icon_info( UlongToHandle( winlogo ), &ii );
+        }
     }
     if (!icon_small)
     {
@@ -1861,8 +1872,8 @@ static LRESULT CALLBACK desktop_wndproc_wrapper( HWND hwnd, UINT msg, WPARAM wp,
     {
     case WM_WINE_NOTIFY_ACTIVITY:
     {
-        static ULONGLONG last = 0;
-        ULONGLONG now = GetTickCount64();
+        static ULONG last = 0;
+        ULONG now = NtGetTickCount();
         /* calling XResetScreenSaver too often can cause performance
          * problems, so throttle it */
         if (now > last + 5000)
@@ -1904,7 +1915,7 @@ BOOL X11DRV_CreateWindow( HWND hwnd )
                                            CWOverrideRedirect | CWEventMask, &attr );
         XFlush( data->display );
         NtUserSetProp( hwnd, clip_window_prop, (HANDLE)data->clip_window );
-        X11DRV_InitClipboard();
+        x11drv_client_call( client_clipboard_init, 0 );
         X11DRV_DisplayDevices_RegisterEventHandlers();
     }
     return TRUE;
@@ -1982,29 +1993,6 @@ static struct x11drv_win_data *X11DRV_create_win_data( HWND hwnd, const RECT *wi
 }
 
 
-/* window procedure for foreign windows */
-static LRESULT WINAPI foreign_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam )
-{
-    switch(msg)
-    {
-    case WM_WINDOWPOSCHANGED:
-        update_systray_balloon_position();
-        break;
-    case WM_PARENTNOTIFY:
-        if (LOWORD(wparam) == WM_DESTROY)
-        {
-            TRACE( "%p: got parent notify destroy for win %lx\n", hwnd, lparam );
-            NtUserPostMessage( hwnd, WM_CLOSE, 0, 0 );  /* so that we come back here once the child is gone */
-        }
-        return 0;
-    case WM_CLOSE:
-        if (NtUserGetWindowRelative( hwnd, GW_CHILD )) return 0;  /* refuse to die if we still have children */
-        break;
-    }
-    return DefWindowProcW( hwnd, msg, wparam, lparam );
-}
-
-
 /***********************************************************************
  *		create_foreign_window
  *
@@ -2022,16 +2010,20 @@ HWND create_foreign_window( Display *display, Window xwin )
     unsigned int nchildren;
     XWindowAttributes attr;
     DWORD style = WS_CLIPCHILDREN;
+    UNICODE_STRING class_name;
 
     if (!class_registered)
     {
+        UNICODE_STRING version = { 0 };
         WNDCLASSEXW class;
 
         memset( &class, 0, sizeof(class) );
         class.cbSize        = sizeof(class);
-        class.lpfnWndProc   = foreign_window_proc;
+        class.lpfnWndProc   = client_foreign_window_proc;
         class.lpszClassName = classW;
-        if (!RegisterClassExW( &class ) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+        RtlInitUnicodeString( &class_name, classW );
+        if (!NtUserRegisterClassExWOW( &class, &class_name, &version, NULL, 0, 0, NULL ) &&
+            GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
         {
             ERR( "Could not register foreign window class\n" );
             return FALSE;
@@ -2065,12 +2057,14 @@ HWND create_foreign_window( Display *display, Window xwin )
         pos.y = attr.y;
     }
 
-    hwnd = CreateWindowW( classW, NULL, style, pos.x, pos.y, attr.width, attr.height,
-                          parent, 0, 0, NULL );
+    RtlInitUnicodeString( &class_name, classW );
+    hwnd = NtUserCreateWindowEx( 0, &class_name, &class_name, NULL, style, pos.x, pos.y,
+                                 attr.width, attr.height, parent, 0, NULL, NULL, 0, NULL,
+                                 0, FALSE );
 
     if (!(data = alloc_win_data( display, hwnd )))
     {
-        DestroyWindow( hwnd );
+        NtUserDestroyWindow( hwnd );
         return 0;
     }
     SetRect( &data->window_rect, pos.x, pos.y, pos.x + attr.width, pos.y + attr.height );
@@ -2089,6 +2083,163 @@ HWND create_foreign_window( Display *display, Window xwin )
 
     NtUserShowWindow( hwnd, SW_SHOW );
     return hwnd;
+}
+
+
+NTSTATUS x11drv_systray_init( void *arg )
+{
+    Display *display;
+
+    if (is_virtual_desktop()) return FALSE;
+
+    display = thread_init_display();
+    if (DefaultScreen( display ) == 0)
+        systray_atom = x11drv_atom(_NET_SYSTEM_TRAY_S0);
+    else
+    {
+        char systray_buffer[29]; /* strlen(_NET_SYSTEM_TRAY_S4294967295)+1 */
+        sprintf( systray_buffer, "_NET_SYSTEM_TRAY_S%u", DefaultScreen( display ) );
+        systray_atom = XInternAtom( display, systray_buffer, False );
+    }
+    XSelectInput( display, root_window, StructureNotifyMask );
+
+    return TRUE;
+}
+
+
+NTSTATUS x11drv_systray_clear( void *arg )
+{
+    HWND hwnd = *(HWND*)arg;
+    Window win = X11DRV_get_whole_window( hwnd );
+    if (win) XClearArea( gdi_display, win, 0, 0, 0, 0, True );
+    return 0;
+}
+
+
+NTSTATUS x11drv_systray_hide( void *arg )
+{
+    HWND hwnd = *(HWND*)arg;
+    struct x11drv_win_data *data;
+
+    /* make sure we don't try to unmap it, it confuses some systray docks */
+    if ((data = get_win_data( hwnd )))
+    {
+        if (data->embedded) data->mapped = FALSE;
+        release_win_data( data );
+    }
+
+    return 0;
+}
+
+
+/* find the X11 window owner the system tray selection */
+static Window get_systray_selection_owner( Display *display )
+{
+    return XGetSelectionOwner( display, systray_atom );
+}
+
+
+static void get_systray_visual_info( Display *display, Window systray_window, XVisualInfo *info )
+{
+    XVisualInfo *list, template;
+    VisualID *visual_id;
+    Atom type;
+    int format, num;
+    unsigned long count, remaining;
+
+    *info = default_visual;
+    if (XGetWindowProperty( display, systray_window, x11drv_atom(_NET_SYSTEM_TRAY_VISUAL), 0,
+                            65536/sizeof(CARD32), False, XA_VISUALID, &type, &format, &count,
+                            &remaining, (unsigned char **)&visual_id ))
+        return;
+
+    if (type == XA_VISUALID && format == 32)
+    {
+        template.visualid = visual_id[0];
+        if ((list = XGetVisualInfo( display, VisualIDMask, &template, &num )))
+        {
+            *info = list[0];
+            TRACE_(systray)( "systray window %lx got visual %lx\n", systray_window, info->visualid );
+            XFree( list );
+        }
+    }
+    XFree( visual_id );
+}
+
+
+NTSTATUS x11drv_systray_dock( void *arg )
+{
+    struct systray_dock_params *params = arg;
+    Window systray_window, window;
+    Display *display;
+    XEvent ev;
+    XSetWindowAttributes attr;
+    XVisualInfo visual;
+    struct x11drv_win_data *data;
+    UNICODE_STRING class_name;
+    BOOL layered;
+    HWND hwnd;
+
+    static const WCHAR icon_classname[] =
+        {'_','_','w','i','n','e','x','1','1','_','t','r','a','y','_','i','c','o','n',0};
+
+    if (params->event_handle)
+    {
+        XClientMessageEvent *event = (XClientMessageEvent *)(UINT_PTR)params->event_handle;
+        display = event->display;
+        systray_window = event->data.l[2];
+    }
+    else
+    {
+        display = thread_init_display();
+        if (!(systray_window = get_systray_selection_owner( display ))) return STATUS_UNSUCCESSFUL;
+    }
+
+    get_systray_visual_info( display, systray_window, &visual );
+
+    *params->layered = layered = (visual.depth == 32);
+
+    RtlInitUnicodeString( &class_name, icon_classname );
+    hwnd = NtUserCreateWindowEx( layered ? WS_EX_LAYERED : 0, &class_name, &class_name, NULL,
+                                 WS_CLIPSIBLINGS | WS_POPUP, CW_USEDEFAULT, CW_USEDEFAULT,
+                                 params->cx, params->cy, NULL, 0, NULL, params->icon, 0,
+                                 NULL, 0, FALSE );
+
+    if (!(data = get_win_data( hwnd ))) return STATUS_UNSUCCESSFUL;
+    if (layered) set_window_visual( data, &visual, TRUE );
+    make_window_embedded( data );
+    window = data->whole_window;
+    release_win_data( data );
+
+    NtUserShowWindow( hwnd, SW_SHOWNA );
+
+    TRACE_(systray)( "icon window %p/%lx\n", hwnd, window );
+
+    /* send the docking request message */
+    ev.xclient.type = ClientMessage;
+    ev.xclient.window = systray_window;
+    ev.xclient.message_type = x11drv_atom( _NET_SYSTEM_TRAY_OPCODE );
+    ev.xclient.format = 32;
+    ev.xclient.data.l[0] = CurrentTime;
+    ev.xclient.data.l[1] = SYSTEM_TRAY_REQUEST_DOCK;
+    ev.xclient.data.l[2] = window;
+    ev.xclient.data.l[3] = 0;
+    ev.xclient.data.l[4] = 0;
+    XSendEvent( display, systray_window, False, NoEventMask, &ev );
+
+    if (!layered)
+    {
+        attr.background_pixmap = ParentRelative;
+        attr.bit_gravity = ForgetGravity;
+        XChangeWindowAttributes( display, window, CWBackPixmap | CWBitGravity, &attr );
+    }
+    else
+    {
+        /* force repainig */
+        send_message( hwnd, WM_SIZE, SIZE_RESTORED, MAKELONG( params->cx, params->cy ));
+    }
+
+    return STATUS_SUCCESS;
 }
 
 
@@ -2544,12 +2695,13 @@ void X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags,
 /* check if the window icon should be hidden (i.e. moved off-screen) */
 static BOOL hide_icon( struct x11drv_win_data *data )
 {
-    static const WCHAR trayW[] = {'S','h','e','l','l','_','T','r','a','y','W','n','d',0};
+    static const WCHAR trayW[] = {'S','h','e','l','l','_','T','r','a','y','W','n','d'};
+    UNICODE_STRING str = { sizeof(trayW), sizeof(trayW), (WCHAR *)trayW };
 
     if (data->managed) return TRUE;
     /* hide icons in desktop mode when the taskbar is active */
     if (!is_virtual_desktop()) return FALSE;
-    return NtUserIsWindowVisible( FindWindowW( trayW, NULL ));
+    return NtUserIsWindowVisible( NtUserFindWindowEx( 0, 0, &str, NULL, 0 ));
 }
 
 /***********************************************************************

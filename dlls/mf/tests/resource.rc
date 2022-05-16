@@ -23,6 +23,9 @@
 /* @makedep: audiodata.bin */
 audiodata.bin RCDATA audiodata.bin
 
+/* @makedep: audioconvdata.bin */
+audioconvdata.bin RCDATA audioconvdata.bin
+
 /* @makedep: wmaencdata.bin */
 wmaencdata.bin RCDATA wmaencdata.bin
 
@@ -37,3 +40,6 @@ nv12frame.bin RCDATA nv12frame.bin
 
 /* @makedep: i420frame.bin */
 i420frame.bin RCDATA i420frame.bin
+
+/* @makedep: rgb32frame.bin */
+rgb32frame.bin RCDATA rgb32frame.bin

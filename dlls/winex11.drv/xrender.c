@@ -23,6 +23,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#if 0
+#pragma makedep unix
+#endif
+
 #include "config.h"
 
 #include <assert.h>
@@ -35,7 +39,6 @@
 #include "winbase.h"
 #include "x11drv.h"
 #include "winternl.h"
-#include "wine/unicode.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(xrender);
@@ -583,7 +586,7 @@ static BOOL fontcmp(LFANDSIZE *p1, LFANDSIZE *p2)
   if(memcmp(&p1->devsize, &p2->devsize, sizeof(p1->devsize))) return TRUE;
   if(memcmp(&p1->xform, &p2->xform, sizeof(p1->xform))) return TRUE;
   if(memcmp(&p1->lf, &p2->lf, offsetof(LOGFONTW, lfFaceName))) return TRUE;
-  return strcmpiW(p1->lf.lfFaceName, p2->lf.lfFaceName);
+  return wcsicmp( p1->lf.lfFaceName, p2->lf.lfFaceName );
 }
 
 static int LookupEntry(LFANDSIZE *plfsz)
@@ -740,9 +743,9 @@ static void lfsz_calc_hash(LFANDSIZE *plfsz)
     two_chars = *ptr;
     pwc = (WCHAR *)&two_chars;
     if(!*pwc) break;
-    *pwc = toupperW(*pwc);
+    *pwc = RtlUpcaseUnicodeChar( *pwc );
     pwc++;
-    *pwc = toupperW(*pwc);
+    *pwc = RtlUpcaseUnicodeChar( *pwc );
     hash ^= two_chars;
     if(!*pwc) break;
   }
@@ -774,7 +777,7 @@ static AA_Type aa_type_from_flags( UINT aa_flags )
 
 static UINT get_xft_aa_flags( const LOGFONTW *lf )
 {
-    char *value;
+    char *value, *p;
     UINT ret = 0;
 
     switch (lf->lfQuality)
@@ -785,8 +788,8 @@ static UINT get_xft_aa_flags( const LOGFONTW *lf )
     default:
         if (!(value = XGetDefault( gdi_display, "Xft", "antialias" ))) break;
         TRACE( "got antialias '%s'\n", value );
-        if (tolower(value[0]) == 'f' || tolower(value[0]) == 'n' ||
-            value[0] == '0' || !_strnicmp( value, "off", -1 ))
+        for (p = value; *p; p++) if ('A' <= *p && *p <= 'Z') *p += 'a' - 'A'; /* to lower */
+        if (value[0] == 'f' || value[0] == 'n' || value[0] == '0' || !strcmp( value, "off" ))
         {
             ret = GGO_BITMAP;
             break;

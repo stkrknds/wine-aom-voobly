@@ -20,6 +20,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#if 0
+#pragma makedep unix
+#endif
+
 #include "config.h"
 
 #define NONAMELESSSTRUCT
@@ -43,7 +47,6 @@ WINE_DECLARE_DEBUG_CHANNEL(winediag);
 #define VK_NO_PROTOTYPES
 #define WINE_VK_HOST
 
-#include "wine/unicode.h"
 #include "wine/vulkan.h"
 #include "wine/vulkan_driver.h"
 
@@ -151,7 +154,7 @@ static BOOL xrandr10_get_id( const WCHAR *device_name, ULONG_PTR *id )
     /* RandR 1.0 only supports changing the primary adapter settings.
      * For non-primary adapters, an id is still provided but getting
      * and changing non-primary adapters' settings will be ignored. */
-    *id = !lstrcmpiW( device_name, primary_adapter ) ? 1 : 0;
+    *id = !wcsicmp( device_name, primary_adapter ) ? 1 : 0;
     return TRUE;
 }
 
@@ -1219,7 +1222,7 @@ static BOOL xrandr14_get_id( const WCHAR *device_name, ULONG_PTR *id )
     WCHAR *end;
 
     /* Parse \\.\DISPLAY%d */
-    display_idx = strtolW( device_name + 11, &end, 10 ) - 1;
+    display_idx = wcstol( device_name + 11, &end, 10 ) - 1;
     if (*end)
         return FALSE;
 

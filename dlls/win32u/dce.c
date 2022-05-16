@@ -1432,6 +1432,7 @@ static void update_now( HWND hwnd, UINT rdw_flags )
  */
 BOOL WINAPI NtUserRedrawWindow( HWND hwnd, const RECT *rect, HRGN hrgn, UINT flags )
 {
+    LARGE_INTEGER zero = { .QuadPart = 0 };
     static const RECT empty;
     BOOL ret;
 
@@ -1452,12 +1453,15 @@ BOOL WINAPI NtUserRedrawWindow( HWND hwnd, const RECT *rect, HRGN hrgn, UINT fla
     }
 
     /* process pending expose events before painting */
-    if (flags & RDW_UPDATENOW) user_driver->pMsgWaitForMultipleObjectsEx( 0, NULL, 0, QS_PAINT, 0 );
+    if (flags & RDW_UPDATENOW) user_driver->pMsgWaitForMultipleObjectsEx( 0, NULL, &zero, QS_PAINT, 0 );
 
     if (rect && !hrgn)
     {
-        if (IsRectEmpty( rect )) rect = &empty;
-        ret = redraw_window_rects( hwnd, flags, rect, 1 );
+        RECT ordered = *rect;
+
+        order_rect( &ordered );
+        if (IsRectEmpty( &ordered )) ordered = empty;
+        ret = redraw_window_rects( hwnd, flags, &ordered, 1 );
     }
     else if (!hrgn)
     {

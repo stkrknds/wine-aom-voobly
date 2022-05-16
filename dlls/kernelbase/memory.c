@@ -234,6 +234,24 @@ LPVOID WINAPI DECLSPEC_HOTPATCH MapViewOfFileEx( HANDLE handle, DWORD access, DW
     return addr;
 }
 
+/***********************************************************************
+ *             MapViewOfFile3   (kernelbase.@)
+ */
+LPVOID WINAPI DECLSPEC_HOTPATCH MapViewOfFile3( HANDLE handle, HANDLE process, PVOID baseaddr, ULONG64 offset,
+        SIZE_T size, ULONG alloc_type, ULONG protection, MEM_EXTENDED_PARAMETER *params, ULONG params_count )
+{
+    LARGE_INTEGER off;
+    void *addr;
+
+    addr = baseaddr;
+    off.QuadPart = offset;
+    if (!set_ntstatus( NtMapViewOfSectionEx( handle, process, &addr, &off, &size, alloc_type, protection,
+            params, params_count )))
+    {
+        return NULL;
+    }
+    return addr;
+}
 
 /***********************************************************************
  *	       ReadProcessMemory   (kernelbase.@)
@@ -282,6 +300,24 @@ BOOL WINAPI DECLSPEC_HOTPATCH UnmapViewOfFile( const void *addr )
         }
     }
     return set_ntstatus( NtUnmapViewOfSection( GetCurrentProcess(), (void *)addr ));
+}
+
+
+/***********************************************************************
+ *             UnmapViewOfFile2   (kernelbase.@)
+ */
+BOOL WINAPI DECLSPEC_HOTPATCH UnmapViewOfFile2( HANDLE process, void *addr, ULONG flags )
+{
+    return set_ntstatus( NtUnmapViewOfSectionEx( process, addr, flags ));
+}
+
+
+/***********************************************************************
+ *             UnmapViewOfFileEx   (kernelbase.@)
+ */
+BOOL WINAPI DECLSPEC_HOTPATCH UnmapViewOfFileEx( void *addr, ULONG flags )
+{
+    return set_ntstatus( NtUnmapViewOfSectionEx( GetCurrentProcess(), addr, flags ));
 }
 
 
@@ -565,12 +601,67 @@ BOOL WINAPI DECLSPEC_HOTPATCH HeapValidate( HANDLE heap, DWORD flags, LPCVOID pt
 }
 
 
+/* undocumented RtlWalkHeap structure */
+
+struct rtl_heap_entry
+{
+    LPVOID lpData;
+    SIZE_T cbData; /* differs from PROCESS_HEAP_ENTRY */
+    BYTE cbOverhead;
+    BYTE iRegionIndex;
+    WORD wFlags; /* value differs from PROCESS_HEAP_ENTRY */
+    union {
+        struct {
+            HANDLE hMem;
+            DWORD dwReserved[3];
+        } Block;
+        struct {
+            DWORD dwCommittedSize;
+            DWORD dwUnCommittedSize;
+            LPVOID lpFirstBlock;
+            LPVOID lpLastBlock;
+        } Region;
+    };
+};
+
+/* rtl_heap_entry flags, names made up */
+
+#define RTL_HEAP_ENTRY_BUSY         0x0001
+#define RTL_HEAP_ENTRY_REGION       0x0002
+#define RTL_HEAP_ENTRY_BLOCK        0x0010
+#define RTL_HEAP_ENTRY_UNCOMMITTED  0x1000
+#define RTL_HEAP_ENTRY_COMMITTED    0x4000
+#define RTL_HEAP_ENTRY_LFH          0x8000
+
+
 /***********************************************************************
  *           HeapWalk   (kernelbase.@)
  */
 BOOL WINAPI DECLSPEC_HOTPATCH HeapWalk( HANDLE heap, PROCESS_HEAP_ENTRY *entry )
 {
-    return set_ntstatus( RtlWalkHeap( heap, entry ));
+    struct rtl_heap_entry rtl_entry = {.lpData = entry->lpData};
+    NTSTATUS status;
+
+    if (!(status = RtlWalkHeap( heap, &rtl_entry )))
+    {
+        entry->lpData = rtl_entry.lpData;
+        entry->cbData = rtl_entry.cbData;
+        entry->cbOverhead = rtl_entry.cbOverhead;
+        entry->iRegionIndex = rtl_entry.iRegionIndex;
+
+        if (rtl_entry.wFlags & RTL_HEAP_ENTRY_BUSY)
+            entry->wFlags = PROCESS_HEAP_ENTRY_BUSY;
+        else if (rtl_entry.wFlags & RTL_HEAP_ENTRY_REGION)
+            entry->wFlags = PROCESS_HEAP_REGION;
+        else if (rtl_entry.wFlags & RTL_HEAP_ENTRY_UNCOMMITTED)
+            entry->wFlags = PROCESS_HEAP_UNCOMMITTED_RANGE;
+        else
+            entry->wFlags = 0;
+
+        memcpy( &entry->u.Region, &rtl_entry.Region, sizeof(entry->u.Region) );
+    }
+
+    return set_ntstatus( status );
 }
 
 

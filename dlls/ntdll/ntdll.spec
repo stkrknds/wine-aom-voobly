@@ -253,6 +253,7 @@
 # @ stub NtMapUserPhysicalPages
 # @ stub NtMapUserPhysicalPagesScatter
 @ stdcall -syscall NtMapViewOfSection(long long ptr long long ptr ptr long long long)
+@ stdcall -syscall NtMapViewOfSectionEx(long long ptr ptr ptr long long ptr long)
 # @ stub NtModifyBootEntry
 @ stdcall -syscall NtNotifyChangeDirectoryFile(long long ptr ptr ptr ptr long long long)
 @ stdcall -syscall NtNotifyChangeKey(long long ptr ptr ptr long long ptr long long)
@@ -426,6 +427,7 @@
 @ stdcall -syscall NtUnlockFile(long ptr ptr ptr ptr)
 @ stdcall -syscall NtUnlockVirtualMemory(long ptr ptr long)
 @ stdcall -syscall NtUnmapViewOfSection(long ptr)
+@ stdcall -syscall NtUnmapViewOfSectionEx(long ptr long)
 # @ stub NtVdmControl
 # @ stub NtW32Call
 @ stdcall -syscall NtWaitForAlertByThreadId(ptr ptr)
@@ -1279,6 +1281,7 @@
 # @ stub ZwMapUserPhysicalPages
 # @ stub ZwMapUserPhysicalPagesScatter
 @ stdcall -private -syscall ZwMapViewOfSection(long long ptr long long ptr ptr long long long) NtMapViewOfSection
+@ stdcall -private -syscall ZwMapViewOfSectionEx(long long ptr ptr ptr long long ptr long) NtMapViewOfSectionEx
 # @ stub ZwModifyBootEntry
 @ stdcall -private -syscall ZwNotifyChangeDirectoryFile(long long ptr ptr ptr ptr long long long) NtNotifyChangeDirectoryFile
 @ stdcall -private -syscall ZwNotifyChangeKey(long long ptr ptr ptr long long ptr long long) NtNotifyChangeKey
@@ -1452,6 +1455,7 @@
 @ stdcall -private -syscall ZwUnlockFile(long ptr ptr ptr ptr) NtUnlockFile
 @ stdcall -private -syscall ZwUnlockVirtualMemory(long ptr ptr long) NtUnlockVirtualMemory
 @ stdcall -private -syscall ZwUnmapViewOfSection(long ptr) NtUnmapViewOfSection
+@ stdcall -private -syscall ZwUnmapViewOfSectionEx(long ptr long) NtUnmapViewOfSectionEx
 # @ stub ZwVdmControl
 # @ stub ZwW32Call
 @ stdcall -private -syscall ZwWaitForAlertByThreadId(ptr ptr) NtWaitForAlertByThreadId

@@ -20,6 +20,10 @@
 /* NOTE: If making changes here, consider whether they should be reflected in
  * the other drivers. */
 
+#if 0
+#pragma makedep unix
+#endif
+
 #include "config.h"
 
 #include <stdarg.h>
@@ -650,7 +654,7 @@ static VkResult X11DRV_vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *
         static long prev_time, start_time;
         DWORD time;
 
-        time = GetTickCount();
+        time = NtGetTickCount();
         frames++;
         frames_total++;
         if (time - prev_time > 1500)

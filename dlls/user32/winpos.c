@@ -654,31 +654,6 @@ void WINPOS_ActivateOtherWindow(HWND hwnd)
 
 
 /***********************************************************************
- *           WINPOS_HandleWindowPosChanging
- *
- * Default handling for a WM_WINDOWPOSCHANGING. Called from DefWindowProc().
- */
-LONG WINPOS_HandleWindowPosChanging( HWND hwnd, WINDOWPOS *winpos )
-{
-    LONG style = GetWindowLongW( hwnd, GWL_STYLE );
-
-    if (winpos->flags & SWP_NOSIZE) return 0;
-    if ((style & WS_THICKFRAME) || ((style & (WS_POPUP | WS_CHILD)) == 0))
-    {
-	MINMAXINFO info = NtUserGetMinMaxInfo( hwnd );
-        winpos->cx = min( winpos->cx, info.ptMaxTrackSize.x );
-        winpos->cy = min( winpos->cy, info.ptMaxTrackSize.y );
-	if (!(style & WS_MINIMIZE))
-	{
-            winpos->cx = max( winpos->cx, info.ptMinTrackSize.x );
-            winpos->cy = max( winpos->cy, info.ptMinTrackSize.y );
-	}
-    }
-    return 0;
-}
-
-
-/***********************************************************************
  *		BeginDeferWindowPos (USER32.@)
  */
 HDWP WINAPI BeginDeferWindowPos( INT count )
@@ -786,7 +761,7 @@ static LONG start_size_move( HWND hwnd, WPARAM wParam, POINT *capturePoint, LONG
         while(!hittest)
         {
             if (!GetMessageW( &msg, 0, 0, 0 )) return 0;
-            if (CallMsgFilterW( &msg, MSGF_SIZE )) continue;
+            if (NtUserCallMsgFilter( &msg, MSGF_SIZE )) continue;
 
             switch(msg.message)
             {
@@ -952,7 +927,7 @@ void WINPOS_SysCommandSizeMove( HWND hwnd, WPARAM wParam )
         int dx = 0, dy = 0;
 
         if (!GetMessageW( &msg, 0, 0, 0 )) break;
-        if (CallMsgFilterW( &msg, MSGF_SIZE )) continue;
+        if (NtUserCallMsgFilter( &msg, MSGF_SIZE )) continue;
 
         /* Exit on button-up, Return, or Esc */
         if ((msg.message == WM_LBUTTONUP) ||

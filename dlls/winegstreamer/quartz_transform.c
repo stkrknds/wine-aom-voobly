@@ -20,14 +20,21 @@
 
 #include "gst_private.h"
 
+#include "mferror.h"
+#include "mpegtype.h"
+
 WINE_DEFAULT_DEBUG_CHANNEL(quartz);
+WINE_DECLARE_DEBUG_CHANNEL(winediag);
 
 struct transform
 {
     struct strmbase_filter filter;
+    IMpegAudioDecoder IMpegAudioDecoder_iface;
 
     struct strmbase_sink sink;
     struct strmbase_source source;
+
+    struct wg_transform *transform;
 
     const struct transform_ops *ops;
 };
@@ -66,13 +73,37 @@ static void transform_destroy(struct strmbase_filter *iface)
     free(filter);
 }
 
+static HRESULT transform_query_interface(struct strmbase_filter *iface, REFIID iid, void **out)
+{
+    struct transform *filter = impl_from_strmbase_filter(iface);
+
+    if (IsEqualGUID(iid, &IID_IMpegAudioDecoder) && filter->IMpegAudioDecoder_iface.lpVtbl)
+        *out = &filter->IMpegAudioDecoder_iface;
+    else
+        return E_NOINTERFACE;
+
+    IUnknown_AddRef((IUnknown *)*out);
+    return S_OK;
+}
+
 static HRESULT transform_init_stream(struct strmbase_filter *iface)
 {
     struct transform *filter = impl_from_strmbase_filter(iface);
+    struct wg_format input_format, output_format;
     HRESULT hr;
 
     if (filter->source.pin.peer)
     {
+        if (!amt_to_wg_format(&filter->sink.pin.mt, &input_format))
+            return E_FAIL;
+
+        if (!amt_to_wg_format(&filter->source.pin.mt, &output_format))
+            return E_FAIL;
+
+        filter->transform = wg_transform_create(&input_format, &output_format);
+        if (!filter->transform)
+            return E_FAIL;
+
         hr = IMemAllocator_Commit(filter->source.pAllocator);
         if (FAILED(hr))
             ERR("Failed to commit allocator, hr %#lx.\n", hr);
@@ -86,7 +117,11 @@ static HRESULT transform_cleanup_stream(struct strmbase_filter *iface)
     struct transform *filter = impl_from_strmbase_filter(iface);
 
     if (filter->source.pin.peer)
+    {
         IMemAllocator_Decommit(filter->source.pAllocator);
+
+        wg_transform_destroy(filter->transform);
+    }
 
     return S_OK;
 }
@@ -95,8 +130,131 @@ static const struct strmbase_filter_ops filter_ops =
 {
     .filter_get_pin = transform_get_pin,
     .filter_destroy = transform_destroy,
+    .filter_query_interface = transform_query_interface,
     .filter_init_stream = transform_init_stream,
     .filter_cleanup_stream = transform_cleanup_stream,
+};
+
+static struct transform *impl_from_IMpegAudioDecoder(IMpegAudioDecoder *iface)
+{
+    return CONTAINING_RECORD(iface, struct transform, IMpegAudioDecoder_iface);
+}
+
+static HRESULT WINAPI mpeg_audio_decoder_QueryInterface(IMpegAudioDecoder *iface,
+        REFIID iid, void **out)
+{
+    struct transform *filter = impl_from_IMpegAudioDecoder(iface);
+    return IUnknown_QueryInterface(filter->filter.outer_unk, iid, out);
+}
+
+static ULONG WINAPI mpeg_audio_decoder_AddRef(IMpegAudioDecoder *iface)
+{
+    struct transform *filter = impl_from_IMpegAudioDecoder(iface);
+    return IUnknown_AddRef(filter->filter.outer_unk);
+}
+
+static ULONG WINAPI mpeg_audio_decoder_Release(IMpegAudioDecoder *iface)
+{
+    struct transform *filter = impl_from_IMpegAudioDecoder(iface);
+    return IUnknown_Release(filter->filter.outer_unk);
+}
+
+static HRESULT WINAPI mpeg_audio_decoder_get_FrequencyDivider(IMpegAudioDecoder *iface, ULONG *divider)
+{
+    FIXME("iface %p, divider %p, stub!\n", iface, divider);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI mpeg_audio_decoder_put_FrequencyDivider(IMpegAudioDecoder *iface, ULONG divider)
+{
+    FIXME("iface %p, divider %lu, stub!\n", iface, divider);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI mpeg_audio_decoder_get_DecoderAccuracy(IMpegAudioDecoder *iface, ULONG *accuracy)
+{
+    FIXME("iface %p, accuracy %p, stub!\n", iface, accuracy);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI mpeg_audio_decoder_put_DecoderAccuracy(IMpegAudioDecoder *iface, ULONG accuracy)
+{
+    FIXME("iface %p, accuracy %lu, stub!\n", iface, accuracy);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI mpeg_audio_decoder_get_Stereo(IMpegAudioDecoder *iface, ULONG *stereo)
+{
+    FIXME("iface %p, stereo %p, stub!\n", iface, stereo);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI mpeg_audio_decoder_put_Stereo(IMpegAudioDecoder *iface, ULONG stereo)
+{
+    FIXME("iface %p, stereo %lu, stub!\n", iface, stereo);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI mpeg_audio_decoder_get_DecoderWordSize(IMpegAudioDecoder *iface, ULONG *word_size)
+{
+    FIXME("iface %p, word_size %p, stub!\n", iface, word_size);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI mpeg_audio_decoder_put_DecoderWordSize(IMpegAudioDecoder *iface, ULONG word_size)
+{
+    FIXME("iface %p, word_size %lu, stub!\n", iface, word_size);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI mpeg_audio_decoder_get_IntegerDecode(IMpegAudioDecoder *iface, ULONG *integer_decode)
+{
+    FIXME("iface %p, integer_decode %p, stub!\n", iface, integer_decode);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI mpeg_audio_decoder_put_IntegerDecode(IMpegAudioDecoder *iface, ULONG integer_decode)
+{
+    FIXME("iface %p, integer_decode %lu, stub!\n", iface, integer_decode);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI mpeg_audio_decoder_get_DualMode(IMpegAudioDecoder *iface, ULONG *dual_mode)
+{
+    FIXME("iface %p, dual_mode %p, stub!\n", iface, dual_mode);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI mpeg_audio_decoder_put_DualMode(IMpegAudioDecoder *iface, ULONG dual_mode)
+{
+    FIXME("iface %p, dual_mode %lu, stub!\n", iface, dual_mode);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI mpeg_audio_decoder_get_AudioFormat(IMpegAudioDecoder *iface, MPEG1WAVEFORMAT *format)
+{
+    FIXME("iface %p, format %p, stub!\n", iface, format);
+    return E_NOTIMPL;
+}
+
+static const IMpegAudioDecoderVtbl mpeg_audio_decoder_vtbl =
+{
+    mpeg_audio_decoder_QueryInterface,
+    mpeg_audio_decoder_AddRef,
+    mpeg_audio_decoder_Release,
+    mpeg_audio_decoder_get_FrequencyDivider,
+    mpeg_audio_decoder_put_FrequencyDivider,
+    mpeg_audio_decoder_get_DecoderAccuracy,
+    mpeg_audio_decoder_put_DecoderAccuracy,
+    mpeg_audio_decoder_get_Stereo,
+    mpeg_audio_decoder_put_Stereo,
+    mpeg_audio_decoder_get_DecoderWordSize,
+    mpeg_audio_decoder_put_DecoderWordSize,
+    mpeg_audio_decoder_get_IntegerDecode,
+    mpeg_audio_decoder_put_IntegerDecode,
+    mpeg_audio_decoder_get_DualMode,
+    mpeg_audio_decoder_put_DualMode,
+    mpeg_audio_decoder_get_AudioFormat,
 };
 
 static HRESULT transform_sink_query_accept(struct strmbase_pin *pin, const AM_MEDIA_TYPE *mt)
@@ -119,10 +277,122 @@ static HRESULT transform_sink_query_interface(struct strmbase_pin *pin, REFIID i
     return S_OK;
 }
 
+static HRESULT WINAPI transform_sink_receive(struct strmbase_sink *pin, IMediaSample *sample)
+{
+    struct transform *filter = impl_from_strmbase_filter(pin->pin.filter);
+    struct wg_sample input_wg_sample = {0};
+    REFERENCE_TIME start_time;
+    REFERENCE_TIME end_time;
+    HRESULT hr;
+
+    /* We do not expect pin connection state to change while the filter is
+     * running. This guarantee is necessary, since otherwise we would have to
+     * take the filter lock, and we can't take the filter lock from a streaming
+     * thread. */
+    if (!filter->source.pMemInputPin)
+    {
+        WARN("Source is not connected, returning VFW_E_NOT_CONNECTED.\n");
+        return VFW_E_NOT_CONNECTED;
+    }
+
+    if (filter->filter.state == State_Stopped)
+        return VFW_E_WRONG_STATE;
+
+    if (filter->sink.flushing)
+        return S_FALSE;
+
+    input_wg_sample.max_size = IMediaSample_GetSize(sample);
+    input_wg_sample.size = IMediaSample_GetActualDataLength(sample);
+
+    hr = IMediaSample_GetPointer(sample, &input_wg_sample.data);
+    if (FAILED(hr))
+        return hr;
+
+    hr = IMediaSample_GetTime(sample, &start_time, &end_time);
+    if (SUCCEEDED(hr))
+    {
+        input_wg_sample.pts = start_time;
+        input_wg_sample.flags |= WG_SAMPLE_FLAG_HAS_PTS;
+    }
+    if (hr == S_OK)
+    {
+        input_wg_sample.duration = end_time - start_time;
+        input_wg_sample.flags |= WG_SAMPLE_FLAG_HAS_DURATION;
+    }
+
+    hr = wg_transform_push_data(filter->transform, &input_wg_sample);
+    if (FAILED(hr))
+        return hr;
+
+    for (;;)
+    {
+        struct wg_sample output_wg_sample = {0};
+        IMediaSample *output_sample;
+
+        hr = IMemAllocator_GetBuffer(filter->source.pAllocator, &output_sample, NULL, NULL, 0);
+        if (FAILED(hr))
+            return hr;
+
+        output_wg_sample.max_size = IMediaSample_GetSize(output_sample);
+
+        hr = IMediaSample_GetPointer(output_sample, &output_wg_sample.data);
+        if (FAILED(hr))
+        {
+            IMediaSample_Release(output_sample);
+            return hr;
+        }
+
+        hr = wg_transform_read_data(filter->transform, &output_wg_sample);
+        if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT)
+        {
+            IMediaSample_Release(output_sample);
+            break;
+        }
+        if (FAILED(hr))
+        {
+            IMediaSample_Release(output_sample);
+            return hr;
+        }
+
+        hr = IMediaSample_SetActualDataLength(output_sample, output_wg_sample.size);
+        if (FAILED(hr))
+        {
+            IMediaSample_Release(output_sample);
+            return hr;
+        }
+
+        if (output_wg_sample.flags & WG_SAMPLE_FLAG_HAS_PTS)
+        {
+            start_time = output_wg_sample.pts;
+            if (output_wg_sample.flags & WG_SAMPLE_FLAG_HAS_DURATION)
+            {
+                end_time = start_time + output_wg_sample.duration;
+                IMediaSample_SetTime(output_sample, &start_time, &end_time);
+            }
+            else
+            {
+                IMediaSample_SetTime(output_sample, &start_time, NULL);
+            }
+        }
+
+        hr = IMemInputPin_Receive(filter->source.pMemInputPin, output_sample);
+        if (FAILED(hr))
+        {
+            IMediaSample_Release(output_sample);
+            return hr;
+        }
+
+        IMediaSample_Release(output_sample);
+    }
+
+    return S_OK;
+}
+
 static const struct strmbase_sink_ops sink_ops =
 {
     .base.pin_query_accept = transform_sink_query_accept,
     .base.pin_query_interface = transform_sink_query_interface,
+    .pfnReceive = transform_sink_receive,
 };
 
 static HRESULT transform_source_query_accept(struct strmbase_pin *pin, const AM_MEDIA_TYPE *mt)
@@ -296,8 +566,38 @@ static const struct transform_ops mpeg_audio_codec_transform_ops =
 
 HRESULT mpeg_audio_codec_create(IUnknown *outer, IUnknown **out)
 {
+    static const struct wg_format output_format =
+    {
+        .major_type = WG_MAJOR_TYPE_AUDIO,
+        .u.audio =
+        {
+            .format = WG_AUDIO_FORMAT_S16LE,
+            .channel_mask = 1,
+            .channels = 1,
+            .rate = 44100,
+        },
+    };
+    static const struct wg_format input_format =
+    {
+        .major_type = WG_MAJOR_TYPE_MPEG1_AUDIO,
+        .u.mpeg1_audio =
+        {
+            .layer = 2,
+            .channels = 1,
+            .rate = 44100,
+        },
+    };
+    struct wg_transform *transform;
     struct transform *object;
     HRESULT hr;
+
+    transform = wg_transform_create(&input_format, &output_format);
+    if (!transform)
+    {
+        ERR_(winediag)("GStreamer doesn't support MPEG-1 audio decoding, please install appropriate plugins.\n");
+        return E_FAIL;
+    }
+    wg_transform_destroy(transform);
 
     hr = transform_create(outer, &CLSID_CMpegAudioCodec, &mpeg_audio_codec_transform_ops, &object);
     if (FAILED(hr))
@@ -305,6 +605,8 @@ HRESULT mpeg_audio_codec_create(IUnknown *outer, IUnknown **out)
 
     wcscpy(object->sink.pin.name, L"XForm In");
     wcscpy(object->source.pin.name, L"XForm Out");
+
+    object->IMpegAudioDecoder_iface.lpVtbl = &mpeg_audio_decoder_vtbl;
 
     TRACE("Created MPEG audio decoder %p.\n", object);
     *out = &object->filter.IUnknown_inner;

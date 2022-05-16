@@ -39,6 +39,7 @@
 
 #define WIDL_using_Windows_Foundation
 #define WIDL_using_Windows_Foundation_Collections
+#define WIDL_using_Windows_Foundation_Numerics
 #include "windows.foundation.h"
 #define WIDL_using_Windows_Devices_Haptics
 #define WIDL_using_Windows_Gaming_Input
@@ -1672,7 +1673,8 @@ static void test_condition_effect( IDirectInputDevice8W *device, HANDLE file, DW
 static BOOL test_force_feedback_joystick( DWORD version )
 {
 #include "psh_hid_macros.h"
-    const unsigned char report_descriptor[] = {
+    const unsigned char report_descriptor[] =
+    {
         USAGE_PAGE(1, HID_USAGE_PAGE_GENERIC),
         USAGE(1, HID_USAGE_GENERIC_JOYSTICK),
         COLLECTION(1, Application),
@@ -2005,13 +2007,17 @@ static BOOL test_force_feedback_joystick( DWORD version )
             END_COLLECTION,
         END_COLLECTION,
     };
-#undef REPORT_ID_OR_USAGE_PAGE
+    C_ASSERT(sizeof(report_descriptor) < MAX_HID_DESCRIPTOR_LEN);
 #include "pop_hid_macros.h"
 
     struct hid_device_desc desc =
     {
         .use_report_id = TRUE,
-        .caps = { .InputReportByteLength = 5 },
+        .caps =
+        {
+            .InputReportByteLength = 5,
+            .OutputReportByteLength = 11,
+        },
         .attributes = default_attributes,
     };
     const DIDEVCAPS expect_caps =
@@ -3460,12 +3466,18 @@ static void test_device_managed_effect(void)
             END_COLLECTION,
         END_COLLECTION,
     };
+    C_ASSERT(sizeof(report_descriptor) < MAX_HID_DESCRIPTOR_LEN);
 #include "pop_hid_macros.h"
 
     struct hid_device_desc desc =
     {
         .use_report_id = TRUE,
-        .caps = { .InputReportByteLength = 5 },
+        .caps =
+        {
+            .InputReportByteLength = 5,
+            .OutputReportByteLength = 11,
+            .FeatureReportByteLength = 5,
+        },
         .attributes = default_attributes,
     };
     struct hid_expect expect_acquire[] =
@@ -4437,8 +4449,8 @@ static HRESULT WINAPI controller_handler_Invoke( IEventHandler_RawGameController
     trace( "iface %p, sender %p, controller %p\n", iface, sender, controller );
 
     ok( sender == NULL, "got sender %p\n", sender );
-    SetEvent( impl->event );
     impl->invoked = TRUE;
+    SetEvent( impl->event );
 
     return S_OK;
 }
@@ -4489,6 +4501,58 @@ static void check_bool_async_( int line, IAsyncOperation_boolean *async, UINT32 
 
     result = !expect_result;
     hr = IAsyncOperation_boolean_GetResults( async, &result );
+    switch (expect_status)
+    {
+    case Completed:
+    case Error:
+        todo_wine_if(FAILED(expect_hr))
+        ok_(__FILE__, line)( hr == expect_hr, "GetResults returned %#lx\n", hr );
+        ok_(__FILE__, line)( result == expect_result, "got result %u\n", result );
+        break;
+    case Canceled:
+    case Started:
+    default:
+        ok_(__FILE__, line)( hr == E_ILLEGAL_METHOD_CALL, "GetResults returned %#lx\n", hr );
+        break;
+    }
+}
+
+#define check_result_async( a, b, c, d, e ) check_result_async_( __LINE__, a, b, c, d, e )
+static void check_result_async_( int line, IAsyncOperation_ForceFeedbackLoadEffectResult *async, UINT32 expect_id,
+                                 AsyncStatus expect_status, HRESULT expect_hr, ForceFeedbackLoadEffectResult expect_result )
+{
+    ForceFeedbackLoadEffectResult result;
+    AsyncStatus async_status;
+    IAsyncInfo *async_info;
+    HRESULT hr, async_hr;
+    UINT32 async_id;
+
+    hr = IAsyncOperation_ForceFeedbackLoadEffectResult_QueryInterface( async, &IID_IAsyncInfo, (void **)&async_info );
+    ok_(__FILE__, line)( hr == S_OK, "QueryInterface returned %#lx\n", hr );
+
+    async_id = 0xdeadbeef;
+    hr = IAsyncInfo_get_Id( async_info, &async_id );
+    if (expect_status < 4) ok_(__FILE__, line)( hr == S_OK, "get_Id returned %#lx\n", hr );
+    else ok_(__FILE__, line)( hr == E_ILLEGAL_METHOD_CALL, "get_Id returned %#lx\n", hr );
+    ok_(__FILE__, line)( async_id == expect_id, "got id %u\n", async_id );
+
+    async_status = 0xdeadbeef;
+    hr = IAsyncInfo_get_Status( async_info, &async_status );
+    if (expect_status < 4) ok_(__FILE__, line)( hr == S_OK, "get_Status returned %#lx\n", hr );
+    else ok_(__FILE__, line)( hr == E_ILLEGAL_METHOD_CALL, "get_Status returned %#lx\n", hr );
+    ok_(__FILE__, line)( async_status == expect_status, "got status %u\n", async_status );
+
+    async_hr = 0xdeadbeef;
+    hr = IAsyncInfo_get_ErrorCode( async_info, &async_hr );
+    if (expect_status < 4) ok_(__FILE__, line)( hr == S_OK, "get_ErrorCode returned %#lx\n", hr );
+    else ok_(__FILE__, line)( hr == E_ILLEGAL_METHOD_CALL, "get_ErrorCode returned %#lx\n", hr );
+    if (expect_status < 4) todo_wine_if(FAILED(expect_hr)) ok_(__FILE__, line)( async_hr == expect_hr, "got error %#lx\n", async_hr );
+    else ok_(__FILE__, line)( async_hr == E_ILLEGAL_METHOD_CALL, "got error %#lx\n", async_hr );
+
+    IAsyncInfo_Release( async_info );
+
+    result = !expect_result;
+    hr = IAsyncOperation_ForceFeedbackLoadEffectResult_GetResults( async, &result );
     switch (expect_status)
     {
     case Completed:
@@ -4571,12 +4635,81 @@ static IAsyncOperationCompletedHandler_booleanVtbl bool_async_handler_vtbl =
     bool_async_handler_Invoke,
 };
 
-struct bool_async_handler default_bool_async_handler = {{&bool_async_handler_vtbl}};
+static struct bool_async_handler default_bool_async_handler = {{&bool_async_handler_vtbl}};
+
+struct result_async_handler
+{
+    IAsyncOperationCompletedHandler_ForceFeedbackLoadEffectResult IAsyncOperationCompletedHandler_ForceFeedbackLoadEffectResult_iface;
+    IAsyncOperation_ForceFeedbackLoadEffectResult *async;
+    AsyncStatus status;
+    BOOL invoked;
+    HANDLE event;
+};
+
+static inline struct result_async_handler *impl_from_IAsyncOperationCompletedHandler_ForceFeedbackLoadEffectResult( IAsyncOperationCompletedHandler_ForceFeedbackLoadEffectResult *iface )
+{
+    return CONTAINING_RECORD( iface, struct result_async_handler, IAsyncOperationCompletedHandler_ForceFeedbackLoadEffectResult_iface );
+}
+
+static HRESULT WINAPI result_async_handler_QueryInterface( IAsyncOperationCompletedHandler_ForceFeedbackLoadEffectResult *iface, REFIID iid, void **out )
+{
+    if (IsEqualGUID( iid, &IID_IUnknown ) ||
+        IsEqualGUID( iid, &IID_IAgileObject ) ||
+        IsEqualGUID( iid, &IID_IAsyncOperationCompletedHandler_ForceFeedbackLoadEffectResult ))
+    {
+        IUnknown_AddRef( iface );
+        *out = iface;
+        return S_OK;
+    }
+
+    trace( "%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid( iid ) );
+    *out = NULL;
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI result_async_handler_AddRef( IAsyncOperationCompletedHandler_ForceFeedbackLoadEffectResult *iface )
+{
+    return 2;
+}
+
+static ULONG WINAPI result_async_handler_Release( IAsyncOperationCompletedHandler_ForceFeedbackLoadEffectResult *iface )
+{
+    return 1;
+}
+
+static HRESULT WINAPI result_async_handler_Invoke( IAsyncOperationCompletedHandler_ForceFeedbackLoadEffectResult *iface,
+                                                   IAsyncOperation_ForceFeedbackLoadEffectResult *async, AsyncStatus status )
+{
+    struct result_async_handler *impl = impl_from_IAsyncOperationCompletedHandler_ForceFeedbackLoadEffectResult( iface );
+
+    trace( "iface %p, async %p, status %u\n", iface, async, status );
+
+    ok( !impl->invoked, "invoked twice\n" );
+    impl->invoked = TRUE;
+    impl->async = async;
+    impl->status = status;
+    if (impl->event) SetEvent( impl->event );
+
+    return S_OK;
+}
+
+static IAsyncOperationCompletedHandler_ForceFeedbackLoadEffectResultVtbl result_async_handler_vtbl =
+{
+    /*** IUnknown methods ***/
+    result_async_handler_QueryInterface,
+    result_async_handler_AddRef,
+    result_async_handler_Release,
+    /*** IAsyncOperationCompletedHandler<ForceFeedbackLoadEffectResult> methods ***/
+    result_async_handler_Invoke,
+};
+
+static struct result_async_handler default_result_async_handler = {{&result_async_handler_vtbl}};
 
 static void test_windows_gaming_input(void)
 {
 #include "psh_hid_macros.h"
-    const unsigned char report_desc[] = {
+    const unsigned char report_desc[] =
+    {
         USAGE_PAGE(1, HID_USAGE_PAGE_GENERIC),
         USAGE(1, HID_USAGE_GENERIC_JOYSTICK),
         COLLECTION(1, Application),
@@ -4584,17 +4717,15 @@ static void test_windows_gaming_input(void)
             COLLECTION(1, Physical),
                 REPORT_ID(1, 1),
 
-                USAGE(4, (HID_USAGE_PAGE_SIMULATION<<16)|HID_USAGE_SIMULATION_STEERING),
-                USAGE(4, (HID_USAGE_PAGE_SIMULATION<<16)|HID_USAGE_SIMULATION_ACCELERATOR),
-                USAGE(4, (HID_USAGE_PAGE_SIMULATION<<16)|HID_USAGE_SIMULATION_BRAKE),
-                USAGE(4, (HID_USAGE_PAGE_SIMULATION<<16)|HID_USAGE_SIMULATION_CLUTCH),
                 USAGE(1, HID_USAGE_GENERIC_X),
+                USAGE(1, HID_USAGE_GENERIC_Y),
+                USAGE(1, HID_USAGE_GENERIC_Z),
                 LOGICAL_MINIMUM(1, 0),
                 LOGICAL_MAXIMUM(1, 127),
                 PHYSICAL_MINIMUM(1, 0),
                 PHYSICAL_MAXIMUM(1, 127),
                 REPORT_SIZE(1, 8),
-                REPORT_COUNT(1, 5),
+                REPORT_COUNT(1, 3),
                 INPUT(1, Data|Var|Abs),
 
                 USAGE(1, HID_USAGE_GENERIC_HATSWITCH),
@@ -4997,13 +5128,18 @@ static void test_windows_gaming_input(void)
             END_COLLECTION,
         END_COLLECTION,
     };
-#undef REPORT_ID_OR_USAGE_PAGE
+    C_ASSERT(sizeof(report_desc) < MAX_HID_DESCRIPTOR_LEN);
 #include "pop_hid_macros.h"
 
     struct hid_device_desc desc =
     {
         .use_report_id = TRUE,
-        .caps = { .InputReportByteLength = 8 },
+        .caps =
+        {
+            .InputReportByteLength = 6,
+            .OutputReportByteLength = 11,
+            .FeatureReportByteLength = 5,
+        },
         .attributes = default_attributes,
     };
     struct hid_expect expect_init[] =
@@ -5143,9 +5279,9 @@ static void test_windows_gaming_input(void)
             .report_buf = {6, 0x7f},
         },
     };
+    static const WCHAR *constant_effect_class_name = RuntimeClass_Windows_Gaming_Input_ForceFeedback_ConstantForceEffect;
     static const WCHAR *force_feedback_motor = RuntimeClass_Windows_Gaming_Input_ForceFeedback_ForceFeedbackMotor;
     static const WCHAR *controller_class_name = RuntimeClass_Windows_Gaming_Input_RawGameController;
-    static const WCHAR *racing_wheel_class_name = RuntimeClass_Windows_Gaming_Input_RacingWheel;
 
     DIPROPGUIDANDPATH guid_path =
     {
@@ -5157,22 +5293,26 @@ static void test_windows_gaming_input(void)
         },
     };
     DIDEVICEINSTANCEW devinst = {.dwSize = sizeof(DIDEVICEINSTANCEW)};
+    IAsyncOperation_ForceFeedbackLoadEffectResult *result_async;
     IAsyncOperationCompletedHandler_boolean *tmp_handler;
+    struct result_async_handler result_async_handler;
     IVectorView_RawGameController *controllers_view;
     IRawGameControllerStatics *controller_statics;
     EventRegistrationToken controller_added_token;
     struct bool_async_handler bool_async_handler;
     IVectorView_ForceFeedbackMotor *motors_view;
-    IVectorView_RacingWheel *racing_wheels_view;
-    IRacingWheelStatics2 *racing_wheel_statics2;
-    IRacingWheelStatics *racing_wheel_statics;
     ForceFeedbackEffectAxes supported_axes;
+    IActivationFactory *activation_factory;
+    IConstantForceEffect *constant_effect;
     IAsyncOperation_boolean *bool_async;
     IRawGameController *raw_controller;
-    IGameController *game_controller;
+    ForceFeedbackEffectState state;
+    Vector3 vector3 = {1., 0., 0.};
+    TimeSpan duration = {10000000};
+    IInspectable *tmp_inspectable;
+    IForceFeedbackEffect *effect;
     IDirectInputDevice8W *device;
     IForceFeedbackMotor *motor;
-    IRacingWheel *racing_wheel;
     BOOLEAN paused, enabled;
     IAsyncInfo *async_info;
     DOUBLE gain;
@@ -5181,6 +5321,7 @@ static void test_windows_gaming_input(void)
     UINT32 size;
     HRESULT hr;
     DWORD ret;
+    LONG ref;
 
     if (!load_combase_functions()) return;
 
@@ -5240,34 +5381,6 @@ static void test_windows_gaming_input(void)
     hr = IVectorView_RawGameController_GetAt( controllers_view, 0, &raw_controller );
     ok( hr == S_OK, "GetAt returned %#lx\n", hr );
     IVectorView_RawGameController_Release( controllers_view );
-
-    hr = pWindowsCreateString( racing_wheel_class_name, wcslen( racing_wheel_class_name ), &str );
-    ok( hr == S_OK, "WindowsCreateString returned %#lx\n", hr );
-    hr = pRoGetActivationFactory( str, &IID_IRacingWheelStatics, (void **)&racing_wheel_statics );
-    ok( hr == S_OK, "RoGetActivationFactory returned %#lx\n", hr );
-    hr = pRoGetActivationFactory( str, &IID_IRacingWheelStatics2, (void **)&racing_wheel_statics2 );
-    ok( hr == S_OK, "RoGetActivationFactory returned %#lx\n", hr );
-    pWindowsDeleteString( str );
-
-    /* HID driving wheels aren't exposed as WGI gamepads on Windows */
-
-    hr = IRacingWheelStatics_get_RacingWheels( racing_wheel_statics, &racing_wheels_view );
-    ok( hr == S_OK, "get_RacingWheels returned %#lx\n", hr );
-    hr = IVectorView_RacingWheel_get_Size( racing_wheels_view, &size );
-    ok( hr == S_OK, "get_Size returned %#lx\n", hr );
-    todo_wine /* but Wine currently intentionally does */
-    ok( size == 0, "got size %u\n", size );
-    IVectorView_RacingWheel_Release( racing_wheels_view );
-    IRacingWheelStatics_Release( racing_wheel_statics );
-
-    hr = IRawGameController_QueryInterface( raw_controller, &IID_IGameController, (void **)&game_controller );
-    ok( hr == S_OK, "QueryInterface returned %#lx\n", hr );
-    hr = IRacingWheelStatics2_FromGameController( racing_wheel_statics2, game_controller, &racing_wheel );
-    ok( hr == S_OK, "FromGameController returned %#lx\n", hr );
-    todo_wine
-    ok( racing_wheel == NULL, "got racing_wheel %p\n", racing_wheel );
-    IGameController_Release( game_controller );
-    IRacingWheelStatics2_Release( racing_wheel_statics2 );
 
     set_hid_expect( file, expect_acquire, sizeof(expect_acquire) );
     hr = IRawGameController_get_ForceFeedbackMotors( raw_controller, &motors_view );
@@ -5423,7 +5536,7 @@ static void test_windows_gaming_input(void)
     ok( !bool_async_handler.invoked, "handler invoked\n" );
     IAsyncInfo_Release( async_info );
 
-    wait_hid_expect( file, 100 );
+    wait_hid_pending( file, 100 );
     ret = WaitForSingleObject( bool_async_handler.event, 100 );
     ok( ret == 0, "WaitForSingleObject returned %#lx\n", ret );
     CloseHandle( bool_async_handler.event );
@@ -5468,7 +5581,7 @@ static void test_windows_gaming_input(void)
     ok( !bool_async_handler.invoked, "handler invoked\n" );
     IAsyncInfo_Release( async_info );
 
-    wait_hid_expect( file, 100 );
+    wait_hid_pending( file, 100 );
     ret = WaitForSingleObject( bool_async_handler.event, 100 );
     ok( ret == 0, "WaitForSingleObject returned %#lx\n", ret );
     CloseHandle( bool_async_handler.event );
@@ -5497,6 +5610,95 @@ static void test_windows_gaming_input(void)
     IAsyncOperation_boolean_Release( bool_async );
 
 
+    hr = pWindowsCreateString( force_feedback_motor, wcslen( force_feedback_motor ), &str );
+    ok( hr == S_OK, "WindowsCreateString returned %#lx\n", hr );
+    hr = pRoGetActivationFactory( str, &IID_IInspectable, (void **)&tmp_inspectable );
+    ok( hr == REGDB_E_CLASSNOTREG, "RoGetActivationFactory returned %#lx\n", hr );
+    pWindowsDeleteString( str );
+
+
+    hr = pWindowsCreateString( constant_effect_class_name, wcslen( constant_effect_class_name ), &str );
+    ok( hr == S_OK, "WindowsCreateString returned %#lx\n", hr );
+    hr = pRoGetActivationFactory( str, &IID_IActivationFactory, (void **)&activation_factory );
+    ok( hr == S_OK, "RoGetActivationFactory returned %#lx\n", hr );
+    pWindowsDeleteString( str );
+
+    hr = IActivationFactory_ActivateInstance( activation_factory, &tmp_inspectable );
+    todo_wine
+    ok( hr == S_OK, "QueryInterface returned %#lx\n", hr );
+    IActivationFactory_Release( activation_factory );
+    if (hr != S_OK) goto skip_tests;
+
+    hr = IInspectable_QueryInterface( tmp_inspectable, &IID_IForceFeedbackEffect, (void **)&effect );
+    todo_wine
+    ok( hr == S_OK, "QueryInterface returned %#lx\n", hr );
+    IInspectable_Release( tmp_inspectable );
+
+    hr = IForceFeedbackEffect_QueryInterface( effect, &IID_IConstantForceEffect, (void **)&constant_effect );
+    ok( hr == S_OK, "QueryInterface returned %#lx\n", hr );
+
+    hr = IConstantForceEffect_SetParameters( constant_effect, vector3, duration );
+    todo_wine
+    ok( hr == S_OK, "SetParameters returned %#lx\n", hr );
+    hr = IConstantForceEffect_SetParametersWithEnvelope( constant_effect, vector3, 0.1, 0.2, 0.3,
+                                                         duration, duration, duration, duration, 1 );
+    todo_wine
+    ok( hr == S_OK, "SetParametersWithEnvelope returned %#lx\n", hr );
+    IConstantForceEffect_Release( constant_effect );
+
+    gain = 12345.6;
+    hr = IForceFeedbackEffect_get_Gain( effect, &gain );
+    todo_wine
+    ok( hr == S_OK, "get_Gain returned %#lx\n", hr );
+    todo_wine
+    ok( gain == 1.0, "get_MasterGain returned %f\n", gain );
+    hr = IForceFeedbackEffect_put_Gain( effect, 0.5 );
+    todo_wine
+    ok( hr == S_FALSE, "put_Gain returned %#lx\n", hr );
+    state = 0xdeadbeef;
+    hr = IForceFeedbackEffect_get_State( effect, &state );
+    todo_wine
+    ok( hr == S_OK, "get_State returned %#lx\n", hr );
+    todo_wine
+    ok( state == ForceFeedbackEffectState_Stopped, "get_State returned %#lx\n", hr );
+    hr = IForceFeedbackEffect_Start( effect );
+    todo_wine
+    ok( hr == 0x86854003, "Start returned %#lx\n", hr );
+    hr = IForceFeedbackEffect_Stop( effect );
+    todo_wine
+    ok( hr == 0x86854003, "Stop returned %#lx\n", hr );
+
+    hr = IForceFeedbackMotor_LoadEffectAsync( motor, effect, &result_async );
+    todo_wine
+    ok( hr == S_OK, "LoadEffectAsync returned %#lx\n", hr );
+    result_async_handler = default_result_async_handler;
+    result_async_handler.event = CreateEventW( NULL, FALSE, FALSE, NULL );
+    ok( !!result_async_handler.event, "CreateEventW failed, error %lu\n", GetLastError() );
+    hr = IAsyncOperation_ForceFeedbackLoadEffectResult_put_Completed( result_async, &result_async_handler.IAsyncOperationCompletedHandler_ForceFeedbackLoadEffectResult_iface );
+    ok( hr == S_OK, "put_Completed returned %#lx\n", hr );
+    ret = WaitForSingleObject( result_async_handler.event, 5000 );
+    ok( !ret, "WaitForSingleObject returned %#lx\n", ret );
+    ret = CloseHandle( result_async_handler.event );
+    ok( ret, "CloseHandle failed, error %lu\n", GetLastError() );
+    check_result_async( result_async, 1, Error, 0x86854008, ForceFeedbackLoadEffectResult_EffectNotSupported );
+    ref = IAsyncOperation_ForceFeedbackLoadEffectResult_Release( result_async );
+    ok( ref == 0, "Release returned %lu\n", ref );
+
+    hr = IForceFeedbackEffect_Start( effect );
+    todo_wine
+    ok( hr == 0x86854003, "Start returned %#lx\n", hr );
+    hr = IForceFeedbackEffect_Stop( effect );
+    todo_wine
+    ok( hr == 0x86854003, "Stop returned %#lx\n", hr );
+    hr = IForceFeedbackMotor_TryUnloadEffectAsync( motor, effect, &bool_async );
+    todo_wine
+    ok( hr == 0x86854003, "TryUnloadEffectAsync returned %#lx\n", hr );
+
+    ref = IForceFeedbackEffect_Release( effect );
+    ok( ref == 0, "Release returned %lu\n", ref );
+
+
+skip_tests:
     IForceFeedbackMotor_Release( motor );
 
     IRawGameController_Release( raw_controller );

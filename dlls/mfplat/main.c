@@ -2670,7 +2670,8 @@ HRESULT attributes_GetAllocatedString(struct attributes *attributes, REFGUID key
     if (SUCCEEDED(hr))
     {
         *value = attrval.pwszVal;
-        *length = lstrlenW(*value);
+        if (length)
+            *length = lstrlenW(*value);
     }
 
     return hr;
@@ -2742,7 +2743,8 @@ HRESULT attributes_GetAllocatedBlob(struct attributes *attributes, REFGUID key, 
     if (SUCCEEDED(hr))
     {
         *buf = attrval.caub.pElems;
-        *size = attrval.caub.cElems;
+        if (size)
+            *size = attrval.caub.cElems;
     }
 
     return hr;

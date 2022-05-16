@@ -1241,15 +1241,13 @@ static void surface_cpu_blt_colour_fill(struct wined3d_rendertarget_view *view,
         const struct wined3d_box *box, const struct wined3d_color *colour)
 {
     struct wined3d_device *device = view->resource->device;
-    unsigned int x, y, z, w, h, d, bpp, level;
     struct wined3d_context *context;
     struct wined3d_texture *texture;
     struct wined3d_bo_address data;
     struct wined3d_map_desc map;
     struct wined3d_range range;
+    unsigned int level;
     DWORD map_binding;
-    uint8_t *dst;
-    DWORD c;
 
     TRACE("view %p, box %s, colour %s.\n", view, debug_box(box), debug_color(colour));
 
@@ -1274,20 +1272,6 @@ static void surface_cpu_blt_colour_fill(struct wined3d_rendertarget_view *view,
     texture = texture_from_resource(view->resource);
     level = view->sub_resource_idx % texture->level_count;
 
-    c = wined3d_format_convert_from_float(view->format, colour);
-    bpp = view->format->byte_count;
-    w = min(box->right, view->width) - min(box->left, view->width);
-    h = min(box->bottom, view->height) - min(box->top, view->height);
-    if (view->resource->type != WINED3D_RTYPE_TEXTURE_3D)
-    {
-        d = 1;
-    }
-    else
-    {
-        d = wined3d_texture_get_level_depth(texture, level);
-        d = min(box->back, d) - min(box->front, d);
-    }
-
     map_binding = texture->resource.map_binding;
     if (!wined3d_texture_load_location(texture, view->sub_resource_idx, context, map_binding))
         ERR("Failed to load the sub-resource into %s.\n", wined3d_debug_location(map_binding));
@@ -1296,69 +1280,22 @@ static void surface_cpu_blt_colour_fill(struct wined3d_rendertarget_view *view,
     wined3d_texture_get_bo_address(texture, view->sub_resource_idx, &data, map_binding);
     map.data = wined3d_context_map_bo_address(context, &data,
             texture->sub_resources[view->sub_resource_idx].size, WINED3D_MAP_WRITE);
-    map.data = (BYTE *)map.data
-            + (box->front * map.slice_pitch)
-            + ((box->top / view->format->block_height) * map.row_pitch)
-            + ((box->left / view->format->block_width) * view->format->block_byte_count);
     range.offset = 0;
     range.size = texture->sub_resources[view->sub_resource_idx].size;
 
-    switch (bpp)
-    {
-        case 1:
-            for (x = 0; x < w; ++x)
-            {
-                ((BYTE *)map.data)[x] = c;
-            }
-            break;
-
-        case 2:
-            for (x = 0; x < w; ++x)
-            {
-                ((WORD *)map.data)[x] = c;
-            }
-            break;
-
-        case 3:
-        {
-            dst = map.data;
-            for (x = 0; x < w; ++x, dst += 3)
-            {
-                dst[0] = (c      ) & 0xff;
-                dst[1] = (c >>  8) & 0xff;
-                dst[2] = (c >> 16) & 0xff;
-            }
-            break;
-        }
-        case 4:
-            for (x = 0; x < w; ++x)
-            {
-                ((DWORD *)map.data)[x] = c;
-            }
-            break;
-
-        default:
-            FIXME("Not implemented for bpp %u.\n", bpp);
-            wined3d_resource_unmap(view->resource, view->sub_resource_idx);
-            return;
-    }
-
-    dst = map.data;
-    for (y = 1; y < h; ++y)
-    {
-        dst += map.row_pitch;
-        memcpy(dst, map.data, w * bpp);
-    }
-
-    dst = map.data;
-    for (z = 1; z < d; ++z)
-    {
-        dst += map.slice_pitch;
-        memcpy(dst, map.data, w * h * bpp);
-    }
+    wined3d_resource_memory_colour_fill(view->resource, &map, colour, box);
 
     wined3d_context_unmap_bo_address(context, &data, 1, &range);
     context_release(context);
+}
+
+static bool wined3d_box_intersect(struct wined3d_box *ret, const struct wined3d_box *b1,
+        const struct wined3d_box *b2)
+{
+    wined3d_box_set(ret, max(b1->left, b2->left), max(b1->top, b2->top),
+            min(b1->right, b2->right), min(b1->bottom, b2->bottom),
+            max(b1->front, b2->front), min(b1->back, b2->back));
+    return ret->right > ret->left && ret->bottom > ret->top && ret->back > ret->front;
 }
 
 static void cpu_blitter_clear(struct wined3d_blitter *blitter, struct wined3d_device *device,
@@ -1366,8 +1303,8 @@ static void cpu_blitter_clear(struct wined3d_blitter *blitter, struct wined3d_de
         const RECT *draw_rect, DWORD flags, const struct wined3d_color *colour, float depth, DWORD stencil)
 {
     struct wined3d_color c = {depth, 0.0f, 0.0f, 0.0f};
+    struct wined3d_box box, box_clip, box_view;
     struct wined3d_rendertarget_view *view;
-    struct wined3d_box box;
     unsigned int i, j;
 
     if (!rect_count)
@@ -1393,7 +1330,11 @@ static void cpu_blitter_clear(struct wined3d_blitter *blitter, struct wined3d_de
             for (j = 0; j < rt_count; ++j)
             {
                 if ((view = fb->render_targets[j]))
-                    surface_cpu_blt_colour_fill(view, &box, colour);
+                {
+                    wined3d_rendertarget_view_get_box(view, &box_view);
+                    if (wined3d_box_intersect(&box_clip, &box_view, &box))
+                        surface_cpu_blt_colour_fill(view, &box_clip, colour);
+                }
             }
         }
 
@@ -1403,7 +1344,9 @@ static void cpu_blitter_clear(struct wined3d_blitter *blitter, struct wined3d_de
                     || (view->format->stencil_size && !(flags & WINED3DCLEAR_STENCIL)))
                 FIXME("Clearing %#x on %s.\n", flags, debug_d3dformat(view->format->id));
 
-            surface_cpu_blt_colour_fill(view, &box, &c);
+            wined3d_rendertarget_view_get_box(view, &box_view);
+            if (wined3d_box_intersect(&box_clip, &box_view, &box))
+                surface_cpu_blt_colour_fill(view, &box_clip, &c);
         }
     }
 }

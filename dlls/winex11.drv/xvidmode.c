@@ -19,6 +19,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#if 0
+#pragma makedep unix
+#endif
+
 #include "config.h"
 
 #include <assert.h>
@@ -91,7 +95,7 @@ static BOOL xf86vm_get_id(const WCHAR *device_name, ULONG_PTR *id)
     /* XVidMode only supports changing the primary adapter settings.
      * For non-primary adapters, an id is still provided but getting
      * and changing non-primary adapters' settings will be ignored. */
-    *id = !lstrcmpiW( device_name, primary_adapter ) ? 1 : 0;
+    *id = !wcsicmp( device_name, primary_adapter ) ? 1 : 0;
     return TRUE;
 }
 

@@ -216,18 +216,12 @@ static void check_interface_(unsigned int line, void *iface_ptr, REFIID iid, BOO
 
 static void test_interfaces(void)
 {
-    IBaseFilter *filter;
+    IBaseFilter *filter = create_mpeg_audio_codec();
     IPin *pin;
-
-    filter = create_mpeg_audio_codec();
-    if (!filter)
-    {
-        skip("Failed to create MPEG audio decoder instance, skipping tests.\n");
-        return;
-    }
 
     check_interface(filter, &IID_IBaseFilter, TRUE);
     check_interface(filter, &IID_IMediaFilter, TRUE);
+    check_interface(filter, &IID_IMpegAudioDecoder, TRUE);
     check_interface(filter, &IID_IPersist, TRUE);
     check_interface(filter, &IID_IUnknown, TRUE);
 
@@ -322,11 +316,6 @@ static void test_aggregation(void)
     hr = CoCreateInstance(&CLSID_CMpegAudioCodec, &test_outer, CLSCTX_INPROC_SERVER,
             &IID_IUnknown, (void **)&unk);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    if (FAILED(hr))
-    {
-        skip("Failed to create MPEG audio decoder instance, skipping tests.\n");
-        return;
-    }
     ok(outer_ref == 1, "Got unexpected refcount %ld.\n", outer_ref);
     ok(unk != &test_outer, "Returned IUnknown should not be outer IUnknown.\n");
     ref = get_refcount(unk);
@@ -372,17 +361,10 @@ static void test_aggregation(void)
 
 static void test_unconnected_filter_state(void)
 {
-    IBaseFilter *filter;
+    IBaseFilter *filter = create_mpeg_audio_codec();
     FILTER_STATE state;
     HRESULT hr;
     ULONG ref;
-
-    filter = create_mpeg_audio_codec();
-    if (!filter)
-    {
-        skip("Failed to create MPEG audio decoder instance, skipping tests.\n");
-        return;
-    }
 
     hr = IBaseFilter_GetState(filter, 0, &state);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -436,18 +418,11 @@ static void test_unconnected_filter_state(void)
 
 static void test_enum_pins(void)
 {
-    IBaseFilter *filter;
+    IBaseFilter *filter = create_mpeg_audio_codec();
     IEnumPins *enum1, *enum2;
     ULONG count, ref;
     IPin *pins[3];
     HRESULT hr;
-
-    filter = create_mpeg_audio_codec();
-    if (!filter)
-    {
-        skip("Failed to create MPEG audio decoder instance, skipping tests.\n");
-        return;
-    }
 
     ref = get_refcount(filter);
     ok(ref == 1, "Got unexpected refcount %ld.\n", ref);
@@ -564,18 +539,11 @@ static void test_enum_pins(void)
 
 static void test_find_pin(void)
 {
-    IBaseFilter *filter;
+    IBaseFilter *filter = create_mpeg_audio_codec();
     IEnumPins *enum_pins;
     IPin *pin, *pin2;
     HRESULT hr;
     ULONG ref;
-
-    filter = create_mpeg_audio_codec();
-    if (!filter)
-    {
-        skip("Failed to create MPEG audio decoder instance, skipping tests.\n");
-        return;
-    }
 
     hr = IBaseFilter_EnumPins(filter, &enum_pins);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -612,20 +580,13 @@ static void test_find_pin(void)
 
 static void test_pin_info(void)
 {
-    IBaseFilter *filter;
+    IBaseFilter *filter = create_mpeg_audio_codec();
     PIN_DIRECTION dir;
     PIN_INFO info;
     HRESULT hr;
     WCHAR *id;
     ULONG ref;
     IPin *pin;
-
-    filter = create_mpeg_audio_codec();
-    if (!filter)
-    {
-        skip("Failed to create MPEG audio decoder instance, skipping tests.\n");
-        return;
-    }
 
     hr = IBaseFilter_FindPin(filter, L"In", &pin);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -834,6 +795,9 @@ struct testfilter
     struct strmbase_source source;
     struct strmbase_sink sink;
     const AM_MEDIA_TYPE *mt;
+    unsigned int got_sample;
+    REFERENCE_TIME expected_start_time;
+    REFERENCE_TIME expected_stop_time;
 };
 
 static inline struct testfilter *impl_from_strmbase_filter(struct strmbase_filter *iface)
@@ -907,11 +871,39 @@ static HRESULT testsink_connect(struct strmbase_sink *iface, IPin *peer, const A
     return S_OK;
 }
 
+static HRESULT WINAPI testsink_Receive(struct strmbase_sink *iface, IMediaSample *sample)
+{
+    struct testfilter *filter = impl_from_strmbase_filter(iface->pin.filter);
+    REFERENCE_TIME start, stop;
+    HRESULT hr;
+    LONG size;
+
+    ++filter->got_sample;
+
+    size = IMediaSample_GetSize(sample);
+    ok(size == 3072, "Got size %lu.\n", size);
+    size = IMediaSample_GetActualDataLength(sample);
+    ok(size == 768, "Got valid size %lu.\n", size);
+
+    start = 0xdeadbeef;
+    stop = 0xdeadbeef;
+    hr = IMediaSample_GetTime(sample, &start, &stop);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    if (filter->got_sample == 1)
+    {
+        ok(start == filter->expected_start_time, "Got start time %s.\n", wine_dbgstr_longlong(start));
+        ok(stop == filter->expected_stop_time, "Got stop time %s.\n", wine_dbgstr_longlong(stop));
+    }
+
+    return S_OK;
+}
+
 static const struct strmbase_sink_ops testsink_ops =
 {
     .base.pin_query_interface = testsink_query_interface,
     .base.pin_get_media_type = testsink_get_media_type,
     .sink_connect = testsink_connect,
+    .pfnReceive = testsink_Receive,
 };
 
 static void testfilter_init(struct testfilter *filter)
@@ -1078,6 +1070,109 @@ static void test_source_allocator(IFilterGraph2 *graph, IMediaControl *control,
 
     IFilterGraph2_Disconnect(graph, sink);
     IFilterGraph2_Disconnect(graph, &testsource->source.pin.IPin_iface);
+}
+
+static void test_sample_processing(IMediaControl *control, IMemInputPin *input, struct testfilter *sink)
+{
+    REFERENCE_TIME start, stop;
+    IMemAllocator *allocator;
+    IMediaSample *sample;
+    HRESULT hr;
+    BYTE *data;
+    LONG size;
+
+    hr = IMemInputPin_ReceiveCanBlock(input);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IMemInputPin_GetAllocator(input, &allocator);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IMediaControl_Pause(control);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IMemAllocator_GetBuffer(allocator, &sample, NULL, NULL, 0);
+    ok(hr == VFW_E_NOT_COMMITTED, "Got hr %#lx.\n", hr);
+
+    hr = IMemAllocator_Commit(allocator);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IMemAllocator_GetBuffer(allocator, &sample, NULL, NULL, 0);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IMediaSample_GetPointer(sample, &data);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    size = IMediaSample_GetSize(sample);
+    ok(size == 256, "Got size %ld.\n", size);
+    memset(data, 0, 48);
+    data[0] = 0xff;
+    data[1] = 0xff;
+    data[2] = 0x18;
+    data[3] = 0xc4;
+    hr = IMediaSample_SetActualDataLength(sample, 48);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IMediaSample_SetTime(sample, NULL, NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    sink->expected_start_time = 0;
+    sink->expected_stop_time = 120000;
+    hr = IMemInputPin_Receive(input, sample);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IMemInputPin_Receive(input, sample);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IMemInputPin_Receive(input, sample);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(sink->got_sample >= 1, "Got %u calls to Receive().\n", sink->got_sample);
+    sink->got_sample = 0;
+
+    hr = IMediaControl_Stop(control);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IMediaControl_Pause(control);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    start = 22222;
+    hr = IMediaSample_SetTime(sample, &start, NULL);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    sink->expected_start_time = 22222;
+    sink->expected_stop_time = 142222;
+    hr = IMemInputPin_Receive(input, sample);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IMemInputPin_Receive(input, sample);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IMemInputPin_Receive(input, sample);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(sink->got_sample >= 1, "Got %u calls to Receive().\n", sink->got_sample);
+    sink->got_sample = 0;
+
+    hr = IMediaControl_Stop(control);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IMediaControl_Pause(control);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    start = 22222;
+    stop = 33333;
+    hr = IMediaSample_SetTime(sample, &start, &stop);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    sink->expected_start_time = 22222;
+    sink->expected_stop_time = 142222;
+    hr = IMemInputPin_Receive(input, sample);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IMemInputPin_Receive(input, sample);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IMemInputPin_Receive(input, sample);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(sink->got_sample >= 1, "Got %u calls to Receive().\n", sink->got_sample);
+    sink->got_sample = 0;
+
+    hr = IMediaControl_Stop(control);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IMemInputPin_Receive(input, sample);
+    ok(hr == VFW_E_WRONG_STATE, "Got hr %#lx.\n", hr);
+
+    IMediaSample_Release(sample);
+    IMemAllocator_Release(allocator);
 }
 
 static void test_connect_pin(void)
@@ -1273,6 +1368,8 @@ static void test_connect_pin(void)
     hr = IMediaControl_Stop(control);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
+    test_sample_processing(control, meminput, &testsink);
+
     hr = IFilterGraph2_Disconnect(graph, source);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
     hr = IFilterGraph2_Disconnect(graph, source);
@@ -1393,7 +1490,17 @@ static void test_connect_pin(void)
 
 START_TEST(mpegaudio)
 {
+    IBaseFilter *filter;
+
     CoInitialize(NULL);
+
+    if (FAILED(CoCreateInstance(&CLSID_CMpegAudioCodec, NULL, CLSCTX_INPROC_SERVER,
+            &IID_IBaseFilter, (void **)&filter)))
+    {
+        skip("Failed to create MPEG audio decoder instance.\n");
+        return;
+    }
+    IBaseFilter_Release(filter);
 
     test_interfaces();
     test_aggregation();

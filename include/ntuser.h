@@ -32,6 +32,7 @@ enum
     NtUserCallWinEventHook,
     NtUserCallWinProc,
     NtUserCallWindowsHook,
+    NtUserCopyImage,
     NtUserFreeCachedClipboardData,
     NtUserLoadDriver,
     NtUserRegisterBuiltinClasses,
@@ -42,6 +43,9 @@ enum
     /* Vulkan support */
     NtUserCallVulkanDebugReportCallback,
     NtUserCallVulkanDebugUtilsCallback,
+    /* Driver-specific callbacks */
+    NtUserDriverCallbackFirst,
+    NtUserDriverCallbackLast = NtUserDriverCallbackFirst + 10,
     NtUserCallCount
 };
 
@@ -141,6 +145,16 @@ struct win_hook_params
     BOOL prev_unicode;
     BOOL next_unicode;
     WCHAR module[MAX_PATH];
+};
+
+/* NtUserCopyMessage params */
+struct copy_image_params
+{
+    HANDLE hwnd;
+    UINT type;
+    INT dx;
+    INT dy;
+    UINT flags;
 };
 
 /* NtUserFreeCachedClipboardData params */
@@ -459,6 +473,7 @@ NTSTATUS WINAPI NtUserBuildHwndList( HDESK desktop, ULONG unk2, ULONG unk3, ULON
 ULONG_PTR WINAPI NtUserCallHwnd( HWND hwnd, DWORD code );
 ULONG_PTR WINAPI NtUserCallHwndParam( HWND hwnd, DWORD_PTR param, DWORD code );
 LRESULT WINAPI NtUserCallNextHookEx( HHOOK hhook, INT code, WPARAM wparam, LPARAM lparam );
+BOOL    WINAPI NtUserCallMsgFilter( MSG *msg, INT code );
 ULONG_PTR WINAPI NtUserCallNoParam( ULONG code );
 ULONG_PTR WINAPI NtUserCallOneParam( ULONG_PTR arg, ULONG code );
 ULONG_PTR WINAPI NtUserCallTwoParam( ULONG_PTR arg1, ULONG_PTR arg2, ULONG code );

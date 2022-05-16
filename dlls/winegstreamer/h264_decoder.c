@@ -27,6 +27,7 @@
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(mfplat);
+WINE_DECLARE_DEBUG_CHANNEL(winediag);
 
 static const GUID *const h264_decoder_input_types[] =
 {
@@ -595,7 +596,7 @@ static const IMFTransformVtbl transform_vtbl =
 
 HRESULT h264_decoder_create(REFIID riid, void **ret)
 {
-    struct wg_format output_format =
+    static const struct wg_format output_format =
     {
         .major_type = WG_MAJOR_TYPE_VIDEO,
         .u.video =
@@ -605,7 +606,7 @@ HRESULT h264_decoder_create(REFIID riid, void **ret)
             .height = 1080,
         },
     };
-    struct wg_format input_format = {.major_type = WG_MAJOR_TYPE_H264};
+    static const struct wg_format input_format = {.major_type = WG_MAJOR_TYPE_H264};
     struct wg_transform *transform;
     struct h264_decoder *decoder;
 
@@ -613,7 +614,7 @@ HRESULT h264_decoder_create(REFIID riid, void **ret)
 
     if (!(transform = wg_transform_create(&input_format, &output_format)))
     {
-        FIXME("GStreamer doesn't support H264 decoding, please install appropriate plugins\n");
+        ERR_(winediag)("GStreamer doesn't support H.264 decoding, please install appropriate plugins\n");
         return E_FAIL;
     }
     wg_transform_destroy(transform);

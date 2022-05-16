@@ -2685,7 +2685,6 @@ void wined3d_context_vk_image_barrier(struct wined3d_context_vk *context_vk,
         VkImageLayout new_layout, VkImage image, const VkImageSubresourceRange *range) DECLSPEC_HIDDEN;
 HRESULT wined3d_context_vk_init(struct wined3d_context_vk *context_vk,
         struct wined3d_swapchain *swapchain) DECLSPEC_HIDDEN;
-void wined3d_context_vk_poll_command_buffers(struct wined3d_context_vk *context_vk) DECLSPEC_HIDDEN;
 void wined3d_context_vk_submit_command_buffer(struct wined3d_context_vk *context_vk,
         unsigned int wait_semaphore_count, const VkSemaphore *wait_semaphores, const VkPipelineStageFlags *wait_stages,
         unsigned int signal_semaphore_count, const VkSemaphore *signal_semaphores) DECLSPEC_HIDDEN;
@@ -4366,6 +4365,9 @@ GLbitfield wined3d_resource_gl_storage_flags(const struct wined3d_resource *reso
 BOOL wined3d_resource_is_offscreen(struct wined3d_resource *resource) DECLSPEC_HIDDEN;
 BOOL wined3d_resource_prepare_sysmem(struct wined3d_resource *resource) DECLSPEC_HIDDEN;
 void wined3d_resource_update_draw_binding(struct wined3d_resource *resource) DECLSPEC_HIDDEN;
+void wined3d_resource_memory_colour_fill(struct wined3d_resource *resource,
+        const struct wined3d_map_desc *map, const struct wined3d_color *colour,
+        const struct wined3d_box *box) DECLSPEC_HIDDEN;
 
 /* Tests show that the start address of resources is 32 byte aligned */
 #define RESOURCE_ALIGNMENT 16
@@ -5287,6 +5289,8 @@ struct wined3d_rendertarget_view
 void wined3d_rendertarget_view_cleanup(struct wined3d_rendertarget_view *view) DECLSPEC_HIDDEN;
 void wined3d_rendertarget_view_get_drawable_size(const struct wined3d_rendertarget_view *view,
         const struct wined3d_context *context, unsigned int *width, unsigned int *height) DECLSPEC_HIDDEN;
+void wined3d_rendertarget_view_get_box(struct wined3d_rendertarget_view *view,
+        struct wined3d_box *box) DECLSPEC_HIDDEN;
 void wined3d_rendertarget_view_invalidate_location(struct wined3d_rendertarget_view *view,
         DWORD location) DECLSPEC_HIDDEN;
 void wined3d_rendertarget_view_load_location(struct wined3d_rendertarget_view *view,

@@ -63,6 +63,10 @@
  * FIXME: global format list needs a critical section
  */
 
+#if 0
+#pragma makedep unix
+#endif
+
 #include "config.h"
 
 #include <string.h>
@@ -76,6 +80,8 @@
 #include <time.h>
 #include <assert.h>
 
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "x11drv.h"
 
 #ifdef HAVE_X11_EXTENSIONS_XFIXES_H
@@ -87,7 +93,6 @@
 #include "shlwapi.h"
 #include "wine/list.h"
 #include "wine/debug.h"
-#include "wine/unicode.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(clipboard);
 
@@ -358,9 +363,9 @@ static void register_win32_formats( const UINT *ids, UINT size )
             if (find_win32_format( *ids )) continue;  /* it already exists */
             if (!NtUserGetClipboardFormatName( *ids, buffer, ARRAYSIZE(buffer) ))
                 continue;  /* not a named format */
-            if (!(len = WideCharToMultiByte( CP_UNIXCP, 0, buffer, -1, NULL, 0, NULL, NULL ))) continue;
-            if (!(names[count] = malloc( len ))) continue;
-            WideCharToMultiByte( CP_UNIXCP, 0, buffer, -1, names[count], len, NULL, NULL );
+            len = lstrlenW( buffer );
+            if (!(names[count] = malloc( len * 3 + 1 ))) continue;
+            ntdll_wcstoumbs( buffer, len + 1, names[count], len * 3 + 1, FALSE );
             new_ids[count++] = *ids;
         }
         if (!count) return;
@@ -405,7 +410,7 @@ static void register_x11_formats( const Atom *atoms, UINT size )
 
         for (i = pos = 0; i < count; i++)
         {
-            if (MultiByteToWideChar( CP_UNIXCP, 0, names[i], -1, buffer, 256 ) &&
+            if (ntdll_umbstowcs( names[i], strlen( names[i] ) + 1, buffer, ARRAYSIZE(buffer) ) &&
                 (ids[pos] = register_clipboard_format( buffer )))
                 new_atoms[pos++] = new_atoms[i];
             XFree( names[i] );
@@ -599,6 +604,107 @@ static WCHAR *get_dos_file_name( const char *path )
 
 
 /***********************************************************************
+ *           get_nt_pathname
+ *
+ * Simplified version of RtlDosPathNameToNtPathName_U.
+ */
+static BOOL get_nt_pathname( const WCHAR *name, UNICODE_STRING *nt_name )
+{
+    static const WCHAR ntprefixW[] = {'\\','?','?','\\'};
+    static const WCHAR uncprefixW[] = {'U','N','C','\\'};
+    size_t len = lstrlenW( name );
+    WCHAR *ptr;
+
+    nt_name->MaximumLength = (len + 8) * sizeof(WCHAR);
+    if (!(ptr = malloc( nt_name->MaximumLength ))) return FALSE;
+    nt_name->Buffer = ptr;
+
+    memcpy( ptr, ntprefixW, sizeof(ntprefixW) );
+    ptr += ARRAYSIZE(ntprefixW);
+    if (name[0] == '\\' && name[1] == '\\')
+    {
+        if ((name[2] == '.' || name[2] == '?') && name[3] == '\\')
+        {
+            name += 4;
+            len -= 4;
+        }
+        else
+        {
+            memcpy( ptr, uncprefixW, sizeof(uncprefixW) );
+            ptr += ARRAYSIZE(uncprefixW);
+            name += 2;
+            len -= 2;
+        }
+    }
+    memcpy( ptr, name, (len + 1) * sizeof(WCHAR) );
+    ptr += len;
+    nt_name->Length = (ptr - nt_name->Buffer) * sizeof(WCHAR);
+    return TRUE;
+}
+
+
+/* based on wine_get_unix_file_name */
+char *get_unix_file_name( const WCHAR *dosW )
+{
+    UNICODE_STRING nt_name;
+    OBJECT_ATTRIBUTES attr;
+    NTSTATUS status;
+    ULONG size = 256;
+    char *buffer;
+
+    if (!get_nt_pathname( dosW, &nt_name )) return NULL;
+    InitializeObjectAttributes( &attr, &nt_name, 0, 0, NULL );
+    for (;;)
+    {
+        if (!(buffer = malloc( size )))
+        {
+            free( nt_name.Buffer );
+            return NULL;
+        }
+        status = wine_nt_to_unix_file_name( &attr, buffer, &size, FILE_OPEN_IF );
+        if (status != STATUS_BUFFER_TOO_SMALL) break;
+        free( buffer );
+    }
+    free( nt_name.Buffer );
+    if (status)
+    {
+        free( buffer );
+        return NULL;
+    }
+    return buffer;
+}
+
+
+static CPTABLEINFO *get_xstring_cp(void)
+{
+    static CPTABLEINFO cp;
+    if (!cp.CodePage)
+    {
+        USHORT *ptr;
+        SIZE_T nls_size;
+        if (NtGetNlsSectionPtr( 11, 28591, NULL, (void **)&ptr, &nls_size )) return NULL;
+        RtlInitCodePageTable( ptr, &cp );
+    }
+    return &cp;
+}
+
+
+static CPTABLEINFO *get_ansi_cp(void)
+{
+    USHORT utf8_hdr[2] = { 0, CP_UTF8 };
+    static CPTABLEINFO cp;
+    if (!cp.CodePage)
+    {
+        if (NtCurrentTeb()->Peb->AnsiCodePageData)
+            RtlInitCodePageTable( NtCurrentTeb()->Peb->AnsiCodePageData, &cp );
+        else
+            RtlInitCodePageTable( utf8_hdr, &cp );
+    }
+    return &cp;
+}
+
+
+/***********************************************************************
  *           uri_to_dos
  *
  *  Converts a text/uri-list URI to DOS filename.
@@ -714,8 +820,8 @@ static void *import_string( Atom type, const void *data, size_t size, size_t *re
     WCHAR *ret;
 
     if (!(ret = malloc( (size * 2 + 1) * sizeof(WCHAR) ))) return NULL;
-    str_size = MultiByteToWideChar( 28591, 0, data, size, ret + size, size );
-    return unicode_text_from_string( ret, ret + size, str_size, ret_size );
+    RtlCustomCPToUnicodeN( get_xstring_cp(), ret + size, size * sizeof(WCHAR), &str_size, data, size );
+    return unicode_text_from_string( ret, ret + size, str_size / sizeof(WCHAR), ret_size );
 }
 
 
@@ -759,7 +865,8 @@ static void *import_compound_text( Atom type, const void *data, size_t size, siz
 
     len = strlen(srcstr[0]) + 1;
     if (!(ret = malloc( (len * 2 + 1) * sizeof(WCHAR) ))) return NULL;
-    count = MultiByteToWideChar( CP_UNIXCP, 0, srcstr[0], len, ret + len, len );
+
+    count = ntdll_umbstowcs( srcstr[0], len, ret + len, len );
     ret = unicode_text_from_string( ret, ret + len, count, ret_size );
 
     XFreeStringList(srcstr);
@@ -939,11 +1046,61 @@ static void *import_text_html( Atom type, const void *data, size_t size, size_t 
 
 
 /**************************************************************************
- *      import_text_uri_list
- *
- *  Import text/uri-list.
+ *      file_list_to_drop_files
  */
-static void *import_text_uri_list( Atom type, const void *data, size_t size, size_t *ret_size )
+void *file_list_to_drop_files( const void *data, size_t size, size_t *ret_size )
+{
+    size_t buf_size = 4096, path_size;
+    DROPFILES *drop = NULL;
+    const char *ptr;
+    WCHAR *path;
+
+    for (ptr = data; ptr < (const char *)data + size; ptr += strlen( ptr ) + 1)
+    {
+        path = get_dos_file_name( ptr );
+
+        TRACE( "converted URI %s to DOS path %s\n", debugstr_a(ptr), debugstr_w(path) );
+
+        if (!path) continue;
+
+        if (!drop)
+        {
+            if (!(drop = malloc( buf_size ))) return NULL;
+            drop->pFiles = sizeof(*drop);
+            drop->pt.x = drop->pt.y = 0;
+            drop->fNC = FALSE;
+            drop->fWide = TRUE;
+            *ret_size = sizeof(*drop);
+        }
+
+        path_size = (lstrlenW( path ) + 1) * sizeof(WCHAR);
+        if (*ret_size + path_size > buf_size - sizeof(WCHAR))
+        {
+            void *new_buf;
+            if (!(new_buf = realloc( drop, buf_size * 2 + path_size )))
+            {
+                free( path );
+                continue;
+            }
+            buf_size = buf_size * 2 + path_size;
+            drop = new_buf;
+        }
+
+        memcpy( (char *)drop + *ret_size, path, path_size );
+        *ret_size += path_size;
+    }
+
+    if (!drop) return NULL;
+    *(WCHAR *)((char *)drop + *ret_size) = 0;
+    *ret_size += sizeof(WCHAR);
+    return drop;
+}
+
+
+/**************************************************************************
+ *      uri_list_to_drop_files
+ */
+void *uri_list_to_drop_files( const void *data, size_t size, size_t *ret_size )
 {
     const char *uriList = data;
     char *uri;
@@ -977,7 +1134,7 @@ static void *import_text_uri_list( Atom type, const void *data, size_t size, siz
 
         if (path)
         {
-            int pathSize = strlenW(path) + 1;
+            int pathSize = wcslen( path ) + 1;
             if (pathSize > capacity - total)
             {
                 WCHAR *new_out;
@@ -1014,6 +1171,17 @@ static void *import_text_uri_list( Atom type, const void *data, size_t size, siz
     }
     free( out );
     return dropFiles;
+}
+
+
+/**************************************************************************
+ *      import_text_uri_list
+ *
+ *  Import text/uri-list.
+ */
+static void *import_text_uri_list( Atom type, const void *data, size_t size, size_t *ret_size )
+{
+    return uri_list_to_drop_files( data, size, ret_size );
 }
 
 
@@ -1226,7 +1394,7 @@ static BOOL export_string( Display *display, Window win, Atom prop, Atom target,
     char *text;
 
     if (!(text = malloc( size ))) return FALSE;
-    len = WideCharToMultiByte( 28591, 0, data, size / sizeof(WCHAR), text, size, NULL, NULL );
+    RtlUnicodeToCustomCPN( get_xstring_cp(), text, size, &len, data, size );
     string_from_unicode_text( text, len, &len );
 
     put_property( display, win, prop, target, 8, text, len );
@@ -1282,8 +1450,7 @@ static BOOL export_compound_text( Display *display, Window win, Atom prop, Atom 
 
 
     if (!(text = malloc( size / sizeof(WCHAR) * 3 ))) return FALSE;
-    len = WideCharToMultiByte( CP_UNIXCP, 0, data, size / sizeof(WCHAR),
-                               text, size / sizeof(WCHAR) * 3, NULL, NULL );
+    len = ntdll_wcstoumbs( data, size / sizeof(WCHAR), text, size / sizeof(WCHAR) * 3, FALSE );
     string_from_unicode_text( text, len, &len );
 
     if (target == x11drv_atom(COMPOUND_TEXT))
@@ -1402,14 +1569,19 @@ static BOOL export_hdrop( Display *display, Window win, Atom prop, Atom target, 
 
     if (!drop_files->fWide)
     {
-        char *p, *files = (char *)data + drop_files->pFiles;
-        p = files;
-        while (*p) p += strlen( p ) + 1;
-        p++;
+        char *files = (char *)data + drop_files->pFiles;
+        CPTABLEINFO *cp = get_ansi_cp();
+        DWORD len = 0;
 
-        if (!(unicode_data = malloc( (p - files) * sizeof(WCHAR) ))) goto failed;
-        MultiByteToWideChar( CP_ACP, 0, files, p - files, unicode_data, p - files );
-        ptr = unicode_data;
+        while (files[len]) len += strlen( files + len ) + 1;
+        len++;
+
+        if (!(ptr = unicode_data = malloc( len * sizeof(WCHAR) ))) goto failed;
+
+        if (cp->CodePage == CP_UTF8)
+            RtlUTF8ToUnicodeN( unicode_data, len * sizeof(WCHAR), &len, files, len );
+        else
+            RtlCustomCPToUnicodeN( cp, unicode_data, len * sizeof(WCHAR), &len, files, len );
     }
     else ptr = (const WCHAR *)((char *)data + drop_files->pFiles);
 
@@ -1421,7 +1593,7 @@ static BOOL export_hdrop( Display *display, Window win, Atom prop, Atom target, 
         UINT uriSize;
         UINT u;
 
-        unixFilename = wine_get_unix_file_name( ptr );
+        unixFilename = get_unix_file_name( ptr );
         if (unixFilename == NULL) goto failed;
         ptr += lstrlenW( ptr ) + 1;
 
@@ -1439,7 +1611,7 @@ static BOOL export_hdrop( Display *display, Window win, Atom prop, Atom target, 
             }
             else
             {
-                HeapFree(GetProcessHeap(), 0, unixFilename);
+                free( unixFilename );
                 goto failed;
             }
         }
@@ -1455,7 +1627,7 @@ static BOOL export_hdrop( Display *display, Window win, Atom prop, Atom target, 
         }
         textUriList[next++] = '\r';
         textUriList[next++] = '\n';
-        HeapFree(GetProcessHeap(), 0, unixFilename);
+        free( unixFilename );
     }
     put_property( display, win, prop, target, 8, textUriList, next );
     free( textUriList );
@@ -1975,67 +2147,6 @@ BOOL update_clipboard( HWND hwnd )
 
 
 /**************************************************************************
- *		clipboard_wndproc
- *
- * Window procedure for the clipboard manager.
- */
-static LRESULT CALLBACK clipboard_wndproc( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
-{
-    switch (msg)
-    {
-    case WM_NCCREATE:
-        return TRUE;
-    case WM_CLIPBOARDUPDATE:
-        if (is_clipboard_owner) break;  /* ignore our own changes */
-        acquire_selection( thread_init_display() );
-        break;
-    case WM_RENDERFORMAT:
-        if (render_format( wp )) rendered_formats++;
-        break;
-    case WM_TIMER:
-        if (!is_clipboard_owner) break;
-        request_selection_contents( thread_display(), FALSE );
-        break;
-    case WM_DESTROYCLIPBOARD:
-        TRACE( "WM_DESTROYCLIPBOARD: lost ownership\n" );
-        is_clipboard_owner = FALSE;
-        KillTimer( hwnd, 1 );
-        break;
-    }
-    return DefWindowProcW( hwnd, msg, wp, lp );
-}
-
-
-/**************************************************************************
- *		wait_clipboard_mutex
- *
- * Make sure that there's only one clipboard thread per window station.
- */
-static BOOL wait_clipboard_mutex(void)
-{
-    static const WCHAR prefix[] = {'_','_','w','i','n','e','_','c','l','i','p','b','o','a','r','d','_'};
-    WCHAR buffer[MAX_PATH + ARRAY_SIZE( prefix )];
-    HANDLE mutex;
-
-    memcpy( buffer, prefix, sizeof(prefix) );
-    if (!GetUserObjectInformationW( GetProcessWindowStation(), UOI_NAME,
-                                    buffer + ARRAY_SIZE( prefix ),
-                                    sizeof(buffer) - sizeof(prefix), NULL ))
-    {
-        ERR( "failed to get winstation name\n" );
-        return FALSE;
-    }
-    mutex = CreateMutexW( NULL, TRUE, buffer );
-    if (GetLastError() == ERROR_ALREADY_EXISTS)
-    {
-        TRACE( "waiting for mutex %s\n", debugstr_w( buffer ));
-        WaitForSingleObject( mutex, INFINITE );
-    }
-    return TRUE;
-}
-
-
-/**************************************************************************
  *              selection_notify_event
  *
  * Called when x11 clipboard content changes
@@ -2109,15 +2220,11 @@ static void xfixes_init(void)
  *
  * Thread running inside the desktop process to manage the clipboard
  */
-static DWORD WINAPI clipboard_thread( void *arg )
+static BOOL clipboard_init( HWND hwnd )
 {
-    static const WCHAR clipboard_classname[] = {'_','_','w','i','n','e','_','c','l','i','p','b','o','a','r','d','_','m','a','n','a','g','e','r',0};
     XSetWindowAttributes attr;
-    WNDCLASSW class;
-    MSG msg;
 
-    if (!wait_clipboard_mutex()) return 0;
-
+    clipboard_hwnd = hwnd;
     clipboard_display = thread_init_display();
     attr.event_mask = PropertyChangeMask;
     import_window = XCreateWindow( clipboard_display, root_window, 0, 0, 1, 1, 0, CopyFromParent,
@@ -2125,34 +2232,53 @@ static DWORD WINAPI clipboard_thread( void *arg )
     if (!import_window)
     {
         ERR( "failed to create import window\n" );
-        return 0;
-    }
-
-    memset( &class, 0, sizeof(class) );
-    class.lpfnWndProc   = clipboard_wndproc;
-    class.lpszClassName = clipboard_classname;
-
-    if (!RegisterClassW( &class ) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
-    {
-        ERR( "could not register clipboard window class err %u\n", GetLastError() );
-        return 0;
-    }
-    if (!(clipboard_hwnd = CreateWindowW( clipboard_classname, NULL, 0, 0, 0, 0, 0,
-                                          HWND_MESSAGE, 0, 0, NULL )))
-    {
-        ERR( "failed to create clipboard window err %u\n", GetLastError() );
-        return 0;
+        return FALSE;
     }
 
     clipboard_thread_id = GetCurrentThreadId();
-    AddClipboardFormatListener( clipboard_hwnd );
+    NtUserAddClipboardFormatListener( hwnd );
     register_builtin_formats();
     xfixes_init();
     request_selection_contents( clipboard_display, TRUE );
 
     TRACE( "clipboard thread %04x running\n", GetCurrentThreadId() );
-    while (GetMessageW( &msg, 0, 0, 0 )) DispatchMessageW( &msg );
-    return 0;
+    return TRUE;
+}
+
+
+
+
+/**************************************************************************
+ *           x11drv_clipboard_message
+ */
+NTSTATUS x11drv_clipboard_message( void *arg )
+{
+    struct clipboard_message_params *params = arg;
+
+    switch (params->msg)
+    {
+    case WM_NCCREATE:
+        return clipboard_init( params->hwnd );
+    case WM_CLIPBOARDUPDATE:
+        if (is_clipboard_owner) break;  /* ignore our own changes */
+        acquire_selection( thread_init_display() );
+        break;
+    case WM_RENDERFORMAT:
+        if (render_format( params->wparam )) rendered_formats++;
+        break;
+    case WM_TIMER:
+        if (!is_clipboard_owner) break;
+        request_selection_contents( thread_display(), FALSE );
+        break;
+    case WM_DESTROYCLIPBOARD:
+        TRACE( "WM_DESTROYCLIPBOARD: lost ownership\n" );
+        is_clipboard_owner = FALSE;
+        NtUserKillTimer( params->hwnd, 1 );
+        break;
+    }
+
+    return NtUserMessageCall( params->hwnd, params->msg, params->wparam, params->lparam,
+                              NULL, NtUserDefWindowProc, FALSE );
 }
 
 
@@ -2169,8 +2295,8 @@ void X11DRV_UpdateClipboard(void)
     if (GetCurrentThreadId() == clipboard_thread_id) return;
     now = NtGetTickCount();
     if ((int)(now - last_update) <= SELECTION_UPDATE_DELAY) return;
-    if (SendMessageTimeoutW( GetClipboardOwner(), WM_X11DRV_UPDATE_CLIPBOARD, 0, 0,
-                             SMTO_ABORTIFHUNG, 5000, &ret ) && ret)
+    if (send_message_timeout( NtUserGetClipboardOwner(), WM_X11DRV_UPDATE_CLIPBOARD, 0, 0,
+                              SMTO_ABORTIFHUNG, 5000, &ret ) && ret)
         last_update = now;
 }
 
@@ -2230,17 +2356,4 @@ BOOL X11DRV_SelectionClear( HWND hwnd, XEvent *xev )
     release_selection( event->display, event->time );
     request_selection_contents( event->display, TRUE );
     return FALSE;
-}
-
-
-/**************************************************************************
- *		X11DRV_InitClipboard
- */
-void X11DRV_InitClipboard(void)
-{
-    DWORD id;
-    HANDLE handle = CreateThread( NULL, 0, clipboard_thread, NULL, 0, &id );
-
-    if (handle) CloseHandle( handle );
-    else ERR( "failed to create clipboard thread\n" );
 }

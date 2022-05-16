@@ -157,34 +157,34 @@ static void codeview_init_basic_types(struct module* module)
      */
     cv_basic_types[T_NOTYPE] = NULL;
     cv_basic_types[T_ABS]    = NULL;
-    cv_basic_types[T_VOID]   = &symt_new_basic(module, btVoid,  "void", 0)->symt;
-    cv_basic_types[T_CHAR]   = &symt_new_basic(module, btChar,  "char", 1)->symt;
-    cv_basic_types[T_SHORT]  = &symt_new_basic(module, btInt,   "short int", 2)->symt;
-    cv_basic_types[T_LONG]   = &symt_new_basic(module, btInt,   "long int", 4)->symt;
-    cv_basic_types[T_QUAD]   = &symt_new_basic(module, btInt,   "long long int", 8)->symt;
-    cv_basic_types[T_UCHAR]  = &symt_new_basic(module, btUInt,  "unsigned char", 1)->symt;
-    cv_basic_types[T_USHORT] = &symt_new_basic(module, btUInt,  "unsigned short", 2)->symt;
-    cv_basic_types[T_ULONG]  = &symt_new_basic(module, btUInt,  "unsigned long", 4)->symt;
-    cv_basic_types[T_UQUAD]  = &symt_new_basic(module, btUInt,  "unsigned long long", 8)->symt;
-    cv_basic_types[T_BOOL08] = &symt_new_basic(module, btBool,  "BOOL08", 1)->symt;
-    cv_basic_types[T_BOOL16] = &symt_new_basic(module, btBool,  "BOOL16", 2)->symt;
-    cv_basic_types[T_BOOL32] = &symt_new_basic(module, btBool,  "BOOL32", 4)->symt;
-    cv_basic_types[T_BOOL64] = &symt_new_basic(module, btBool,  "BOOL64", 8)->symt;
-    cv_basic_types[T_REAL32] = &symt_new_basic(module, btFloat, "float", 4)->symt;
-    cv_basic_types[T_REAL64] = &symt_new_basic(module, btFloat, "double", 8)->symt;
-    cv_basic_types[T_REAL80] = &symt_new_basic(module, btFloat, "long double", 10)->symt;
-    cv_basic_types[T_RCHAR]  = &symt_new_basic(module, btInt,   "signed char", 1)->symt;
-    cv_basic_types[T_WCHAR]  = &symt_new_basic(module, btWChar, "wchar_t", 2)->symt;
-    cv_basic_types[T_CHAR16] = &symt_new_basic(module, btChar16,"char16_t", 2)->symt;
-    cv_basic_types[T_CHAR32] = &symt_new_basic(module, btChar32,"char32_t", 4)->symt;
-    cv_basic_types[T_CHAR8]  = &symt_new_basic(module, btChar8, "char8_t", 1)->symt;
-    cv_basic_types[T_INT2]   = &symt_new_basic(module, btInt,   "INT2", 2)->symt;
-    cv_basic_types[T_UINT2]  = &symt_new_basic(module, btUInt,  "UINT2", 2)->symt;
-    cv_basic_types[T_INT4]   = &symt_new_basic(module, btInt,   "INT4", 4)->symt;
-    cv_basic_types[T_UINT4]  = &symt_new_basic(module, btUInt,  "UINT4", 4)->symt;
-    cv_basic_types[T_INT8]   = &symt_new_basic(module, btInt,   "INT8", 8)->symt;
-    cv_basic_types[T_UINT8]  = &symt_new_basic(module, btUInt,  "UINT8", 8)->symt;
-    cv_basic_types[T_HRESULT]= &symt_new_basic(module, btUInt,  "HRESULT", 4)->symt;
+    cv_basic_types[T_VOID]   = &symt_get_basic(btVoid,   0)->symt; /* void */
+    cv_basic_types[T_CHAR]   = &symt_get_basic(btInt,    1)->symt; /* signed char (and char in C) */
+    cv_basic_types[T_SHORT]  = &symt_get_basic(btInt,    2)->symt; /* short int */
+    cv_basic_types[T_LONG]   = &symt_get_basic(btLong,   4)->symt; /* long int */
+    cv_basic_types[T_QUAD]   = &symt_get_basic(btInt,    8)->symt; /* long long int */
+    cv_basic_types[T_UCHAR]  = &symt_get_basic(btUInt,   1)->symt; /* unsigned char */
+    cv_basic_types[T_USHORT] = &symt_get_basic(btUInt,   2)->symt; /* unsigned short */
+    cv_basic_types[T_ULONG]  = &symt_get_basic(btULong,  4)->symt; /* unsigned long */
+    cv_basic_types[T_UQUAD]  = &symt_get_basic(btUInt,   8)->symt; /* unsigned long long */
+    cv_basic_types[T_BOOL08] = &symt_get_basic(btBool,   1)->symt; /* BOOL08 */
+    cv_basic_types[T_BOOL16] = &symt_get_basic(btBool,   2)->symt; /* BOOL16 */
+    cv_basic_types[T_BOOL32] = &symt_get_basic(btBool,   4)->symt; /* BOOL32 */
+    cv_basic_types[T_BOOL64] = &symt_get_basic(btBool,   8)->symt; /* BOOL64 */
+    cv_basic_types[T_REAL32] = &symt_get_basic(btFloat,  4)->symt; /* float */
+    cv_basic_types[T_REAL64] = &symt_get_basic(btFloat,  8)->symt; /* double */
+    cv_basic_types[T_REAL80] = &symt_get_basic(btFloat, 10)->symt; /* long double */
+    cv_basic_types[T_RCHAR]  = &symt_get_basic(btChar,   1)->symt; /* "real" char (char in C++) */
+    cv_basic_types[T_WCHAR]  = &symt_get_basic(btWChar,  2)->symt; /* char8_t */
+    cv_basic_types[T_CHAR16] = &symt_get_basic(btChar16, 2)->symt; /* char16_t */
+    cv_basic_types[T_CHAR32] = &symt_get_basic(btChar32, 4)->symt; /* char32_t */
+    cv_basic_types[T_CHAR8]  = &symt_get_basic(btChar8,  1)->symt; /* char8_t */
+    cv_basic_types[T_INT2]   = &symt_get_basic(btInt,    2)->symt; /* INT2 */
+    cv_basic_types[T_UINT2]  = &symt_get_basic(btUInt,   2)->symt; /* UINT2 */
+    cv_basic_types[T_INT4]   = &symt_get_basic(btInt,    4)->symt; /* INT4 */
+    cv_basic_types[T_UINT4]  = &symt_get_basic(btUInt,   4)->symt; /* UINT4 */
+    cv_basic_types[T_INT8]   = &symt_get_basic(btInt,    8)->symt; /* INT8 */
+    cv_basic_types[T_UINT8]  = &symt_get_basic(btUInt,   8)->symt; /* UINT8 */
+    cv_basic_types[T_HRESULT]= &symt_get_basic(btUInt,   4)->symt; /* HRESULT */
 
     cv_basic_types[T_32PVOID]   = &symt_new_pointer(module, cv_basic_types[T_VOID], 4)->symt;
     cv_basic_types[T_32PCHAR]   = &symt_new_pointer(module, cv_basic_types[T_CHAR], 4)->symt;
@@ -1461,7 +1461,7 @@ static void codeview_snarf_linetab(const struct msc_debug_info* msc_dbg, const B
                  */
                 if (!func || addr >= func->address + func->size)
                 {
-                    func = (struct symt_function*)symt_find_nearest(msc_dbg->module, addr);
+                    func = (struct symt_function*)symt_find_symbol_at(msc_dbg->module, addr);
                     /* FIXME: at least labels support line numbers */
                     if (!symt_check_tag(&func->symt, SymTagFunction) && !symt_check_tag(&func->symt, SymTagInlineSite))
                     {
@@ -1534,7 +1534,7 @@ static void codeview_snarf_linetab2(const struct msc_debug_info* msc_dbg, const 
                 lines = CV_RECORD_AFTER(files_hdr);
                 for (i = 0; i < files_hdr->nLines; i++)
                 {
-                    func = (struct symt_function*)symt_find_nearest(msc_dbg->module, lineblk_base + lines[i].offset);
+                    func = (struct symt_function*)symt_find_symbol_at(msc_dbg->module, lineblk_base + lines[i].offset);
                     /* FIXME: at least labels support line numbers */
                     if (!symt_check_tag(&func->symt, SymTagFunction) && !symt_check_tag(&func->symt, SymTagInlineSite))
                     {
@@ -1619,7 +1619,7 @@ static inline void codeview_add_variable(const struct msc_debug_info* msc_dbg,
         loc.kind = in_tls ? loc_tlsrel : loc_absolute;
         loc.reg = 0;
         loc.offset = in_tls ? offset : codeview_get_address(msc_dbg, segment, offset);
-        if (force || in_tls || !symt_find_nearest(msc_dbg->module, loc.offset))
+        if (force || in_tls || !symt_find_symbol_at(msc_dbg->module, loc.offset))
         {
             symt_new_global_variable(msc_dbg->module, compiland,
                                      name, is_local, loc, 0,
@@ -2501,7 +2501,7 @@ static BOOL codeview_snarf(const struct msc_debug_info* msc_dbg,
             if (!top_func)
             {
                 ULONG_PTR parent_addr = codeview_get_address(msc_dbg, sym->sepcode_v3.sectParent, sym->sepcode_v3.offParent);
-                struct symt_ht* parent = symt_find_nearest(msc_dbg->module, parent_addr);
+                struct symt_ht* parent = symt_find_symbol_at(msc_dbg->module, parent_addr);
                 if (symt_check_tag(&parent->symt, SymTagFunction))
                 {
                     struct symt_function* pfunc = (struct symt_function*)parent;
@@ -2856,7 +2856,7 @@ static void pdb_free_file(struct pdb_file_info* pdb_file)
     HeapFree(GetProcessHeap(), 0, pdb_file->stream_dict);
 }
 
-static void pdb_load_stream_name_table(struct pdb_file_info* pdb_file, const char* str, unsigned cb)
+static BOOL pdb_load_stream_name_table(struct pdb_file_info* pdb_file, const char* str, unsigned cb)
 {
     DWORD*      pdw;
     DWORD*      ok_bits;
@@ -2869,7 +2869,7 @@ static void pdb_load_stream_name_table(struct pdb_file_info* pdb_file, const cha
     count = *pdw++;
 
     pdb_file->stream_dict = HeapAlloc(GetProcessHeap(), 0, (numok + 1) * sizeof(struct pdb_stream_name) + cb);
-    if (!pdb_file->stream_dict) return;
+    if (!pdb_file->stream_dict) return FALSE;
     cpstr = (char*)(pdb_file->stream_dict + numok + 1);
     memcpy(cpstr, str, cb);
 
@@ -2879,7 +2879,7 @@ static void pdb_load_stream_name_table(struct pdb_file_info* pdb_file, const cha
     if (*pdw++ != 0)
     {
         FIXME("unexpected value\n");
-        return;
+        return FALSE;
     }
 
     for (i = j = 0; i < count; i++)
@@ -2895,6 +2895,7 @@ static void pdb_load_stream_name_table(struct pdb_file_info* pdb_file, const cha
     /* add sentinel */
     pdb_file->stream_dict[numok].name = NULL;
     pdb_file->fpoext_stream = -1;
+    return TRUE;
 }
 
 static unsigned pdb_get_stream_by_name(const struct pdb_file_info* pdb_file, const char* name)
@@ -3169,8 +3170,7 @@ static BOOL pdb_init(const struct pdb_lookup* pdb_lookup, struct pdb_file_info* 
                   pdb_lookup->filename, root->Age, pdb_lookup->age);
         TRACE("found JG for %s: age=%x timestamp=%x\n",
               pdb_lookup->filename, root->Age, root->TimeDateStamp);
-        pdb_load_stream_name_table(pdb_file, &root->names[0], root->cbNames);
-
+        ret = pdb_load_stream_name_table(pdb_file, &root->names[0], root->cbNames);
         pdb_free(root);
     }
     else if (!memcmp(image, PDB_DS_IDENT, sizeof(PDB_DS_IDENT)))
@@ -3206,7 +3206,7 @@ static BOOL pdb_init(const struct pdb_lookup* pdb_lookup, struct pdb_file_info* 
                   pdb_lookup->filename, root->Age, pdb_lookup->age);
         TRACE("found DS for %s: age=%x guid=%s\n",
               pdb_lookup->filename, root->Age, debugstr_guid(&root->guid));
-        pdb_load_stream_name_table(pdb_file, &root->names[0], root->cbNames);
+        ret = pdb_load_stream_name_table(pdb_file, &root->names[0], root->cbNames);
 
         pdb_free(root);
     }
@@ -3377,7 +3377,8 @@ static BOOL pdb_process_internal(const struct process* pcs,
             break;
         default:
             FIXME("Unknown PDB_STREAM_INDEXES size (%u)\n", symbols.stream_index_size);
-            break;
+            pdb_free(symbols_image);
+            return FALSE;
         }
         files_image = pdb_read_strings(pdb_file);
         if (files_image) files_size = *(const DWORD*)(files_image + 8);
