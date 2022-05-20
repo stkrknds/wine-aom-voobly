@@ -32,15 +32,7 @@
 WINE_DEFAULT_DEBUG_CHANNEL(cursor);
 
 
-static CRITICAL_SECTION cursor_cache_section;
-static CRITICAL_SECTION_DEBUG critsect_debug =
-{
-    0, 0, &cursor_cache_section,
-    { &critsect_debug.ProcessLocksList, &critsect_debug.ProcessLocksList },
-      0, 0, { (DWORD_PTR)(__FILE__ ": cursor_cache_section") }
-};
-static CRITICAL_SECTION cursor_cache_section = { &critsect_debug, -1, 0, 0, 0, 0 };
-
+static pthread_mutex_t cursor_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
 static CFMutableDictionaryRef cursor_cache;
 
 
@@ -195,17 +187,17 @@ CFStringRef copy_system_cursor_name(ICONINFOEXW *info)
     else sprintfW(p, idW, info->wResID);
 
     /* @@ Wine registry key: HKCU\Software\Wine\Mac Driver\Cursors */
-    if (!RegOpenKeyA(HKEY_CURRENT_USER, "Software\\Wine\\Mac Driver\\Cursors", &key))
+    if (!(key = open_hkcu_key("Software\\Wine\\Mac Driver\\Cursors")))
     {
-        WCHAR value[64];
-        DWORD size, ret;
+        char buffer[2048];
+        KEY_VALUE_PARTIAL_INFORMATION *info = (void *)buffer;
+        DWORD ret;
 
-        value[0] = 0;
-        size = sizeof(value);
-        ret = RegQueryValueExW(key, name, NULL, NULL, (BYTE *)value, &size);
-        RegCloseKey(key);
-        if (!ret)
+        ret = query_reg_value(key, name, info, sizeof(buffer));
+        NtClose(key);
+        if (ret)
         {
+            const WCHAR *value = (const WCHAR *)info->Data;
             if (!value[0])
             {
                 TRACE("registry forces standard cursor for %s\n", debugstr_w(name));
@@ -647,10 +639,10 @@ void macdrv_DestroyCursorIcon(HCURSOR cursor)
 {
     TRACE("cursor %p\n", cursor);
 
-    EnterCriticalSection(&cursor_cache_section);
+    pthread_mutex_lock(&cursor_cache_mutex);
     if (cursor_cache)
         CFDictionaryRemoveValue(cursor_cache, cursor);
-    LeaveCriticalSection(&cursor_cache_section);
+    pthread_mutex_unlock(&cursor_cache_mutex);
 }
 
 
@@ -731,7 +723,7 @@ void macdrv_SetCursor(HCURSOR cursor)
     {
         ICONINFOEXW info;
 
-        EnterCriticalSection(&cursor_cache_section);
+        pthread_mutex_lock(&cursor_cache_mutex);
         if (cursor_cache)
         {
             CFTypeRef cached_cursor = CFDictionaryGetValue(cursor_cache, cursor);
@@ -743,7 +735,7 @@ void macdrv_SetCursor(HCURSOR cursor)
                     cursor_frames = CFRetain(cached_cursor);
             }
         }
-        LeaveCriticalSection(&cursor_cache_section);
+        pthread_mutex_unlock(&cursor_cache_mutex);
         if (cursor_name || cursor_frames)
             goto done;
 
@@ -790,13 +782,13 @@ void macdrv_SetCursor(HCURSOR cursor)
 
         if (cursor_name || cursor_frames)
         {
-            EnterCriticalSection(&cursor_cache_section);
+            pthread_mutex_lock(&cursor_cache_mutex);
             if (!cursor_cache)
                 cursor_cache = CFDictionaryCreateMutable(NULL, 0, NULL,
                                                          &kCFTypeDictionaryValueCallBacks);
             CFDictionarySetValue(cursor_cache, cursor,
                                  cursor_name ? (CFTypeRef)cursor_name : (CFTypeRef)cursor_frames);
-            LeaveCriticalSection(&cursor_cache_section);
+            pthread_mutex_unlock(&cursor_cache_mutex);
         }
         else
             cursor_name = CFRetain(CFSTR("arrowCursor"));

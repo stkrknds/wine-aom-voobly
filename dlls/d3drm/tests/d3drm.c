@@ -863,6 +863,7 @@ static void test_Face(void)
     D3DCOLOR color;
     DWORD count;
     int icount;
+    D3DRMRENDERQUALITY quality;
 
     hr = Direct3DRMCreate(&d3drm);
     ok(hr == D3DRM_OK, "Cannot get IDirect3DRM interface, hr %#lx\n", hr);
@@ -933,6 +934,18 @@ static void test_Face(void)
 
     icount = IDirect3DRMFace_GetVertexCount(face1);
     ok(!icount, "wrong VertexCount: %i\n", icount);
+
+    quality = IDirect3DRMMeshBuilder3_GetQuality(MeshBuilder2);
+    ok(quality == D3DRMRENDER_GOURAUD, "Unexpected %lx.\n", quality);
+
+    hr = IDirect3DRMMeshBuilder3_SetQuality(MeshBuilder2, D3DRMRENDER_PHONG);
+    ok(hr == S_OK, "got %lx.\n", hr);
+
+    quality = IDirect3DRMMeshBuilder3_GetQuality(MeshBuilder2);
+    ok(quality == D3DRMRENDER_PHONG, "got %lx.\n", quality);
+
+    hr = IDirect3DRMMeshBuilder3_SetQuality(MeshBuilder2, D3DRMRENDER_GOURAUD);
+    ok(hr == S_OK, "got %lx.\n", hr);
 
     IDirect3DRMFace_Release(face1);
     IDirect3DRMMeshBuilder2_Release(MeshBuilder2);
@@ -2693,6 +2706,8 @@ static void test_Texture(void)
     IDirect3DRMTexture2 *texture2;
     IDirect3DRMTexture3 *texture3;
     IDirectDrawSurface *surface;
+    LONG decalx, decaly;
+    DWORD colors, shades;
 
     D3DRMIMAGE initimg =
     {
@@ -2853,6 +2868,52 @@ static void test_Texture(void)
     test_object_name((IDirect3DRMObject *)texture1);
     test_object_name((IDirect3DRMObject *)texture2);
     test_object_name((IDirect3DRMObject *)texture3);
+
+    hr = IDirect3DRMTexture_GetDecalOrigin(texture1, &decalx, &decaly);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(decalx == 0, "got %ld.\n", decalx);
+    ok(decaly == 0, "got %ld.\n", decaly);
+
+    hr = IDirect3DRMTexture_SetDecalOrigin(texture1, 1, 1);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    hr = IDirect3DRMTexture_GetDecalOrigin(texture1, &decalx, &decaly);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(decalx == 1, "got %ld.\n", decalx);
+    ok(decaly == 1, "got %ld.\n", decaly);
+
+    hr = IDirect3DRMTexture_SetDecalOrigin(texture1, 0, 0);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    colors = IDirect3DRMTexture_GetColors(texture1);
+    ok(colors == 8, "got %ld.\n", colors);
+
+    hr = IDirect3DRMTexture_SetColors(texture1, 256);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    colors = IDirect3DRMTexture_GetColors(texture1);
+    ok(colors == 256, "got %ld.\n", colors);
+
+    hr = IDirect3DRMTexture_SetColors(texture1, 8);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    shades = IDirect3DRMTexture_GetShades(texture1);
+    ok(shades == 16, "got %ld.\n", shades);
+
+    hr = IDirect3DRMTexture_SetShades(texture1, 8);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    shades = IDirect3DRMTexture_GetShades(texture1);
+    ok(shades == 8, "got %ld.\n", shades);
+
+    hr = IDirect3DRMTexture_SetShades(texture1, 11);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    shades = IDirect3DRMTexture_GetShades(texture1);
+    ok(shades == 11, "got %ld.\n", shades);
+
+    hr = IDirect3DRMTexture_SetShades(texture1, 8);
+    ok(hr == S_OK, "got %#lx.\n", hr);
 
     d3drm_img = IDirect3DRMTexture_GetImage(texture1);
     ok(!!d3drm_img, "Failed to get image.\n");

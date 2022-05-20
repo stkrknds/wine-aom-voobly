@@ -702,7 +702,6 @@ static void cleanup_devices(void)
 
     hkey = reg_open_key( enum_key, pciW, sizeof(pciW) );
 
-restart:
     while (!NtEnumerateKey( hkey, i++, KeyNodeInformation, key, sizeof(buffer), &size ))
     {
         unsigned int j = 0;
@@ -735,7 +734,7 @@ restart:
             NtClose( device_key );
 
             if (!present && reg_delete_tree( subkey, bufferW, lstrlenW( bufferW ) * sizeof(WCHAR) ))
-                goto restart;
+                j = 0;
         }
 
         NtClose( subkey );
@@ -1516,6 +1515,26 @@ POINT point_phys_to_win_dpi( HWND hwnd, POINT pt )
     return map_dpi_point( pt, get_win_monitor_dpi( hwnd ), get_dpi_for_window( hwnd ));
 }
 
+/**********************************************************************
+ *              point_thread_to_win_dpi
+ */
+POINT point_thread_to_win_dpi( HWND hwnd, POINT pt )
+{
+    UINT dpi = get_thread_dpi();
+    if (!dpi) dpi = get_win_monitor_dpi( hwnd );
+    return map_dpi_point( pt, dpi, get_dpi_for_window( hwnd ));
+}
+
+/**********************************************************************
+ *              rect_thread_to_win_dpi
+ */
+RECT rect_thread_to_win_dpi( HWND hwnd, RECT rect )
+{
+    UINT dpi = get_thread_dpi();
+    if (!dpi) dpi = get_win_monitor_dpi( hwnd );
+    return map_dpi_rect( rect, dpi, get_dpi_for_window( hwnd ) );
+}
+
 /* map value from system dpi to standard 96 dpi for storing in the registry */
 static int map_from_system_dpi( int val )
 {
@@ -2144,7 +2163,7 @@ HMONITOR monitor_from_window( HWND hwnd, DWORD flags, UINT dpi )
     TRACE( "(%p, 0x%08x)\n", hwnd, flags );
 
     wp.length = sizeof(wp);
-    if (is_iconic( hwnd ) && get_window_placement( hwnd, &wp ))
+    if (is_iconic( hwnd ) && NtUserGetWindowPlacement( hwnd, &wp ))
         return monitor_from_rect( &wp.rcNormalPosition, flags, dpi );
 
     if (get_window_rect( hwnd, &rect, dpi ))
@@ -4506,7 +4525,7 @@ static HBRUSH get_55aa_brush(void)
     return brush_55aa;
 }
 
-static HBRUSH get_sys_color_brush( unsigned int index )
+HBRUSH get_sys_color_brush( unsigned int index )
 {
     if (index == COLOR_55AA_BRUSH) return get_55aa_brush();
     if (index >= ARRAY_SIZE( system_colors )) return 0;

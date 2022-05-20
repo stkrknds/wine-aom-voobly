@@ -22,47 +22,47 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(input);
 
-struct constant_effect
+struct ramp_effect
 {
-    IConstantForceEffect IConstantForceEffect_iface;
+    IRampForceEffect IRampForceEffect_iface;
     IWineForceFeedbackEffectImpl *IWineForceFeedbackEffectImpl_inner;
     LONG ref;
 };
 
-static inline struct constant_effect *impl_from_IConstantForceEffect( IConstantForceEffect *iface )
+static inline struct ramp_effect *impl_from_IRampForceEffect( IRampForceEffect *iface )
 {
-    return CONTAINING_RECORD( iface, struct constant_effect, IConstantForceEffect_iface );
+    return CONTAINING_RECORD( iface, struct ramp_effect, IRampForceEffect_iface );
 }
 
-static HRESULT WINAPI effect_QueryInterface( IConstantForceEffect *iface, REFIID iid, void **out )
+static HRESULT WINAPI effect_QueryInterface( IRampForceEffect *iface, REFIID iid, void **out )
 {
-    struct constant_effect *impl = impl_from_IConstantForceEffect( iface );
+    struct ramp_effect *impl = impl_from_IRampForceEffect( iface );
 
     TRACE( "iface %p, iid %s, out %p.\n", iface, debugstr_guid( iid ), out );
 
     if (IsEqualGUID( iid, &IID_IUnknown ) ||
         IsEqualGUID( iid, &IID_IInspectable ) ||
         IsEqualGUID( iid, &IID_IAgileObject ) ||
-        IsEqualGUID( iid, &IID_IConstantForceEffect ))
+        IsEqualGUID( iid, &IID_IRampForceEffect ))
     {
-        IInspectable_AddRef( (*out = &impl->IConstantForceEffect_iface) );
+        IInspectable_AddRef( (*out = &impl->IRampForceEffect_iface) );
         return S_OK;
     }
 
     return IWineForceFeedbackEffectImpl_QueryInterface( impl->IWineForceFeedbackEffectImpl_inner, iid, out );
 }
 
-static ULONG WINAPI effect_AddRef( IConstantForceEffect *iface )
+static ULONG WINAPI effect_AddRef( IRampForceEffect *iface )
 {
-    struct constant_effect *impl = impl_from_IConstantForceEffect( iface );
+    struct ramp_effect *impl = impl_from_IRampForceEffect( iface );
     ULONG ref = InterlockedIncrement( &impl->ref );
     TRACE( "iface %p increasing refcount to %lu.\n", iface, ref );
     return ref;
 }
 
-static ULONG WINAPI effect_Release( IConstantForceEffect *iface )
+static ULONG WINAPI effect_Release( IRampForceEffect *iface )
 {
-    struct constant_effect *impl = impl_from_IConstantForceEffect( iface );
+    struct ramp_effect *impl = impl_from_IRampForceEffect( iface );
     ULONG ref = InterlockedDecrement( &impl->ref );
 
     TRACE( "iface %p decreasing refcount to %lu.\n", iface, ref );
@@ -78,55 +78,58 @@ static ULONG WINAPI effect_Release( IConstantForceEffect *iface )
     return ref;
 }
 
-static HRESULT WINAPI effect_GetIids( IConstantForceEffect *iface, ULONG *iid_count, IID **iids )
+static HRESULT WINAPI effect_GetIids( IRampForceEffect *iface, ULONG *iid_count, IID **iids )
 {
     FIXME( "iface %p, iid_count %p, iids %p stub!\n", iface, iid_count, iids );
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI effect_GetRuntimeClassName( IConstantForceEffect *iface, HSTRING *class_name )
+static HRESULT WINAPI effect_GetRuntimeClassName( IRampForceEffect *iface, HSTRING *class_name )
 {
-    return WindowsCreateString( RuntimeClass_Windows_Gaming_Input_ForceFeedback_ConstantForceEffect,
-                                ARRAY_SIZE(RuntimeClass_Windows_Gaming_Input_ForceFeedback_ConstantForceEffect),
+    return WindowsCreateString( RuntimeClass_Windows_Gaming_Input_ForceFeedback_RampForceEffect,
+                                ARRAY_SIZE(RuntimeClass_Windows_Gaming_Input_ForceFeedback_RampForceEffect),
                                 class_name );
 }
 
-static HRESULT WINAPI effect_GetTrustLevel( IConstantForceEffect *iface, TrustLevel *trust_level )
+static HRESULT WINAPI effect_GetTrustLevel( IRampForceEffect *iface, TrustLevel *trust_level )
 {
     FIXME( "iface %p, trust_level %p stub!\n", iface, trust_level );
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI effect_SetParameters( IConstantForceEffect *iface, Vector3 direction, TimeSpan duration )
+static HRESULT WINAPI effect_SetParameters( IRampForceEffect *iface, Vector3 start_vector, Vector3 end_vector, TimeSpan duration )
 {
     WineForceFeedbackEffectParameters params =
     {
-        .constant =
+        .ramp =
         {
-            .type = WineForceFeedbackEffectType_Constant,
-            .direction = direction,
+            .type = WineForceFeedbackEffectType_Ramp,
+            .start_vector = start_vector,
+            .end_vector = end_vector,
             .duration = duration,
             .repeat_count = 1,
         },
     };
-    struct constant_effect *impl = impl_from_IConstantForceEffect( iface );
+    struct ramp_effect *impl = impl_from_IRampForceEffect( iface );
 
-    TRACE( "iface %p, direction %s, duration %I64u.\n", iface, debugstr_vector3( &direction ), duration.Duration );
+    TRACE( "iface %p, start_vector %s, end_vector %s, duration %I64u.\n", iface,
+           debugstr_vector3( &start_vector ), debugstr_vector3( &end_vector ), duration.Duration );
 
     return IWineForceFeedbackEffectImpl_put_Parameters( impl->IWineForceFeedbackEffectImpl_inner, params, NULL );
 }
 
-static HRESULT WINAPI effect_SetParametersWithEnvelope( IConstantForceEffect *iface, Vector3 direction, FLOAT attack_gain,
+static HRESULT WINAPI effect_SetParametersWithEnvelope( IRampForceEffect *iface, Vector3 start_vector, Vector3 end_vector, FLOAT attack_gain,
                                                         FLOAT sustain_gain, FLOAT release_gain, TimeSpan start_delay,
                                                         TimeSpan attack_duration, TimeSpan sustain_duration,
                                                         TimeSpan release_duration, UINT32 repeat_count )
 {
     WineForceFeedbackEffectParameters params =
     {
-        .constant =
+        .ramp =
         {
-            .type = WineForceFeedbackEffectType_Constant,
-            .direction = direction,
+            .type = WineForceFeedbackEffectType_Ramp,
+            .start_vector = start_vector,
+            .end_vector = end_vector,
             .duration = {attack_duration.Duration + sustain_duration.Duration + release_duration.Duration},
             .start_delay = start_delay,
             .repeat_count = repeat_count,
@@ -140,17 +143,17 @@ static HRESULT WINAPI effect_SetParametersWithEnvelope( IConstantForceEffect *if
         .attack_duration = attack_duration,
         .release_duration = release_duration,
     };
-    struct constant_effect *impl = impl_from_IConstantForceEffect( iface );
+    struct ramp_effect *impl = impl_from_IRampForceEffect( iface );
 
-    TRACE( "iface %p, direction %s, attack_gain %f, sustain_gain %f, release_gain %f, start_delay %I64u, attack_duration %I64u, "
-           "sustain_duration %I64u, release_duration %I64u, repeat_count %u.\n", iface, debugstr_vector3( &direction ),
+    TRACE( "iface %p, start_vector %s, end_vector %s, attack_gain %f, sustain_gain %f, release_gain %f, start_delay %I64u, attack_duration %I64u, "
+           "sustain_duration %I64u, release_duration %I64u, repeat_count %u.\n", iface, debugstr_vector3( &start_vector ), debugstr_vector3( &end_vector ),
            attack_gain, sustain_gain, release_gain, start_delay.Duration, attack_duration.Duration, sustain_duration.Duration,
            release_duration.Duration, repeat_count );
 
     return IWineForceFeedbackEffectImpl_put_Parameters( impl->IWineForceFeedbackEffectImpl_inner, params, &envelope );
 }
 
-static const struct IConstantForceEffectVtbl effect_vtbl =
+static const struct IRampForceEffectVtbl effect_vtbl =
 {
     effect_QueryInterface,
     effect_AddRef,
@@ -159,25 +162,25 @@ static const struct IConstantForceEffectVtbl effect_vtbl =
     effect_GetIids,
     effect_GetRuntimeClassName,
     effect_GetTrustLevel,
-    /* IConstantForceEffect methods */
+    /* IRampForceEffect methods */
     effect_SetParameters,
     effect_SetParametersWithEnvelope,
 };
 
-struct constant_factory
+struct ramp_factory
 {
     IActivationFactory IActivationFactory_iface;
     LONG ref;
 };
 
-static inline struct constant_factory *impl_from_IActivationFactory( IActivationFactory *iface )
+static inline struct ramp_factory *impl_from_IActivationFactory( IActivationFactory *iface )
 {
-    return CONTAINING_RECORD( iface, struct constant_factory, IActivationFactory_iface );
+    return CONTAINING_RECORD( iface, struct ramp_factory, IActivationFactory_iface );
 }
 
 static HRESULT WINAPI activation_QueryInterface( IActivationFactory *iface, REFIID iid, void **out )
 {
-    struct constant_factory *impl = impl_from_IActivationFactory( iface );
+    struct ramp_factory *impl = impl_from_IActivationFactory( iface );
 
     TRACE( "iface %p, iid %s, out %p.\n", iface, debugstr_guid( iid ), out );
 
@@ -197,7 +200,7 @@ static HRESULT WINAPI activation_QueryInterface( IActivationFactory *iface, REFI
 
 static ULONG WINAPI activation_AddRef( IActivationFactory *iface )
 {
-    struct constant_factory *impl = impl_from_IActivationFactory( iface );
+    struct ramp_factory *impl = impl_from_IActivationFactory( iface );
     ULONG ref = InterlockedIncrement( &impl->ref );
     TRACE( "iface %p increasing refcount to %lu.\n", iface, ref );
     return ref;
@@ -205,7 +208,7 @@ static ULONG WINAPI activation_AddRef( IActivationFactory *iface )
 
 static ULONG WINAPI activation_Release( IActivationFactory *iface )
 {
-    struct constant_factory *impl = impl_from_IActivationFactory( iface );
+    struct ramp_factory *impl = impl_from_IActivationFactory( iface );
     ULONG ref = InterlockedDecrement( &impl->ref );
     TRACE( "iface %p decreasing refcount to %lu.\n", iface, ref );
     return ref;
@@ -231,24 +234,24 @@ static HRESULT WINAPI activation_GetTrustLevel( IActivationFactory *iface, Trust
 
 static HRESULT WINAPI activation_ActivateInstance( IActivationFactory *iface, IInspectable **instance )
 {
-    struct constant_effect *impl;
+    struct ramp_effect *impl;
     HRESULT hr;
 
     TRACE( "iface %p, instance %p.\n", iface, instance );
 
-    if (!(impl = calloc( 1, sizeof(struct constant_effect) ))) return E_OUTOFMEMORY;
-    impl->IConstantForceEffect_iface.lpVtbl = &effect_vtbl;
+    if (!(impl = calloc( 1, sizeof(struct ramp_effect) ))) return E_OUTOFMEMORY;
+    impl->IRampForceEffect_iface.lpVtbl = &effect_vtbl;
     impl->ref = 1;
 
-    if (FAILED(hr = force_feedback_effect_create( WineForceFeedbackEffectType_Constant, (IInspectable *)&impl->IConstantForceEffect_iface,
+    if (FAILED(hr = force_feedback_effect_create( WineForceFeedbackEffectType_Ramp, (IInspectable *)&impl->IRampForceEffect_iface,
                                                   &impl->IWineForceFeedbackEffectImpl_inner )))
     {
         free( impl );
         return hr;
     }
 
-    *instance = (IInspectable *)&impl->IConstantForceEffect_iface;
-    TRACE( "created ConstantForceEffect %p\n", *instance );
+    *instance = (IInspectable *)&impl->IRampForceEffect_iface;
+    TRACE( "created RampForceEffect %p\n", *instance );
     return S_OK;
 }
 
@@ -265,10 +268,10 @@ static const struct IActivationFactoryVtbl activation_vtbl =
     activation_ActivateInstance,
 };
 
-static struct constant_factory constant_statics =
+static struct ramp_factory ramp_statics =
 {
     {&activation_vtbl},
     1,
 };
 
-IInspectable *constant_effect_factory = (IInspectable *)&constant_statics.IActivationFactory_iface;
+IInspectable *ramp_effect_factory = (IInspectable *)&ramp_statics.IActivationFactory_iface;
