@@ -530,7 +530,7 @@ static void update_layout_list(void)
             CFStringRef type = CFDictionaryGetValue(dict, macdrv_input_source_type_key);
             CFStringRef lang = CFDictionaryGetValue(dict, macdrv_input_source_lang_key);
 
-            layout = HeapAlloc(GetProcessHeap(), 0, sizeof(*layout));
+            layout = malloc(sizeof(*layout));
             layout->input_source = (TISInputSourceRef)CFRetain(input);
             layout->hkl = get_hkl(lang, type);
 
@@ -1045,9 +1045,9 @@ void macdrv_keyboard_changed(const macdrv_event *event)
 
     macdrv_compute_keyboard_layout(thread_data);
 
-    ActivateKeyboardLayout(thread_data->active_keyboard_layout, 0);
+    NtUserActivateKeyboardLayout(thread_data->active_keyboard_layout, 0);
 
-    SendMessageW(GetActiveWindow(), WM_CANCELMODE, 0, 0);
+    send_message(get_active_window(), WM_CANCELMODE, 0, 0);
 }
 
 
@@ -1257,8 +1257,9 @@ INT macdrv_GetKeyNameText(LONG lparam, LPWSTR buffer, INT size)
             {
                 if (vkey_names[i].vkey == vkey)
                 {
-                    len = MultiByteToWideChar(CP_UTF8, 0, vkey_names[i].name, -1, buffer, size);
-                    if (len) len--;
+                    len = min(strlen(vkey_names[i].name) + 1, size);
+                    ascii_to_unicode(buffer, vkey_names[i].name, len);
+                    if (len) buffer[--len] = 0;
                     break;
                 }
             }

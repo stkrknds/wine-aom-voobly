@@ -352,6 +352,7 @@ LPVOID WINAPI DECLSPEC_HOTPATCH VirtualAlloc2( HANDLE process, void *addr, SIZE_
 {
     LPVOID ret = addr;
 
+    if (!process) process = GetCurrentProcess();
     if (!set_ntstatus( NtAllocateVirtualMemoryEx( process, &ret, &size, type, protect, parameters, count )))
         return NULL;
     return ret;
@@ -711,7 +712,7 @@ static struct kernelbase_global_data global_data = {0};
 
 static inline struct mem_entry *unsafe_mem_from_HLOCAL( HLOCAL handle )
 {
-    struct mem_entry *mem = CONTAINING_RECORD( handle, struct mem_entry, ptr );
+    struct mem_entry *mem = CONTAINING_RECORD( *(volatile HANDLE *)&handle, struct mem_entry, ptr );
     struct kernelbase_global_data *data = &global_data;
     if (((UINT_PTR)handle & ((sizeof(void *) << 1) - 1)) != sizeof(void *)) return NULL;
     if (mem < data->mem_entries || mem >= data->mem_entries_end) return NULL;
@@ -830,7 +831,7 @@ HLOCAL WINAPI DECLSPEC_HOTPATCH LocalAlloc( UINT flags, SIZE_T size )
     return handle;
 
 failed:
-    if (mem) LocalFree( handle );
+    if (mem) LocalFree( *(volatile HANDLE *)&handle );
     SetLastError( ERROR_NOT_ENOUGH_MEMORY );
     return 0;
 }

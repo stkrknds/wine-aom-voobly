@@ -89,6 +89,7 @@ typedef struct EventTarget EventTarget;
     XDIID(DispDOMKeyboardEvent) \
     XDIID(DispDOMMessageEvent) \
     XDIID(DispDOMMouseEvent) \
+    XDIID(DispDOMProgressEvent) \
     XDIID(DispDOMUIEvent) \
     XDIID(DispHTMLAnchorElement) \
     XDIID(DispHTMLAreaElement) \
@@ -150,6 +151,7 @@ typedef struct EventTarget EventTarget;
     XIID(IDOMKeyboardEvent) \
     XIID(IDOMMessageEvent) \
     XIID(IDOMMouseEvent) \
+    XIID(IDOMProgressEvent) \
     XIID(IDOMUIEvent) \
     XIID(IDocumentEvent) \
     XIID(IDocumentRange) \
@@ -265,6 +267,7 @@ typedef struct EventTarget EventTarget;
     XIID(IHTMLWindow6) \
     XIID(IHTMLWindow7) \
     XIID(IHTMLXMLHttpRequest) \
+    XIID(IHTMLXMLHttpRequest2) \
     XIID(IHTMLXMLHttpRequestFactory) \
     XIID(IOmHistory) \
     XIID(IOmNavigator) \
@@ -1247,6 +1250,7 @@ enum timer_type {
 
 HRESULT set_task_timer(HTMLInnerWindow*,LONG,enum timer_type,IDispatch*,LONG*) DECLSPEC_HIDDEN;
 HRESULT clear_task_timer(HTMLInnerWindow*,DWORD) DECLSPEC_HIDDEN;
+HRESULT clear_animation_timer(HTMLInnerWindow*,DWORD) DECLSPEC_HIDDEN;
 
 BOOL parse_compat_version(const WCHAR*,compat_mode_t*) DECLSPEC_HIDDEN;
 

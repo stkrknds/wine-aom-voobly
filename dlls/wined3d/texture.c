@@ -71,7 +71,7 @@ static BOOL wined3d_texture_use_immutable_storage(const struct wined3d_texture *
     /* We don't expect to create texture views for textures with height-scaled formats.
      * Besides, ARB_texture_storage doesn't allow specifying exact sizes for all levels. */
     return gl_info->supported[ARB_TEXTURE_STORAGE]
-            && !(texture->resource.format_flags & WINED3DFMT_FLAG_HEIGHT_SCALE);
+            && !(texture->resource.format_attrs & WINED3D_FORMAT_ATTR_HEIGHT_SCALE);
 }
 
 /* Front buffer coordinates are always full screen coordinates, but our GL
@@ -279,7 +279,7 @@ static bool fbo_blitter_supported(enum wined3d_blit_op blit_op, const struct win
     if ((wined3d_settings.offscreen_rendering_mode != ORM_FBO) || !gl_info->fbo_ops.glBlitFramebuffer)
         return false;
 
-    if ((src_resource->format_flags | dst_resource->format_flags) & WINED3DFMT_FLAG_HEIGHT_SCALE)
+    if ((src_resource->format_attrs | dst_resource->format_attrs) & WINED3D_FORMAT_ATTR_HEIGHT_SCALE)
         return false;
 
     /* Source and/or destination need to be on the GL side. */
@@ -302,10 +302,10 @@ static bool fbo_blitter_supported(enum wined3d_blit_op blit_op, const struct win
     switch (blit_op)
     {
         case WINED3D_BLIT_OP_COLOR_BLIT:
-            if (!((src_format->flags[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3DFMT_FLAG_FBO_ATTACHABLE)
+            if (!((src_format->caps[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3D_FORMAT_CAP_FBO_ATTACHABLE)
                     || (src_resource->bind_flags & WINED3D_BIND_RENDER_TARGET)))
                 return false;
-            if (!((dst_format->flags[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3DFMT_FLAG_FBO_ATTACHABLE)
+            if (!((dst_format->caps[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3D_FORMAT_CAP_FBO_ATTACHABLE)
                     || (dst_resource->bind_flags & WINED3D_BIND_RENDER_TARGET)))
                 return false;
             if ((src_format->id != dst_format->id || dst_location == WINED3D_LOCATION_DRAWABLE)
@@ -314,9 +314,9 @@ static bool fbo_blitter_supported(enum wined3d_blit_op blit_op, const struct win
             break;
 
         case WINED3D_BLIT_OP_DEPTH_BLIT:
-            if (!(src_format->flags[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3DFMT_FLAG_DEPTH_STENCIL))
+            if (!(src_format->caps[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3D_FORMAT_CAP_DEPTH_STENCIL))
                 return false;
-            if (!(dst_format->flags[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3DFMT_FLAG_DEPTH_STENCIL))
+            if (!(dst_format->caps[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3D_FORMAT_CAP_DEPTH_STENCIL))
                 return false;
             /* Accept pure swizzle fixups for depth formats. In general we
              * ignore the stencil component (if present) at the moment and the
@@ -978,7 +978,7 @@ static void wined3d_texture_gl_allocate_mutable_storage(struct wined3d_texture_g
         {
             width = wined3d_texture_get_level_pow2_width(&texture_gl->t, level);
             height = wined3d_texture_get_level_pow2_height(&texture_gl->t, level);
-            if (texture_gl->t.resource.format_flags & WINED3DFMT_FLAG_HEIGHT_SCALE)
+            if (texture_gl->t.resource.format_attrs & WINED3D_FORMAT_ATTR_HEIGHT_SCALE)
             {
                 height *= format->f.height_scale.numerator;
                 height /= format->f.height_scale.denominator;
@@ -2115,9 +2115,9 @@ void wined3d_texture_gl_prepare_texture(struct wined3d_texture_gl *texture_gl,
     if (texture_gl->t.flags & alloc_flag)
         return;
 
-    if (resource->format_flags & WINED3DFMT_FLAG_DECOMPRESS)
+    if (resource->format_caps & WINED3D_FORMAT_CAP_DECOMPRESS)
     {
-        TRACE("WINED3DFMT_FLAG_DECOMPRESS set.\n");
+        TRACE("WINED3D_FORMAT_CAP_DECOMPRESS set.\n");
         texture_gl->t.flags |= WINED3D_TEXTURE_CONVERTED;
         format = wined3d_resource_get_decompress_format(resource);
     }
@@ -2268,7 +2268,7 @@ static void wined3d_texture_gl_upload_bo(const struct wined3d_format *src_format
 {
     const struct wined3d_format_gl *format_gl = wined3d_format_gl(src_format);
 
-    if (src_format->flags[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3DFMT_FLAG_COMPRESSED)
+    if (src_format->attrs & WINED3D_FORMAT_ATTR_COMPRESSED)
     {
         GLenum internal = wined3d_gl_get_internal_format(&dst_texture->resource, format_gl, srgb);
         unsigned int dst_row_pitch, dst_slice_pitch;
@@ -2411,8 +2411,7 @@ static enum wined3d_format_id wined3d_get_alpha_fixup_format(enum wined3d_format
 {
     unsigned int i;
 
-    if (!(dst_format->flags[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3DFMT_FLAG_COMPRESSED)
-            && !dst_format->alpha_size)
+    if (!(dst_format->attrs & WINED3D_FORMAT_ATTR_COMPRESSED) && !dst_format->alpha_size)
         return WINED3DFMT_UNKNOWN;
 
     for (i = 0; i < ARRAY_SIZE(formats_src_alpha_fixup); ++i)
@@ -2510,7 +2509,7 @@ static void wined3d_texture_gl_upload_data(struct wined3d_context *context,
         dst_texture->resource.pin_sysmem = 1;
     }
 
-    if (src_format->flags[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3DFMT_FLAG_HEIGHT_SCALE)
+    if (src_format->attrs & WINED3D_FORMAT_ATTR_HEIGHT_SCALE)
     {
         update_h *= src_format->height_scale.numerator;
         update_h /= src_format->height_scale.denominator;
@@ -2537,7 +2536,7 @@ static void wined3d_texture_gl_upload_data(struct wined3d_context *context,
 
     bo.buffer_object = src_bo_addr->buffer_object;
     bo.addr = (BYTE *)src_bo_addr->addr + src_box->front * src_slice_pitch;
-    if (dst_texture->resource.format_flags & WINED3DFMT_FLAG_BLOCKS)
+    if (dst_texture->resource.format_attrs & WINED3D_FORMAT_ATTR_BLOCKS)
     {
         bo.addr += (src_box->top / src_format->block_height) * src_row_pitch;
         bo.addr += (src_box->left / src_format->block_width) * src_format->block_byte_count;
@@ -2548,7 +2547,7 @@ static void wined3d_texture_gl_upload_data(struct wined3d_context *context,
         bo.addr += src_box->left * src_format->byte_count;
     }
 
-    decompress = (dst_texture->resource.format_flags & WINED3DFMT_FLAG_DECOMPRESS)
+    decompress = (dst_texture->resource.format_caps & WINED3D_FORMAT_CAP_DECOMPRESS)
             || (src_format->decompress && src_format->id != dst_texture->resource.format->id);
 
     if (src_format->upload || decompress
@@ -2573,7 +2572,7 @@ static void wined3d_texture_gl_upload_data(struct wined3d_context *context,
         }
         else
         {
-            if (dst_texture->resource.format_flags & WINED3DFMT_FLAG_BLOCKS)
+            if (dst_texture->resource.format_attrs & WINED3D_FORMAT_ATTR_BLOCKS)
                 ERR("Converting a block-based format.\n");
 
             f = *wined3d_format_gl(src_format);
@@ -2723,7 +2722,7 @@ static void wined3d_texture_gl_download_data_slow_path(struct wined3d_texture_gl
 
         if (bo)
             ERR("NP2 emulated texture uses PBO unexpectedly.\n");
-        if (texture_gl->t.resource.format_flags & WINED3DFMT_FLAG_COMPRESSED)
+        if (texture_gl->t.resource.format_attrs & WINED3D_FORMAT_ATTR_COMPRESSED)
             ERR("Unexpected compressed format for NP2 emulated texture.\n");
     }
 
@@ -2771,7 +2770,7 @@ static void wined3d_texture_gl_download_data_slow_path(struct wined3d_texture_gl
         mem = data->addr;
     }
 
-    if (texture_gl->t.resource.format_flags & WINED3DFMT_FLAG_COMPRESSED)
+    if (texture_gl->t.resource.format_attrs & WINED3D_FORMAT_ATTR_COMPRESSED)
     {
         TRACE("Downloading compressed texture %p, %u, level %u, format %#x, type %#x, data %p.\n",
                 texture_gl, sub_resource_idx, level, format_gl->format, format_gl->type, mem);
@@ -2987,7 +2986,7 @@ static void wined3d_texture_gl_download_data(struct wined3d_context *context,
         checkGLcall("glBindBuffer");
     }
 
-    if (src_texture->resource.format_flags & WINED3DFMT_FLAG_COMPRESSED)
+    if (src_texture->resource.format_attrs & WINED3D_FORMAT_ATTR_COMPRESSED)
     {
         TRACE("Downloading compressed texture %p, %u, level %u, format %#x, type %#x, data %p.\n",
                 src_texture, src_sub_resource_idx, src_level, format_gl->format, format_gl->type, offset);
@@ -3171,7 +3170,7 @@ static BOOL wined3d_texture_gl_load_texture(struct wined3d_texture_gl *texture_g
     wined3d_texture_get_level_box(&texture_gl->t, level, &src_box);
 
     if (!depth && sub_resource->locations & (WINED3D_LOCATION_TEXTURE_SRGB | WINED3D_LOCATION_TEXTURE_RGB)
-            && (texture_gl->t.resource.format_flags & WINED3DFMT_FLAG_FBO_ATTACHABLE_SRGB)
+            && (texture_gl->t.resource.format_caps & WINED3D_FORMAT_CAP_FBO_ATTACHABLE_SRGB)
             && fbo_blitter_supported(WINED3D_BLIT_OP_COLOR_BLIT, gl_info,
                     &texture_gl->t.resource, WINED3D_LOCATION_TEXTURE_RGB,
                     &texture_gl->t.resource, WINED3D_LOCATION_TEXTURE_SRGB))
@@ -3192,7 +3191,7 @@ static BOOL wined3d_texture_gl_load_texture(struct wined3d_texture_gl *texture_g
     }
 
     if (!depth && sub_resource->locations & (WINED3D_LOCATION_RB_MULTISAMPLE | WINED3D_LOCATION_RB_RESOLVED)
-            && (!srgb || (texture_gl->t.resource.format_flags & WINED3DFMT_FLAG_FBO_ATTACHABLE_SRGB)))
+            && (!srgb || (texture_gl->t.resource.format_caps & WINED3D_FORMAT_CAP_FBO_ATTACHABLE_SRGB)))
     {
         DWORD src_location = sub_resource->locations & WINED3D_LOCATION_RB_RESOLVED ?
                 WINED3D_LOCATION_RB_RESOLVED : WINED3D_LOCATION_RB_MULTISAMPLE;
@@ -3344,10 +3343,10 @@ static bool use_ffp_clear(const struct wined3d_texture *texture, unsigned int lo
         return false;
 
     if (location == WINED3D_LOCATION_TEXTURE_RGB
-            && !(texture->resource.format_flags & WINED3DFMT_FLAG_FBO_ATTACHABLE))
+            && !(texture->resource.format_caps & WINED3D_FORMAT_CAP_FBO_ATTACHABLE))
         return false;
     if (location == WINED3D_LOCATION_TEXTURE_SRGB
-            && !(texture->resource.format_flags & WINED3DFMT_FLAG_FBO_ATTACHABLE_SRGB))
+            && !(texture->resource.format_caps & WINED3D_FORMAT_CAP_FBO_ATTACHABLE_SRGB))
         return false;
 
     return location & (WINED3D_LOCATION_RB_MULTISAMPLE | WINED3D_LOCATION_RB_RESOLVED
@@ -3635,7 +3634,7 @@ static void texture_resource_sub_resource_get_map_pitch(struct wined3d_resource 
     const struct wined3d_texture *texture = texture_from_resource(resource);
     unsigned int level = sub_resource_idx % texture->level_count;
 
-    if (resource->format_flags & WINED3DFMT_FLAG_BROKEN_PITCH)
+    if (resource->format_attrs & WINED3D_FORMAT_ATTR_BROKEN_PITCH)
     {
         *row_pitch = wined3d_texture_get_level_width(texture, level) * resource->format->byte_count;
         *slice_pitch = wined3d_texture_get_level_height(texture, level) * (*row_pitch);
@@ -3862,8 +3861,7 @@ static HRESULT wined3d_texture_init(struct wined3d_texture *texture, const struc
         if (desc->resource_type != WINED3D_RTYPE_TEXTURE_3D && !d3d_info->texture_npot_conditional)
         {
             /* TODO: Add support for non-power-of-two compressed textures. */
-            if (format->flags[WINED3D_GL_RES_TYPE_TEX_2D]
-                    & (WINED3DFMT_FLAG_COMPRESSED | WINED3DFMT_FLAG_HEIGHT_SCALE))
+            if (format->attrs & (WINED3D_FORMAT_ATTR_COMPRESSED | WINED3D_FORMAT_ATTR_HEIGHT_SCALE))
             {
                 FIXME("Compressed or height scaled non-power-of-two (%ux%u) textures are not supported.\n",
                         desc->width, desc->height);
@@ -3927,7 +3925,7 @@ static HRESULT wined3d_texture_init(struct wined3d_texture *texture, const struc
      * compressed block. It is questionable how useful these mip-levels are to
      * the application with "broken pitch" formats, but we want to avoid
      * memory corruption when loading textures into WINED3D_LOCATION_SYSMEM. */
-    if (format->flags[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3DFMT_FLAG_BROKEN_PITCH)
+    if (format->attrs & WINED3D_FORMAT_ATTR_BROKEN_PITCH)
     {
         unsigned int min_size;
 
@@ -3946,7 +3944,7 @@ static HRESULT wined3d_texture_init(struct wined3d_texture *texture, const struc
         /* DXTn 3D textures are not supported. Do not write the ERR for them. */
         if ((desc->format == WINED3DFMT_DXT1 || desc->format == WINED3DFMT_DXT2 || desc->format == WINED3DFMT_DXT3
                 || desc->format == WINED3DFMT_DXT4 || desc->format == WINED3DFMT_DXT5)
-                && !(format->flags[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3DFMT_FLAG_TEXTURE)
+                && !(format->caps[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3D_FORMAT_CAP_TEXTURE)
                 && desc->resource_type != WINED3D_RTYPE_TEXTURE_3D && !once++)
             ERR_(winediag)("The application tried to create a DXTn texture, but the driver does not support them.\n");
 
@@ -3973,7 +3971,7 @@ static HRESULT wined3d_texture_init(struct wined3d_texture *texture, const struc
         texture->flags |= WINED3D_TEXTURE_DISCARD;
     if (flags & WINED3D_TEXTURE_CREATE_GENERATE_MIPMAPS)
     {
-        if (!(texture->resource.format_flags & WINED3DFMT_FLAG_GEN_MIPMAP))
+        if (!(texture->resource.format_caps & WINED3D_FORMAT_CAP_GEN_MIPMAP))
             WARN("Format doesn't support mipmaps generation, "
                     "ignoring WINED3D_TEXTURE_CREATE_GENERATE_MIPMAPS flag.\n");
         else
@@ -5280,7 +5278,7 @@ static bool wined3d_texture_vk_clear(struct wined3d_texture_vk *texture_vk,
     VkImageAspectFlags aspect_mask;
     VkImage vk_image;
 
-    if (texture_vk->t.resource.format_flags & WINED3DFMT_FLAG_COMPRESSED)
+    if (texture_vk->t.resource.format_attrs & WINED3D_FORMAT_ATTR_COMPRESSED)
     {
         struct wined3d_bo_address addr;
 
@@ -5714,8 +5712,8 @@ static bool ffp_blit_supported(enum wined3d_blit_op blit_op, const struct wined3
     if (src_resource->type != WINED3D_RTYPE_TEXTURE_2D)
         return false;
 
-    decompress = (src_format->flags[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3DFMT_FLAG_COMPRESSED)
-            && !(dst_format->flags[WINED3D_GL_RES_TYPE_TEX_2D] & WINED3DFMT_FLAG_COMPRESSED);
+    decompress = (src_format->attrs & WINED3D_FORMAT_ATTR_COMPRESSED)
+            && !(dst_format->attrs & WINED3D_FORMAT_ATTR_COMPRESSED);
     if (!decompress && !(src_resource->access & dst_resource->access & WINED3D_RESOURCE_ACCESS_GPU))
     {
         TRACE("Source or destination resource is not GPU accessible.\n");
@@ -5753,10 +5751,13 @@ static bool ffp_blit_supported(enum wined3d_blit_op blit_op, const struct wined3
             if (!is_identity_fixup(src_format->color_fixup)
                     || !is_identity_fixup(dst_format->color_fixup))
             {
-                if (wined3d_settings.offscreen_rendering_mode == ORM_BACKBUFFER
-                        && dst_format->id == src_format->id && dst_location == WINED3D_LOCATION_DRAWABLE)
+                if (dst_format->id == src_format->id && dst_location == WINED3D_LOCATION_DRAWABLE)
                 {
-                    WARN("Claiming fixup support because of ORM_BACKBUFFER.\n");
+                    if (wined3d_settings.offscreen_rendering_mode == ORM_BACKBUFFER)
+                        WARN("Claiming fixup support because of ORM_BACKBUFFER.\n");
+                    else if (context->device->shader_backend == &none_shader_backend)
+                        WARN("Claiming fixup support because of no shader backend.\n");
+                    return true;
                 }
                 else
                 {
@@ -6058,7 +6059,7 @@ static void ffp_blitter_clear(struct wined3d_blitter *blitter, struct wined3d_de
             if (blitter_use_cpu_clear(view)
                     || (!(view->resource->bind_flags & WINED3D_BIND_RENDER_TARGET)
                     && (wined3d_settings.offscreen_rendering_mode != ORM_FBO
-                    || !(view->format_flags & WINED3DFMT_FLAG_FBO_ATTACHABLE))))
+                    || !(view->format_caps & WINED3D_FORMAT_CAP_FBO_ATTACHABLE))))
             {
                 next_flags |= WINED3DCLEAR_TARGET;
                 flags &= ~WINED3DCLEAR_TARGET;
@@ -6486,7 +6487,8 @@ static DWORD raw_blitter_blit(struct wined3d_blitter *blitter, enum wined3d_blit
      * We also can't copy between depth/stencil and colour resources, since
      * the formats are considered incompatible in OpenGL. */
     if (op != WINED3D_BLIT_OP_RAW_BLIT || !gl_formats_compatible(src_texture, src_location, dst_texture, dst_location)
-            || ((src_texture->resource.format_flags | dst_texture->resource.format_flags) & WINED3DFMT_FLAG_HEIGHT_SCALE)
+            || ((src_texture->resource.format_attrs | dst_texture->resource.format_attrs)
+                    & WINED3D_FORMAT_ATTR_HEIGHT_SCALE)
             || (src_texture->resource.format->id == dst_texture->resource.format->id
             && (!(src_location & (WINED3D_LOCATION_TEXTURE_RGB | WINED3D_LOCATION_TEXTURE_SRGB))
             || !(dst_location & (WINED3D_LOCATION_TEXTURE_RGB | WINED3D_LOCATION_TEXTURE_SRGB)))))
@@ -6652,7 +6654,7 @@ static void vk_blitter_clear_rendertargets(struct wined3d_context_vk *context_vk
         wined3d_rendertarget_view_vk_barrier(rtv_vk, context_vk, WINED3D_BIND_RENDER_TARGET);
 
         c = &clear_values[attachment_count].color;
-        if (view->format_flags & WINED3DFMT_FLAG_INTEGER)
+        if (view->format_attrs & WINED3D_FORMAT_ATTR_INTEGER)
         {
             c->int32[0] = colour->r;
             c->int32[1] = colour->g;

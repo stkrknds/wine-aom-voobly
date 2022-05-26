@@ -131,7 +131,7 @@ static void send_mouse_input(HWND hwnd, macdrv_window cocoa_window, UINT flags, 
     INPUT input;
     HWND top_level_hwnd;
 
-    top_level_hwnd = GetAncestor(hwnd, GA_ROOT);
+    top_level_hwnd = NtUserGetAncestor(hwnd, GA_ROOT);
 
     if ((flags & MOUSEEVENTF_MOVE) && (flags & MOUSEEVENTF_ABSOLUTE) && !drag &&
         cocoa_window != macdrv_thread_data()->capture_window)
@@ -282,7 +282,7 @@ CFArrayRef create_monochrome_cursor(HDC hdc, const ICONINFOEXW *icon, int width,
     info->bmiHeader.biClrUsed = 0;
     info->bmiHeader.biClrImportant = 0;
 
-    and_bits = HeapAlloc(GetProcessHeap(), 0, info->bmiHeader.biSizeImage);
+    and_bits = malloc(info->bmiHeader.biSizeImage);
     if (!and_bits)
     {
         WARN("failed to allocate and_bits\n");
@@ -290,10 +290,10 @@ CFArrayRef create_monochrome_cursor(HDC hdc, const ICONINFOEXW *icon, int width,
     }
     xor_bits = (unsigned long*)((char*)and_bits + info->bmiHeader.biSizeImage / 2);
 
-    if (!GetDIBits(hdc, icon->hbmMask, 0, height * 2, and_bits, info, DIB_RGB_COLORS))
+    if (!NtGdiGetDIBitsInternal(hdc, icon->hbmMask, 0, height * 2, and_bits, info, DIB_RGB_COLORS, 0, 0))
     {
         WARN("GetDIBits failed\n");
-        HeapFree(GetProcessHeap(), 0, and_bits);
+        free(and_bits);
         return NULL;
     }
 
@@ -332,7 +332,7 @@ CFArrayRef create_monochrome_cursor(HDC hdc, const ICONINFOEXW *icon, int width,
     if (!data)
     {
         WARN("failed to create data\n");
-        HeapFree(GetProcessHeap(), 0, and_bits);
+        free(and_bits);
         return NULL;
     }
 
@@ -349,7 +349,7 @@ CFArrayRef create_monochrome_cursor(HDC hdc, const ICONINFOEXW *icon, int width,
     {
         WARN("failed to create colorspace\n");
         CFRelease(data);
-        HeapFree(GetProcessHeap(), 0, and_bits);
+        free(and_bits);
         return NULL;
     }
 
@@ -359,7 +359,7 @@ CFArrayRef create_monochrome_cursor(HDC hdc, const ICONINFOEXW *icon, int width,
     {
         WARN("failed to create data provider\n");
         CGColorSpaceRelease(colorspace);
-        HeapFree(GetProcessHeap(), 0, and_bits);
+        free(and_bits);
         return NULL;
     }
 
@@ -371,7 +371,7 @@ CFArrayRef create_monochrome_cursor(HDC hdc, const ICONINFOEXW *icon, int width,
     if (!cgimage)
     {
         WARN("failed to create image\n");
-        HeapFree(GetProcessHeap(), 0, and_bits);
+        free(and_bits);
         return NULL;
     }
 
@@ -381,7 +381,7 @@ CFArrayRef create_monochrome_cursor(HDC hdc, const ICONINFOEXW *icon, int width,
     {
         WARN("failed to create data\n");
         CGImageRelease(cgimage);
-        HeapFree(GetProcessHeap(), 0, and_bits);
+        free(and_bits);
         return NULL;
     }
 
@@ -391,7 +391,7 @@ CFArrayRef create_monochrome_cursor(HDC hdc, const ICONINFOEXW *icon, int width,
     data_bits = (unsigned long*)CFDataGetMutableBytePtr(data);
     for (i = 0; i < count; i++)
         data_bits[i] &= ~xor_bits[i];
-    HeapFree(GetProcessHeap(), 0, and_bits);
+    free(and_bits);
 
     provider = CGDataProviderCreateWithCFData(data);
     CFRelease(data);
@@ -500,7 +500,7 @@ static CFDictionaryRef create_cursor_frame(HDC hdc, const ICONINFOEXW *iinfo, HA
     CFDictionarySetValue(frame, CFSTR("hotSpot"), hot_spot_dict);
     CFRelease(hot_spot_dict);
 
-    if (GetCursorFrameInfo(icon, 0x0 /* unknown parameter */, istep, &delay_jiffies, &num_steps) != 0)
+    if (NtUserGetCursorFrameInfo(icon, istep, &delay_jiffies, &num_steps) != 0)
         duration = delay_jiffies / 60.0; /* convert jiffies (1/60s) to seconds */
     else
     {
@@ -554,7 +554,7 @@ static CFArrayRef create_color_cursor(HDC hdc, const ICONINFOEXW *iinfo, HANDLE 
     TRACE("hdc %p iinfo %p icon %p width %d height %d\n", hdc, iinfo, icon, width, height);
 
     /* Retrieve the number of frames to render */
-    if (!GetCursorFrameInfo(icon, 0x0 /* unknown parameter */, 0, &delay_jiffies, &nFrames))
+    if (!NtUserGetCursorFrameInfo(icon, 0, &delay_jiffies, &nFrames))
     {
         WARN("GetCursorFrameInfo failed\n");
         return NULL;
@@ -566,7 +566,7 @@ static CFArrayRef create_color_cursor(HDC hdc, const ICONINFOEXW *iinfo, HANDLE 
     }
 
     /* Allocate all of the resources necessary to obtain a cursor frame */
-    if (!(info = HeapAlloc(GetProcessHeap(), 0, FIELD_OFFSET(BITMAPINFO, bmiColors[256])))) goto cleanup;
+    if (!(info = malloc(FIELD_OFFSET(BITMAPINFO, bmiColors[256])))) goto cleanup;
     info->bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
     info->bmiHeader.biWidth = width;
     info->bmiHeader.biHeight = -height;
@@ -579,7 +579,8 @@ static CFArrayRef create_color_cursor(HDC hdc, const ICONINFOEXW *iinfo, HANDLE 
     info->bmiHeader.biBitCount = 32;
     color_size = width * height * 4;
     info->bmiHeader.biSizeImage = color_size;
-    hbmColor = CreateDIBSection(hdc, info, DIB_RGB_COLORS, (VOID **) &color_bits, NULL, 0);
+    hbmColor = NtGdiCreateDIBSection(hdc, NULL, 0, info, DIB_RGB_COLORS,
+                                     0, 0, 0, (void **)&color_bits);
     if (!hbmColor)
     {
         WARN("failed to create DIB section for cursor color data\n");
@@ -597,7 +598,8 @@ static CFArrayRef create_color_cursor(HDC hdc, const ICONINFOEXW *iinfo, HANDLE 
 
     mask_size = ((width + 31) / 32 * 4) * height; /* width_bytes * height */
     info->bmiHeader.biSizeImage = mask_size;
-    hbmMask = CreateDIBSection(hdc, info, DIB_RGB_COLORS, (VOID **) &mask_bits, NULL, 0);
+    hbmMask = NtGdiCreateDIBSection(hdc, NULL, 0, info, DIB_RGB_COLORS,
+                                    0, 0, 0, (void **)&mask_bits);
     if (!hbmMask)
     {
         WARN("failed to create DIB section for cursor mask data\n");
@@ -625,9 +627,9 @@ cleanup:
     else
         TRACE("returning cursor with %d frames\n", nFrames);
     /* Cleanup all of the resources used to obtain the frame data */
-    if (hbmColor) DeleteObject(hbmColor);
-    if (hbmMask) DeleteObject(hbmMask);
-    HeapFree(GetProcessHeap(), 0, info);
+    if (hbmColor) NtGdiDeleteObjectApp(hbmColor);
+    if (hbmMask) NtGdiDeleteObjectApp(hbmMask);
+    free(info);
     return frames;
 }
 
@@ -697,7 +699,7 @@ BOOL macdrv_GetCursorPos(LPPOINT pos)
  void macdrv_SetCapture(HWND hwnd, UINT flags)
 {
     struct macdrv_thread_data *thread_data = macdrv_thread_data();
-    HWND top = GetAncestor(hwnd, GA_ROOT);
+    HWND top = NtUserGetAncestor(hwnd, GA_ROOT);
     macdrv_window cocoa_window = macdrv_get_cocoa_window(top, FALSE);
 
     TRACE("hwnd %p top %p/%p flags 0x%08x\n", hwnd, top, cocoa_window, flags);
@@ -706,6 +708,28 @@ BOOL macdrv_GetCursorPos(LPPOINT pos)
 
     thread_data->capture_window = cocoa_window;
     macdrv_set_mouse_capture_window(cocoa_window);
+}
+
+
+static BOOL get_icon_info(HICON handle, ICONINFOEXW *ret)
+{
+    UNICODE_STRING module, res_name;
+    ICONINFO info;
+
+    module.Buffer = ret->szModName;
+    module.MaximumLength = sizeof(ret->szModName) - sizeof(WCHAR);
+    res_name.Buffer = ret->szResName;
+    res_name.MaximumLength = sizeof(ret->szResName) - sizeof(WCHAR);
+    if (!NtUserGetIconInfo(handle, &info, &module, &res_name, NULL, 0)) return FALSE;
+    ret->fIcon    = info.fIcon;
+    ret->xHotspot = info.xHotspot;
+    ret->yHotspot = info.yHotspot;
+    ret->hbmColor = info.hbmColor;
+    ret->hbmMask  = info.hbmMask;
+    ret->wResID   = res_name.Length ? 0 : LOWORD(res_name.Buffer);
+    ret->szModName[module.Length] = 0;
+    ret->szResName[res_name.Length] = 0;
+    return TRUE;
 }
 
 
@@ -740,7 +764,7 @@ void macdrv_SetCursor(HCURSOR cursor)
             goto done;
 
         info.cbSize = sizeof(info);
-        if (!GetIconInfoExW(cursor, &info))
+        if (!get_icon_info(cursor, &info))
         {
             WARN("GetIconInfoExW failed\n");
             return;
@@ -748,15 +772,15 @@ void macdrv_SetCursor(HCURSOR cursor)
 
         if ((cursor_name = copy_system_cursor_name(&info)))
         {
-            DeleteObject(info.hbmColor);
-            DeleteObject(info.hbmMask);
+            NtGdiDeleteObjectApp(info.hbmColor);
+            NtGdiDeleteObjectApp(info.hbmMask);
         }
         else
         {
             BITMAP bm;
             HDC hdc;
 
-            GetObjectW(info.hbmMask, sizeof(bm), &bm);
+            NtGdiExtGetObjectW(info.hbmMask, sizeof(bm), &bm);
             if (!info.hbmColor) bm.bmHeight = max(1, bm.bmHeight / 2);
 
             /* make sure hotspot is valid */
@@ -766,18 +790,18 @@ void macdrv_SetCursor(HCURSOR cursor)
                 info.yHotspot = bm.bmHeight / 2;
             }
 
-            hdc = CreateCompatibleDC(0);
+            hdc = NtGdiCreateCompatibleDC(0);
 
             if (info.hbmColor)
             {
                 cursor_frames = create_color_cursor(hdc, &info, cursor, bm.bmWidth, bm.bmHeight);
-                DeleteObject(info.hbmColor);
+                NtGdiDeleteObjectApp(info.hbmColor);
             }
             else
                 cursor_frames = create_monochrome_cursor(hdc, &info, bm.bmWidth, bm.bmHeight);
 
-            DeleteObject(info.hbmMask);
-            DeleteDC(hdc);
+            NtGdiDeleteObjectApp(info.hbmMask);
+            NtGdiDeleteObjectApp(hdc);
         }
 
         if (cursor_name || cursor_frames)
@@ -917,16 +941,16 @@ void macdrv_mouse_scroll(HWND hwnd, const macdrv_event *event)
 void macdrv_release_capture(HWND hwnd, const macdrv_event *event)
 {
     struct macdrv_thread_data *thread_data = macdrv_thread_data();
-    HWND capture = GetCapture();
-    HWND capture_top = GetAncestor(capture, GA_ROOT);
+    HWND capture = get_capture();
+    HWND capture_top = NtUserGetAncestor(capture, GA_ROOT);
 
     TRACE("win %p/%p thread_data->capture_window %p GetCapture() %p in %p\n", hwnd,
           event->window, thread_data->capture_window, capture, capture_top);
 
     if (event->window == thread_data->capture_window && hwnd == capture_top)
     {
-        ReleaseCapture();
-        if (!PostMessageW(capture, WM_CANCELMODE, 0, 0))
+        NtUserReleaseCapture();
+        if (!NtUserPostMessage(capture, WM_CANCELMODE, 0, 0))
             WARN("failed to post WM_CANCELMODE; error 0x%08x\n", GetLastError());
     }
 }

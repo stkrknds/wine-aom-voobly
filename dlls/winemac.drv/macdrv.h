@@ -30,7 +30,7 @@
 #include "macdrv_cocoa.h"
 #include "windef.h"
 #include "winbase.h"
-#include "wingdi.h"
+#include "ntgdi.h"
 #include "wine/debug.h"
 #include "wine/gdi_driver.h"
 
@@ -114,13 +114,11 @@ struct macdrv_thread_data
     WORD                        keyc2scan[128];
 };
 
-extern DWORD thread_data_tls_index DECLSPEC_HIDDEN;
-
 extern struct macdrv_thread_data *macdrv_init_thread_data(void) DECLSPEC_HIDDEN;
 
 static inline struct macdrv_thread_data *macdrv_thread_data(void)
 {
-    return TlsGetValue(thread_data_tls_index);
+    return NtUserGetThreadInfo()->driver_data;
 }
 
 
@@ -137,6 +135,7 @@ extern BOOL macdrv_SetDeviceGammaRamp(PHYSDEV dev, LPVOID ramp) DECLSPEC_HIDDEN;
 extern BOOL macdrv_ClipCursor(LPCRECT clip) DECLSPEC_HIDDEN;
 extern BOOL macdrv_CreateDesktopWindow(HWND hwnd) DECLSPEC_HIDDEN;
 extern BOOL macdrv_CreateWindow(HWND hwnd) DECLSPEC_HIDDEN;
+extern LRESULT macdrv_DesktopWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) DECLSPEC_HIDDEN;
 extern void macdrv_DestroyWindow(HWND hwnd) DECLSPEC_HIDDEN;
 extern void macdrv_SetFocus(HWND hwnd) DECLSPEC_HIDDEN;
 extern void macdrv_SetLayeredWindowAttributes(HWND hwnd, COLORREF key, BYTE alpha,
@@ -293,6 +292,53 @@ extern void macdrv_process_text_input(UINT vkey, UINT scan, UINT repeat, const B
 extern void macdrv_im_set_text(const macdrv_event *event) DECLSPEC_HIDDEN;
 extern void macdrv_sent_text_input(const macdrv_event *event) DECLSPEC_HIDDEN;
 extern BOOL query_ime_char_rect(macdrv_query* query) DECLSPEC_HIDDEN;
+
+/* user helpers */
+
+static inline LRESULT send_message(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    return NtUserMessageCall(hwnd, msg, wparam, lparam, NULL, NtUserSendMessage, FALSE);
+}
+
+static inline LRESULT send_message_timeout(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
+                                           UINT flags, UINT timeout, PDWORD_PTR res_ptr)
+{
+    struct send_message_timeout_params params = { .flags = flags, .timeout = timeout };
+    LRESULT res = NtUserMessageCall(hwnd, msg, wparam, lparam, &params,
+                                    NtUserSendMessageTimeout, FALSE);
+    if (res_ptr) *res_ptr = params.result;
+    return res;
+}
+
+static inline HWND get_active_window(void)
+{
+    GUITHREADINFO info;
+    info.cbSize = sizeof(info);
+    return NtUserGetGUIThreadInfo(GetCurrentThreadId(), &info) ? info.hwndActive : 0;
+}
+
+static inline HWND get_capture(void)
+{
+    GUITHREADINFO info;
+    info.cbSize = sizeof(info);
+    return NtUserGetGUIThreadInfo(GetCurrentThreadId(), &info) ? info.hwndCapture : 0;
+}
+
+static inline HWND get_focus(void)
+{
+    GUITHREADINFO info;
+    info.cbSize = sizeof(info);
+    return NtUserGetGUIThreadInfo(GetCurrentThreadId(), &info) ? info.hwndFocus : 0;
+}
+
+static inline BOOL intersect_rect( RECT *dst, const RECT *src1, const RECT *src2 )
+{
+    dst->left   = max(src1->left, src2->left);
+    dst->top    = max(src1->top, src2->top);
+    dst->right  = min(src1->right, src2->right);
+    dst->bottom = min(src1->bottom, src2->bottom);
+    return !IsRectEmpty( dst );
+}
 
 /* registry helpers */
 

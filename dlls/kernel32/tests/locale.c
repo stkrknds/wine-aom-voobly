@@ -1919,15 +1919,15 @@ static void test_CompareStringA(void)
     ok (GetLastError() == 0xdeadbeef && ret == CSTR_EQUAL,
         "ret %d, error %ld, expected value %d\n", ret, GetLastError(), CSTR_EQUAL);
 
-    ret = CompareStringA(CP_ACP, 0, ABC_EE, 3, ABC_FF, 3);
+    ret = CompareStringA(LOCALE_USER_DEFAULT, 0, ABC_EE, 3, ABC_FF, 3);
     ok(ret == CSTR_EQUAL, "expected CSTR_EQUAL, got %d\n", ret);
-    ret = CompareStringA(CP_ACP, 0, ABC_EE, 5, ABC_FF, 3);
+    ret = CompareStringA(LOCALE_USER_DEFAULT, 0, ABC_EE, 5, ABC_FF, 3);
     ok(ret == CSTR_GREATER_THAN, "expected CSTR_GREATER_THAN, got %d\n", ret);
-    ret = CompareStringA(CP_ACP, 0, ABC_EE, 3, ABC_FF, 5);
+    ret = CompareStringA(LOCALE_USER_DEFAULT, 0, ABC_EE, 3, ABC_FF, 5);
     ok(ret == CSTR_LESS_THAN, "expected CSTR_LESS_THAN, got %d\n", ret);
-    ret = CompareStringA(CP_ACP, 0, ABC_EE, 5, ABC_FF, 5);
+    ret = CompareStringA(LOCALE_USER_DEFAULT, 0, ABC_EE, 5, ABC_FF, 5);
     ok(ret == CSTR_LESS_THAN, "expected CSTR_LESS_THAN, got %d\n", ret);
-    ret = CompareStringA(CP_ACP, 0, ABC_FF, 5, ABC_EE, 5);
+    ret = CompareStringA(LOCALE_USER_DEFAULT, 0, ABC_FF, 5, ABC_EE, 5);
     ok(ret == CSTR_GREATER_THAN, "expected CSTR_GREATER_THAN, got %d\n", ret);
 }
 
@@ -1959,55 +1959,55 @@ static void test_CompareStringW(void)
     *str2 = 'B';
 
     /* CompareStringW should abort on the first non-matching character */
-    ret = CompareStringW(CP_ACP, 0, str1, 100, str2, 100);
+    ret = CompareStringW(LOCALE_USER_DEFAULT, 0, str1, 100, str2, 100);
     ok(ret == CSTR_LESS_THAN, "expected CSTR_LESS_THAN, got %d\n", ret);
 
     success = VirtualFree(buf, 0, MEM_RELEASE);
     ok(success, "VirtualFree failed with %lu\n", GetLastError());
 
     SetLastError(0xdeadbeef);
-    ret = CompareStringW(CP_ACP, SORT_DIGITSASNUMBERS, L"NULL", -1, L"NULL", -1);
+    ret = CompareStringW(LOCALE_USER_DEFAULT, SORT_DIGITSASNUMBERS, L"NULL", -1, L"NULL", -1);
     ok(ret == CSTR_EQUAL || broken(!ret && GetLastError() == ERROR_INVALID_FLAGS) /* <Win7 */,
         "expected CSTR_EQUAL, got %d, last error %ld\n", ret, GetLastError());
 
-    ret = CompareStringW(CP_ACP, 0, ABC_EE, 3, ABC_FF, 3);
+    ret = CompareStringW(LOCALE_USER_DEFAULT, 0, ABC_EE, 3, ABC_FF, 3);
     ok(ret == CSTR_EQUAL, "expected CSTR_EQUAL, got %d\n", ret);
-    ret = CompareStringW(CP_ACP, 0, ABC_EE, 5, ABC_FF, 3);
+    ret = CompareStringW(LOCALE_USER_DEFAULT, 0, ABC_EE, 5, ABC_FF, 3);
     ok(ret == CSTR_GREATER_THAN, "expected CSTR_GREATER_THAN, got %d\n", ret);
-    ret = CompareStringW(CP_ACP, 0, ABC_EE, 3, ABC_FF, 5);
+    ret = CompareStringW(LOCALE_USER_DEFAULT, 0, ABC_EE, 3, ABC_FF, 5);
     ok(ret == CSTR_LESS_THAN, "expected CSTR_LESS_THAN, got %d\n", ret);
-    ret = CompareStringW(CP_ACP, 0, ABC_EE, 5, ABC_FF, 5);
+    ret = CompareStringW(LOCALE_USER_DEFAULT, 0, ABC_EE, 5, ABC_FF, 5);
     ok(ret == CSTR_LESS_THAN, "expected CSTR_LESS_THAN, got %d\n", ret);
-    ret = CompareStringW(CP_ACP, 0, ABC_FF, 5, ABC_EE, 5);
+    ret = CompareStringW(LOCALE_USER_DEFAULT, 0, ABC_FF, 5, ABC_EE, 5);
     ok(ret == CSTR_GREATER_THAN, "expected CSTR_GREATER_THAN, got %d\n", ret);
 
-    ret = CompareStringW(CP_ACP, 0, ABC_EE, 4, A_ACUTE_BC, 4);
+    ret = CompareStringW(LOCALE_USER_DEFAULT, 0, ABC_EE, 4, A_ACUTE_BC, 4);
     ok(ret == CSTR_LESS_THAN, "expected CSTR_LESS_THAN, got %d\n", ret);
-    ret = CompareStringW(CP_ACP, 0, ABC_EE, 4, A_ACUTE_BC_DECOMP, 5);
+    ret = CompareStringW(LOCALE_USER_DEFAULT, 0, ABC_EE, 4, A_ACUTE_BC_DECOMP, 5);
     ok(ret == CSTR_LESS_THAN, "expected CSTR_LESS_THAN, got %d\n", ret);
-    ret = CompareStringW(CP_ACP, 0, A_ACUTE_BC, 4, A_ACUTE_BC_DECOMP, 5);
+    ret = CompareStringW(LOCALE_USER_DEFAULT, 0, A_ACUTE_BC, 4, A_ACUTE_BC_DECOMP, 5);
     ok(ret == CSTR_EQUAL, "expected CSTR_EQUAL, got %d\n", ret);
 
-    ret = CompareStringW(CP_ACP, NORM_IGNORENONSPACE, ABC_EE, 3, A_ACUTE_BC, 4);
+    ret = CompareStringW(LOCALE_USER_DEFAULT, NORM_IGNORENONSPACE, ABC_EE, 3, A_ACUTE_BC, 4);
     todo_wine ok(ret == CSTR_EQUAL, "expected CSTR_EQUAL, got %d\n", ret);
-    ret = CompareStringW(CP_ACP, NORM_IGNORENONSPACE, ABC_EE, 4, A_ACUTE_BC_DECOMP, 5);
+    ret = CompareStringW(LOCALE_USER_DEFAULT, NORM_IGNORENONSPACE, ABC_EE, 4, A_ACUTE_BC_DECOMP, 5);
     todo_wine ok(ret == CSTR_EQUAL, "expected CSTR_EQUAL, got %d\n", ret);
-    ret = CompareStringW(CP_ACP, NORM_IGNORENONSPACE, A_ACUTE_BC, 4, A_ACUTE_BC_DECOMP, 5);
+    ret = CompareStringW(LOCALE_USER_DEFAULT, NORM_IGNORENONSPACE, A_ACUTE_BC, 4, A_ACUTE_BC_DECOMP, 5);
     ok(ret == CSTR_EQUAL, "expected CSTR_EQUAL, got %d\n", ret);
 
-    ret = CompareStringW(CP_ACP, 0, ABC_EE, 4, A_NULL_BC, 4);
+    ret = CompareStringW(LOCALE_USER_DEFAULT, 0, ABC_EE, 4, A_NULL_BC, 4);
     ok(ret == CSTR_EQUAL, "expected CSTR_LESS_THAN, got %d\n", ret);
-    ret = CompareStringW(CP_ACP, NORM_IGNORENONSPACE, ABC_EE, 4, A_NULL_BC, 4);
+    ret = CompareStringW(LOCALE_USER_DEFAULT, NORM_IGNORENONSPACE, ABC_EE, 4, A_NULL_BC, 4);
     ok(ret == CSTR_EQUAL, "expected CSTR_EQUAL, got %d\n", ret);
 
-    ret = CompareStringW(CP_ACP, 0, A_NULL_BC, 4, A_ACUTE_BC, 4);
+    ret = CompareStringW(LOCALE_USER_DEFAULT, 0, A_NULL_BC, 4, A_ACUTE_BC, 4);
     ok(ret == CSTR_LESS_THAN, "expected CSTR_LESS_THAN, got %d\n", ret);
-    ret = CompareStringW(CP_ACP, NORM_IGNORENONSPACE, A_NULL_BC, 4, A_ACUTE_BC, 4);
+    ret = CompareStringW(LOCALE_USER_DEFAULT, NORM_IGNORENONSPACE, A_NULL_BC, 4, A_ACUTE_BC, 4);
     todo_wine ok(ret == CSTR_EQUAL, "expected CSTR_EQUAL, got %d\n", ret);
 
-    ret = CompareStringW(CP_ACP, 0, A_NULL_BC, 4, A_ACUTE_BC_DECOMP, 5);
+    ret = CompareStringW(LOCALE_USER_DEFAULT, 0, A_NULL_BC, 4, A_ACUTE_BC_DECOMP, 5);
     ok(ret == CSTR_LESS_THAN, "expected CSTR_LESS_THAN, got %d\n", ret);
-    ret = CompareStringW(CP_ACP, NORM_IGNORENONSPACE, A_NULL_BC, 4, A_ACUTE_BC_DECOMP, 5);
+    ret = CompareStringW(LOCALE_USER_DEFAULT, NORM_IGNORENONSPACE, A_NULL_BC, 4, A_ACUTE_BC_DECOMP, 5);
     todo_wine ok(ret == CSTR_EQUAL, "expected CSTR_EQUAL, got %d\n", ret);
 }
 
@@ -2332,7 +2332,7 @@ static void test_LCMapStringA(void)
     ok(ret2, "LCMapStringA must succeed\n");
     ok(buf2[ret2-1] == 0, "LCMapStringA not null-terminated\n" );
     ok(ret == ret2, "lengths of sort keys must be equal\n");
-    ok(!lstrcmpA(buf, buf2), "sort keys must be equal\n");
+    ok(!memcmp(buf, buf2, ret), "sort keys must be equal\n");
 
     /* test we get the same length when no dest buffer is provided */
     ret2 = LCMapStringA(LOCALE_USER_DEFAULT, LCMAP_SORTKEY,
@@ -2348,7 +2348,7 @@ static void test_LCMapStringA(void)
                        lower_case, -1, buf2, sizeof(buf2));
     ok(ret2, "LCMapStringA must succeed\n");
     ok(ret == ret2, "lengths of sort keys must be equal\n");
-    ok(!lstrcmpA(buf, buf2), "sort keys must be equal\n");
+    ok(!memcmp(buf, buf2, ret), "sort keys must be equal\n");
 
     /* Don't test LCMAP_SORTKEY | NORM_IGNORENONSPACE, produces different
        results from plain LCMAP_SORTKEY on Vista */
@@ -2361,7 +2361,7 @@ static void test_LCMapStringA(void)
                        symbols_stripped, -1, buf2, sizeof(buf2));
     ok(ret2, "LCMapStringA must succeed\n");
     ok(ret == ret2, "lengths of sort keys must be equal\n");
-    ok(!lstrcmpA(buf, buf2), "sort keys must be equal\n");
+    ok(!memcmp(buf, buf2, ret), "sort keys must be equal\n");
 
     /* test NORM_IGNORENONSPACE */
     lstrcpyA(buf, "foo");
@@ -2585,7 +2585,7 @@ static void test_lcmapstring_unicode(lcmapstring_wrapper func_ptr, const char *f
                        upper_case, lstrlenW(upper_case), buf2, sizeof(buf2));
     ok(ret, "%s func_ptr must succeed\n", func_name);
     ok(ret == ret2, "%s lengths of sort keys must be equal\n", func_name);
-    ok(!lstrcmpA(p_buf, p_buf2), "%s sort keys must be equal\n", func_name);
+    ok(!memcmp(p_buf, p_buf2, ret), "%s sort keys must be equal\n", func_name);
 
     /* test LCMAP_SORTKEY | NORM_IGNORECASE */
     ret = func_ptr(LCMAP_SORTKEY | NORM_IGNORECASE,
@@ -2595,7 +2595,7 @@ static void test_lcmapstring_unicode(lcmapstring_wrapper func_ptr, const char *f
                        lower_case, -1, buf2, sizeof(buf2));
     ok(ret2, "%s func_ptr must succeed\n", func_name);
     ok(ret == ret2, "%s lengths of sort keys must be equal\n", func_name);
-    ok(!lstrcmpA(p_buf, p_buf2), "%s sort keys must be equal\n", func_name);
+    ok(!memcmp(p_buf, p_buf2, ret), "%s sort keys must be equal\n", func_name);
 
     /* Don't test LCMAP_SORTKEY | NORM_IGNORENONSPACE, produces different
        results from plain LCMAP_SORTKEY on Vista */
@@ -2608,7 +2608,7 @@ static void test_lcmapstring_unicode(lcmapstring_wrapper func_ptr, const char *f
                        symbols_stripped, -1, buf2, sizeof(buf2));
     ok(ret2, "%s func_ptr must succeed\n", func_name);
     ok(ret == ret2, "%s lengths of sort keys must be equal\n", func_name);
-    ok(!lstrcmpA(p_buf, p_buf2), "%s sort keys must be equal\n", func_name);
+    ok(!memcmp(p_buf, p_buf2, ret), "%s sort keys must be equal\n", func_name);
 
     /* test NORM_IGNORENONSPACE */
     lstrcpyW(buf, fooW);
@@ -3221,9 +3221,11 @@ static int compare_string3(const void *e1, const void *e2)
     const char *s2 = *(const char *const *)e2;
     char key1[256], key2[256];
 
-    LCMapStringA(0, LCMAP_SORTKEY, s1, -1, key1, sizeof(key1));
-    LCMapStringA(0, LCMAP_SORTKEY, s2, -1, key2, sizeof(key2));
-    return strcmp(key1, key2);
+    int len1 = LCMapStringA(0, LCMAP_SORTKEY, s1, -1, key1, sizeof(key1));
+    int len2 = LCMapStringA(0, LCMAP_SORTKEY, s2, -1, key2, sizeof(key2));
+    int ret = memcmp(key1, key2, min(len1, len2));
+    if (!ret) ret = len1 - len2;
+    return ret;
 }
 
 static void test_sorting(void)

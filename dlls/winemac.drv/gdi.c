@@ -157,7 +157,7 @@ static MACDRV_PDEVICE *create_mac_physdev(void)
     if (!device_data_valid) device_init();
     pthread_mutex_unlock(&device_data_mutex);
 
-    if (!(physDev = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*physDev)))) return NULL;
+    if (!(physDev = calloc(1, sizeof(*physDev)))) return NULL;
 
     return physDev;
 }
@@ -207,7 +207,7 @@ static BOOL CDECL macdrv_DeleteDC(PHYSDEV dev)
 
     TRACE("hdc %p\n", dev->hdc);
 
-    HeapFree(GetProcessHeap(), 0, physDev);
+    free(physDev);
     return TRUE;
 }
 
@@ -268,6 +268,7 @@ static const struct user_driver_funcs macdrv_funcs =
     .pClipCursor = macdrv_ClipCursor,
     .pCreateDesktopWindow = macdrv_CreateDesktopWindow,
     .pCreateWindow = macdrv_CreateWindow,
+    .pDesktopWindowProc = macdrv_DesktopWindowProc,
     .pDestroyCursorIcon = macdrv_DestroyCursorIcon,
     .pDestroyWindow = macdrv_DestroyWindow,
     .pEnumDisplaySettingsEx = macdrv_EnumDisplaySettingsEx,

@@ -747,6 +747,21 @@ Call ok(Space(4.5) = "    ", "Space(4.5) = " & Space(4.5) & """")
 Call ok(Space(0.5) = "", "Space(0.5) = " & Space(0.5) & """")
 Call ok(Space(1.5) = "  ", "Space(1.5) = " & Space(1.5) & """")
 Call ok(Space("1") = " ", "Space(""1"") = " & Space("1") & """")
+Call ok(Space(Empty) = "", "Space(Empty) = " & Space(Empty) & """")
+
+sub testSpaceError()
+    on error resume next
+    call Err.clear()
+    call Space(-1)
+    call ok(Err.number = 5, "Err.number = " & Err.number)
+    call Err.clear()
+    call Space("-1")
+    call ok(Err.number = 5, "Err.number = " & Err.number)
+    call Err.clear()
+    call Space(Null)
+    call ok(Err.number = 94, "Err.number = " & Err.number)
+end sub
+call testSpaceError()
 
 sub test_string(cnt, char, exp)
     call ok(String(cnt, char) = exp, "String(" & cnt & ", """ & char & """ = """ & _
@@ -1182,6 +1197,39 @@ Call ok(getVT(CCur(MyObject)) = "VT_CY", "getVT(CCur(MyObject)) = " & getVT(CCur
 MyObject.myval = 0
 Call ok(CCur(MyObject) = 0, "CCur(MyObject) = " & CCur(MyObject))
 Call ok(getVT(CCur(MyObject)) = "VT_CY", "getVT(CCur(MyObject)) = " & getVT(CCur(MyObject)))
+
+Sub testCDateError(strings, error_num1, error_num2)
+    on error resume next
+    Dim x
+
+    Call Err.clear()
+    x = CDate(strings)
+    Call ok(Err.number = error_num1, "Err.number = " & Err.number)
+
+    Call Err.clear()
+    Call CDate(strings)
+    Call ok(Err.number = error_num2, "Err.number = " & Err.number)
+End Sub
+
+Call ok(CDate(Empty) = 0, "CDate(Empty) = " & CDate(Empty))
+Call ok(getVT(CDate(Empty)) = "VT_DATE", "getVT(CDate(Empty)) = " & getVT(CDate(Empty)))
+Call ok(CDate(0) = 0, "CDate(0) = " & CDate(0))
+Call ok(getVT(CDate(0)) = "VT_DATE", "getVT(CDate(0)) = " & getVT(CDate(0)))
+Call ok(CDate(1) = #1899-12-31#, "CDate(1) = " & CDate(1))
+Call ok(getVT(CDate(1)) = "VT_DATE", "getVT(CDate(1)) = " & getVT(CDate(1)))
+Call ok(CDate("1") = #1899-12-31#, "CDate(""1"") = " & CDate("1"))
+Call ok(getVT(CDate("1")) = "VT_DATE", "getVT(CDate(""1"")) = " & getVT(CDate("1")))
+If isEnglishLang Then
+    Call ok(CDate("1/1/2000") = #2000-1-1#, "CDate(""1/1/2000"") = " & CDate("1/1/2000"))
+    Call ok(getVT(CDate("1/1/2000")) = "VT_DATE", "getVT(CDate(""1/1/2000"")) = " & getVT(CDate("1/1/2000")))
+End If
+Call ok(CDate(-1) = #1899-12-29#, "CDate(-1) = " & CDate(-1))
+Call ok(getVT(CDate(-1)) = "VT_DATE", "getVT(CDate(-1)) = " & getVT(CDate(-1)))
+Call ok(CDate(100000) = #2173-10-14#, "CDate(100000) = " & CDate(100000))
+Call ok(getVT(CDate(100000)) = "VT_DATE", "getVT(CDate(100000)) = " & getVT(CDate(100000)))
+Call testCDateError("", 13, 13)
+Call testCDateError(null, 94, 94)
+Call testCDateError(1, 0, 458)
 
 Sub testCDblError(strings, error_num1, error_num2)
     on error resume next
@@ -2099,5 +2147,59 @@ call testWeekday(DateSerial(2000, 1, 1), vbThursday, 3)
 call testWeekday(DateSerial(2000, 1, 1), vbFriday, 2)
 call testWeekday(DateSerial(2000, 1, 1), vbSaturday, 1)
 call testWeekdayError()
+
+sub testMonthNameError()
+    on error resume next
+    call Err.clear()
+    call MonthName(null)
+    call ok(Err.number = 94, "Err.number = " & Err.number)
+    call Err.clear()
+    call MonthName(1, null)
+    call ok(Err.number = 94, "Err.number = " & Err.number)
+    call Err.clear()
+    call MonthName(null, null)
+    call ok(Err.number = 94, "Err.number = " & Err.number)
+    call Err.clear()
+    call MonthName("a", null)
+    call ok(Err.number = 94, "Err.number = " & Err.number)
+end sub
+call testMonthNameError()
+
+sub testTimeSerial(hh, mm, ss, hhexp, mmexp, ssexp, dateexp)
+    dim x
+    x = TimeSerial(hh, mm, ss)
+    call ok(Hour(x) = hhexp, "hour = " & Hour(x) & " expected " & hhexp)
+    call ok(Minute(x) = mmexp, "minute = " & Minute(x) & " expected " & mmexp)
+    call ok(Second(x) = ssexp, "second = " & Second(x) & " expected " & ssexp)
+    call ok(Year(x) = Year(dateexp), "year = " & Year(x))
+    call ok(Month(x) = Month(dateexp), "month = " & Month(x))
+    call ok(Day(x) = Day(dateexp), "day = " & Day(x))
+    call ok(getVT(x) = "VT_DATE*", "getVT = " & getVT(x))
+end sub
+
+sub testTimeSerialError()
+    on error resume next
+    dim x
+    call Err.clear()
+    x = TimeSerial(null, 1, 1)
+    call ok(Err.number = 94, "Err.number = " & Err.number)
+    call ok(getVT(x) = "VT_EMPTY*", "getVT = " & getVT(x))
+    call Err.clear()
+    call TimeSerial(10, null, 1)
+    call ok(Err.number = 94, "Err.number = " & Err.number)
+    call Err.clear()
+    call TimeSerial(10, 1, null)
+    call ok(Err.number = 94, "Err.number = " & Err.number)
+end sub
+
+call testTimeSerial(0, 0, 0, 0, 0, 0, DateSerial(1899, 12, 30))
+call testTimeSerial(10, 2, 1, 10, 2, 1, DateSerial(1899, 12, 30))
+call testTimeSerial(0, 2, 1, 0, 2, 1, DateSerial(1899, 12, 30))
+call testTimeSerial(24, 2, 1, 0, 2, 1, DateSerial(1899, 12, 31))
+call testTimeSerial(25, 2, 1, 1, 2, 1, DateSerial(1899, 12, 31))
+call testTimeSerial(50, 2, 1, 2, 2, 1, DateSerial(1900, 1, 1))
+call testTimeSerial(10, 60, 2, 11, 0, 2, DateSerial(1899, 12, 30))
+call testTimeSerial(10, 0, 60, 10, 1, 0, DateSerial(1899, 12, 30))
+call testTimeSerialError()
 
 Call reportSuccess()

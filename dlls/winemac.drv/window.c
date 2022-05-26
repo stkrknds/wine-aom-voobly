@@ -91,11 +91,11 @@ static void get_cocoa_window_features(struct macdrv_win_data *data,
  */
 static inline BOOL can_window_become_foreground(HWND hwnd)
 {
-    LONG style = GetWindowLongW(hwnd, GWL_STYLE);
+    LONG style = NtUserGetWindowLongW(hwnd, GWL_STYLE);
 
     if (!(style & WS_VISIBLE)) return FALSE;
     if ((style & (WS_POPUP|WS_CHILD)) == WS_CHILD) return FALSE;
-    if (hwnd == GetDesktopWindow()) return FALSE;
+    if (hwnd == NtUserGetDesktopWindow()) return FALSE;
     return !(style & WS_DISABLED);
 }
 
@@ -113,7 +113,7 @@ static void get_cocoa_window_state(struct macdrv_win_data *data,
     state->floating = (ex_style & WS_EX_TOPMOST) != 0;
     state->excluded_by_expose = state->excluded_by_cycle =
         (!(ex_style & WS_EX_APPWINDOW) &&
-         (GetWindow(data->hwnd, GW_OWNER) || (ex_style & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE))));
+         (NtUserGetWindowRelative(data->hwnd, GW_OWNER) || (ex_style & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE))));
     if (IsRectEmpty(&data->window_rect))
         state->excluded_by_expose = TRUE;
     state->minimized = (style & WS_MINIMIZE) != 0;
@@ -134,7 +134,7 @@ static void get_mac_rect_offset(struct macdrv_win_data *data, DWORD style, RECT 
 
     rect->top = rect->bottom = rect->left = rect->right = 0;
 
-    ex_style = GetWindowLongW(data->hwnd, GWL_EXSTYLE);
+    ex_style = NtUserGetWindowLongW(data->hwnd, GWL_EXSTYLE);
 
     if (!data->shaped)
     {
@@ -192,7 +192,7 @@ static void macdrv_window_to_mac_rect(struct macdrv_win_data *data, DWORD style,
 static void macdrv_mac_to_window_rect(struct macdrv_win_data *data, RECT *rect)
 {
     RECT rc;
-    DWORD style = GetWindowLongW(data->hwnd, GWL_STYLE);
+    DWORD style = NtUserGetWindowLongW(data->hwnd, GWL_STYLE);
 
     if ((style & (WS_POPUP|WS_CHILD)) == WS_CHILD) return;
     if (IsRectEmpty(rect)) return;
@@ -238,7 +238,7 @@ static struct macdrv_win_data *alloc_win_data(HWND hwnd)
 {
     struct macdrv_win_data *data;
 
-    if ((data = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*data))))
+    if ((data = calloc(1, sizeof(*data))))
     {
         data->hwnd = hwnd;
         data->color_key = CLR_INVALID;
@@ -341,12 +341,12 @@ static void set_cocoa_window_properties(struct macdrv_win_data *data)
     struct macdrv_window_features wf;
     struct macdrv_window_state state;
 
-    style = GetWindowLongW(data->hwnd, GWL_STYLE);
-    ex_style = GetWindowLongW(data->hwnd, GWL_EXSTYLE);
+    style = NtUserGetWindowLongW(data->hwnd, GWL_STYLE);
+    ex_style = NtUserGetWindowLongW(data->hwnd, GWL_EXSTYLE);
 
-    owner = GetWindow(data->hwnd, GW_OWNER);
+    owner = NtUserGetWindowRelative(data->hwnd, GW_OWNER);
     if (owner)
-        owner = GetAncestor(owner, GA_ROOT);
+        owner = NtUserGetAncestor(owner, GA_ROOT);
     owner_win = macdrv_get_cocoa_window(owner, TRUE);
     macdrv_set_cocoa_parent_window(data->cocoa_window, owner_win);
 
@@ -384,16 +384,16 @@ static void sync_window_region(struct macdrv_win_data *data, HRGN win_region)
 
     if (hrgn == (HRGN)1)  /* hack: win_region == 1 means retrieve region from server */
     {
-        if (!(hrgn = CreateRectRgn(0, 0, 0, 0))) return;
-        if (GetWindowRgn(data->hwnd, hrgn) == ERROR)
+        if (!(hrgn = NtGdiCreateRectRgn(0, 0, 0, 0))) return;
+        if (NtUserGetWindowRgnEx(data->hwnd, hrgn, 0) == ERROR)
         {
-            DeleteObject(hrgn);
+            NtGdiDeleteObjectApp(hrgn);
             hrgn = 0;
         }
     }
 
-    if (hrgn && GetWindowLongW(data->hwnd, GWL_EXSTYLE) & WS_EX_LAYOUTRTL)
-        MirrorRgn(data->hwnd, hrgn);
+    if (hrgn && NtUserGetWindowLongW(data->hwnd, GWL_EXSTYLE) & WS_EX_LAYOUTRTL)
+        NtUserMirrorRgn(data->hwnd, hrgn);
     if (hrgn)
     {
         OffsetRgn(hrgn, data->window_rect.left - data->whole_rect.left,
@@ -425,10 +425,10 @@ static void sync_window_region(struct macdrv_win_data *data, HRGN win_region)
     TRACE("win %p/%p win_region %p rects %p count %d\n", data->hwnd, data->cocoa_window, win_region, rects, count);
     macdrv_set_window_shape(data->cocoa_window, rects, count);
 
-    HeapFree(GetProcessHeap(), 0, region_data);
+    free(region_data);
     data->shaped = (region_data != NULL);
 
-    if (hrgn && hrgn != win_region) DeleteObject(hrgn);
+    if (hrgn && hrgn != win_region) NtGdiDeleteObjectApp(hrgn);
 }
 
 
@@ -514,8 +514,8 @@ static void sync_window_opacity(struct macdrv_win_data *data, COLORREF key, BYTE
  */
 static void sync_window_min_max_info(HWND hwnd)
 {
-    LONG style = GetWindowLongW(hwnd, GWL_STYLE);
-    LONG exstyle = GetWindowLongW(hwnd, GWL_EXSTYLE);
+    LONG style = NtUserGetWindowLongW(hwnd, GWL_STYLE);
+    LONG exstyle = NtUserGetWindowLongW(hwnd, GWL_EXSTYLE);
     RECT win_rect, primary_monitor_rect;
     MINMAXINFO minmax;
     LONG adjustedStyle;
@@ -528,7 +528,7 @@ static void sync_window_min_max_info(HWND hwnd)
 
     if (!macdrv_get_cocoa_window(hwnd, FALSE)) return;
 
-    GetWindowRect(hwnd, &win_rect);
+    NtUserGetWindowRect(hwnd, &win_rect);
     minmax.ptReserved.x = win_rect.left;
     minmax.ptReserved.y = win_rect.top;
 
@@ -538,8 +538,8 @@ static void sync_window_min_max_info(HWND hwnd)
         adjustedStyle = style;
 
     primary_monitor_rect.left = primary_monitor_rect.top = 0;
-    primary_monitor_rect.right = GetSystemMetrics(SM_CXSCREEN);
-    primary_monitor_rect.bottom = GetSystemMetrics(SM_CYSCREEN);
+    primary_monitor_rect.right = NtUserGetSystemMetrics(SM_CXSCREEN);
+    primary_monitor_rect.bottom = NtUserGetSystemMetrics(SM_CYSCREEN);
     AdjustWindowRectEx(&primary_monitor_rect, adjustedStyle, ((style & WS_POPUP) && GetMenu(hwnd)), exstyle);
 
     xinc = -primary_monitor_rect.left;
@@ -551,19 +551,19 @@ static void sync_window_min_max_info(HWND hwnd)
     minmax.ptMaxPosition.y = -yinc;
     if (style & (WS_DLGFRAME | WS_BORDER))
     {
-        minmax.ptMinTrackSize.x = GetSystemMetrics(SM_CXMINTRACK);
-        minmax.ptMinTrackSize.y = GetSystemMetrics(SM_CYMINTRACK);
+        minmax.ptMinTrackSize.x = NtUserGetSystemMetrics(SM_CXMINTRACK);
+        minmax.ptMinTrackSize.y = NtUserGetSystemMetrics(SM_CYMINTRACK);
     }
     else
     {
         minmax.ptMinTrackSize.x = 2 * xinc;
         minmax.ptMinTrackSize.y = 2 * yinc;
     }
-    minmax.ptMaxTrackSize.x = GetSystemMetrics(SM_CXMAXTRACK);
-    minmax.ptMaxTrackSize.y = GetSystemMetrics(SM_CYMAXTRACK);
+    minmax.ptMaxTrackSize.x = NtUserGetSystemMetrics(SM_CXMAXTRACK);
+    minmax.ptMaxTrackSize.y = NtUserGetSystemMetrics(SM_CYMAXTRACK);
 
     wpl.length = sizeof(wpl);
-    if (GetWindowPlacement(hwnd, &wpl) && (wpl.ptMaxPosition.x != -1 || wpl.ptMaxPosition.y != -1))
+    if (NtUserGetWindowPlacement(hwnd, &wpl) && (wpl.ptMaxPosition.x != -1 || wpl.ptMaxPosition.y != -1))
     {
         minmax.ptMaxPosition = wpl.ptMaxPosition;
 
@@ -575,19 +575,19 @@ static void sync_window_min_max_info(HWND hwnd)
     TRACE("initial ptMaxSize %s ptMaxPosition %s ptMinTrackSize %s ptMaxTrackSize %s\n", wine_dbgstr_point(&minmax.ptMaxSize),
           wine_dbgstr_point(&minmax.ptMaxPosition), wine_dbgstr_point(&minmax.ptMinTrackSize), wine_dbgstr_point(&minmax.ptMaxTrackSize));
 
-    SendMessageW(hwnd, WM_GETMINMAXINFO, 0, (LPARAM)&minmax);
+    send_message(hwnd, WM_GETMINMAXINFO, 0, (LPARAM)&minmax);
 
     TRACE("app's ptMaxSize %s ptMaxPosition %s ptMinTrackSize %s ptMaxTrackSize %s\n", wine_dbgstr_point(&minmax.ptMaxSize),
           wine_dbgstr_point(&minmax.ptMaxPosition), wine_dbgstr_point(&minmax.ptMinTrackSize), wine_dbgstr_point(&minmax.ptMaxTrackSize));
 
     /* if the app didn't change the values, adapt them for the window's monitor */
-    if ((monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY)))
+    if ((monitor = NtUserMonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY)))
     {
         MONITORINFO mon_info;
         RECT monitor_rect;
 
         mon_info.cbSize = sizeof(mon_info);
-        GetMonitorInfoW(monitor, &mon_info);
+        NtUserGetMonitorInfo(monitor, &mon_info);
 
         if ((style & WS_MAXIMIZEBOX) && ((style & WS_CAPTION) == WS_CAPTION || !(style & WS_POPUP)))
             monitor_rect = mon_info.rcWork;
@@ -622,8 +622,8 @@ static void sync_window_min_max_info(HWND hwnd)
         macdrv_window_to_mac_rect(data, style, &min_rect, &data->window_rect, &data->client_rect);
         min_size = CGSizeMake(min_rect.right - min_rect.left, min_rect.bottom - min_rect.top);
 
-        if (minmax.ptMaxTrackSize.x == GetSystemMetrics(SM_CXMAXTRACK) &&
-            minmax.ptMaxTrackSize.y == GetSystemMetrics(SM_CYMAXTRACK))
+        if (minmax.ptMaxTrackSize.x == NtUserGetSystemMetrics(SM_CXMAXTRACK) &&
+            minmax.ptMaxTrackSize.y == NtUserGetSystemMetrics(SM_CYMAXTRACK))
             max_size = CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX);
         else
         {
@@ -678,16 +678,16 @@ static void create_cocoa_window(struct macdrv_win_data *data)
     BYTE alpha;
     DWORD layered_flags;
 
-    if ((win_rgn = CreateRectRgn(0, 0, 0, 0)) &&
-        GetWindowRgn(data->hwnd, win_rgn) == ERROR)
+    if ((win_rgn = NtGdiCreateRectRgn(0, 0, 0, 0)) &&
+        NtUserGetWindowRgnEx(data->hwnd, win_rgn, 0) == ERROR)
     {
-        DeleteObject(win_rgn);
+        NtGdiDeleteObjectApp(win_rgn);
         win_rgn = 0;
     }
     data->shaped = (win_rgn != 0);
 
-    style = GetWindowLongW(data->hwnd, GWL_STYLE);
-    ex_style = GetWindowLongW(data->hwnd, GWL_EXSTYLE);
+    style = NtUserGetWindowLongW(data->hwnd, GWL_STYLE);
+    ex_style = NtUserGetWindowLongW(data->hwnd, GWL_EXSTYLE);
 
     data->whole_rect = data->window_rect;
     macdrv_window_to_mac_rect(data, style, &data->whole_rect, &data->window_rect, &data->client_rect);
@@ -709,18 +709,18 @@ static void create_cocoa_window(struct macdrv_win_data *data)
     set_cocoa_window_properties(data);
 
     /* set the window text */
-    if (!InternalGetWindowText(data->hwnd, text, ARRAY_SIZE(text))) text[0] = 0;
+    if (!NtUserInternalGetWindowText(data->hwnd, text, ARRAY_SIZE(text))) text[0] = 0;
     macdrv_set_cocoa_window_title(data->cocoa_window, text, strlenW(text));
 
     /* set the window region */
     if (win_rgn || IsRectEmpty(&data->window_rect)) sync_window_region(data, win_rgn);
 
     /* set the window opacity */
-    if (!GetLayeredWindowAttributes(data->hwnd, &key, &alpha, &layered_flags)) layered_flags = 0;
+    if (!NtUserGetLayeredWindowAttributes(data->hwnd, &key, &alpha, &layered_flags)) layered_flags = 0;
     sync_window_opacity(data, key, alpha, FALSE, layered_flags);
 
 done:
-    if (win_rgn) DeleteObject(win_rgn);
+    if (win_rgn) NtGdiDeleteObjectApp(win_rgn);
 }
 
 
@@ -822,23 +822,23 @@ static struct macdrv_win_data *macdrv_create_win_data(HWND hwnd, const RECT *win
     struct macdrv_win_data *data;
     HWND parent;
 
-    if (GetWindowThreadProcessId(hwnd, NULL) != GetCurrentThreadId()) return NULL;
+    if (NtUserGetWindowThread(hwnd, NULL) != GetCurrentThreadId()) return NULL;
 
-    if (!(parent = GetAncestor(hwnd, GA_PARENT)))  /* desktop */
+    if (!(parent = NtUserGetAncestor(hwnd, GA_PARENT)))  /* desktop */
     {
         macdrv_init_thread_data();
         return NULL;
     }
 
     /* don't create win data for HWND_MESSAGE windows */
-    if (parent != GetDesktopWindow() && !GetAncestor(parent, GA_PARENT)) return NULL;
+    if (parent != NtUserGetDesktopWindow() && !NtUserGetAncestor(parent, GA_PARENT)) return NULL;
 
     if (!(data = alloc_win_data(hwnd))) return NULL;
 
     data->whole_rect = data->window_rect = *window_rect;
     data->client_rect = *client_rect;
 
-    if (parent == GetDesktopWindow())
+    if (parent == NtUserGetDesktopWindow())
     {
         create_cocoa_window(data);
         TRACE("win %p/%p window %s whole %s client %s\n",
@@ -866,9 +866,9 @@ static BOOL is_owned_by(HWND hwnd, HWND maybe_owner)
 {
     while (1)
     {
-        HWND hwnd2 = GetWindow(hwnd, GW_OWNER);
+        HWND hwnd2 = NtUserGetWindowRelative(hwnd, GW_OWNER);
         if (!hwnd2)
-            hwnd2 = GetAncestor(hwnd, GA_ROOT);
+            hwnd2 = NtUserGetAncestor(hwnd, GA_ROOT);
         if (!hwnd2 || hwnd2 == hwnd)
             break;
         if (hwnd2 == maybe_owner)
@@ -885,12 +885,12 @@ static BOOL is_owned_by(HWND hwnd, HWND maybe_owner)
  */
 static BOOL is_all_the_way_front(HWND hwnd)
 {
-    BOOL topmost = (GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+    BOOL topmost = (NtUserGetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
     HWND prev = hwnd;
 
-    while ((prev = GetWindow(prev, GW_HWNDPREV)))
+    while ((prev = NtUserGetWindowRelative(prev, GW_HWNDPREV)))
     {
-        if (!topmost && (GetWindowLongW(prev, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0)
+        if (!topmost && (NtUserGetWindowLongW(prev, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0)
             return TRUE;
         if (!is_owned_by(prev, hwnd))
             return FALSE;
@@ -907,10 +907,12 @@ static void set_focus(HWND hwnd, BOOL raise)
 {
     struct macdrv_win_data *data;
 
-    if (!(hwnd = GetAncestor(hwnd, GA_ROOT))) return;
+    if (!(hwnd = NtUserGetAncestor(hwnd, GA_ROOT))) return;
 
-    if (raise && hwnd == GetForegroundWindow() && hwnd != GetDesktopWindow() && !is_all_the_way_front(hwnd))
-        SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+    if (raise && hwnd == NtUserGetForegroundWindow() && hwnd != NtUserGetDesktopWindow() &&
+        !is_all_the_way_front(hwnd))
+        NtUserSetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0,
+                           SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
 
     if (!(data = get_win_data(hwnd))) return;
 
@@ -940,17 +942,17 @@ static void show_window(struct macdrv_win_data *data)
         GUITHREADINFO info;
 
         /* find window that this one must be after */
-        prev = GetWindow(data->hwnd, GW_HWNDPREV);
-        while (prev && !((GetWindowLongW(prev, GWL_STYLE) & (WS_VISIBLE | WS_MINIMIZE)) == WS_VISIBLE &&
+        prev = NtUserGetWindowRelative(data->hwnd, GW_HWNDPREV);
+        while (prev && !((NtUserGetWindowLongW(prev, GWL_STYLE) & (WS_VISIBLE | WS_MINIMIZE)) == WS_VISIBLE &&
                          (prev_window = macdrv_get_cocoa_window(prev, TRUE))))
-            prev = GetWindow(prev, GW_HWNDPREV);
+            prev = NtUserGetWindowRelative(prev, GW_HWNDPREV);
         if (!prev_window)
         {
             /* find window that this one must be before */
-            next = GetWindow(data->hwnd, GW_HWNDNEXT);
-            while (next && !((GetWindowLongW(next, GWL_STYLE) & (WS_VISIBLE | WS_MINIMIZE)) == WS_VISIBLE &&
+            next = NtUserGetWindowRelative(data->hwnd, GW_HWNDNEXT);
+            while (next && !((NtUserGetWindowLongW(next, GWL_STYLE) & (WS_VISIBLE | WS_MINIMIZE)) == WS_VISIBLE &&
                              (next_window = macdrv_get_cocoa_window(next, TRUE))))
-                next = GetWindow(next, GW_HWNDNEXT);
+                next = NtUserGetWindowRelative(next, GW_HWNDNEXT);
         }
 
         TRACE("win %p/%p below %p/%p above %p/%p\n",
@@ -962,8 +964,8 @@ static void show_window(struct macdrv_win_data *data)
         data->on_screen = TRUE;
 
         info.cbSize = sizeof(info);
-        if (GetGUIThreadInfo(GetWindowThreadProcessId(data->hwnd, NULL), &info) && info.hwndFocus &&
-            (data->hwnd == info.hwndFocus || IsChild(data->hwnd, info.hwndFocus)))
+        if (NtUserGetGUIThreadInfo(NtUserGetWindowThread(data->hwnd, NULL), &info) && info.hwndFocus &&
+            (data->hwnd == info.hwndFocus || NtUserIsChild(data->hwnd, info.hwndFocus)))
             set_focus(info.hwndFocus, FALSE);
         if (activate)
             activate_on_focus_time = 0;
@@ -1000,7 +1002,7 @@ static void sync_window_z_order(struct macdrv_win_data *data)
 {
     if (data->cocoa_view)
     {
-        HWND parent = GetAncestor(data->hwnd, GA_PARENT);
+        HWND parent = NtUserGetAncestor(data->hwnd, GA_PARENT);
         macdrv_view superview = macdrv_get_client_cocoa_view(parent);
         macdrv_window window = NULL;
         HWND prev;
@@ -1016,15 +1018,15 @@ static void sync_window_z_order(struct macdrv_win_data *data)
         }
 
         /* find window that this one must be after */
-        prev = GetWindow(data->hwnd, GW_HWNDPREV);
+        prev = NtUserGetWindowRelative(data->hwnd, GW_HWNDPREV);
         while (prev && !(prev_view = macdrv_get_cocoa_view(prev)))
-            prev = GetWindow(prev, GW_HWNDPREV);
+            prev = NtUserGetWindowRelative(prev, GW_HWNDPREV);
         if (!prev_view)
         {
             /* find window that this one must be before */
-            next = GetWindow(data->hwnd, GW_HWNDNEXT);
+            next = NtUserGetWindowRelative(data->hwnd, GW_HWNDNEXT);
             while (next && !(next_view = macdrv_get_cocoa_view(next)))
-                next = GetWindow(next, GW_HWNDNEXT);
+                next = NtUserGetWindowRelative(next, GW_HWNDNEXT);
         }
 
         TRACE("win %p/%p below %p/%p above %p/%p\n",
@@ -1041,8 +1043,7 @@ static void sync_window_z_order(struct macdrv_win_data *data)
  *              get_region_data
  *
  * Calls GetRegionData on the given region and converts the rectangle
- * array to CGRect format. The returned buffer must be freed by
- * caller using HeapFree(GetProcessHeap(),...).
+ * array to CGRect format. The returned buffer must be freed by caller.
  * If hdc_lptodp is not 0, the rectangles are converted through LPtoDP.
  */
 RGNDATA *get_region_data(HRGN hrgn, HDC hdc_lptodp)
@@ -1053,17 +1054,17 @@ RGNDATA *get_region_data(HRGN hrgn, HDC hdc_lptodp)
     RECT *rect;
     CGRect *cgrect;
 
-    if (!hrgn || !(size = GetRegionData(hrgn, 0, NULL))) return NULL;
+    if (!hrgn || !(size = NtGdiGetRegionData(hrgn, 0, NULL))) return NULL;
     if (sizeof(CGRect) > sizeof(RECT))
     {
         /* add extra size for CGRect array */
         int count = (size - sizeof(RGNDATAHEADER)) / sizeof(RECT);
         size += count * (sizeof(CGRect) - sizeof(RECT));
     }
-    if (!(data = HeapAlloc(GetProcessHeap(), 0, size))) return NULL;
-    if (!GetRegionData(hrgn, size, data))
+    if (!(data = malloc(size))) return NULL;
+    if (!NtGdiGetRegionData(hrgn, size, data))
     {
-        HeapFree(GetProcessHeap(), 0, data);
+        free(data);
         return NULL;
     }
 
@@ -1071,7 +1072,8 @@ RGNDATA *get_region_data(HRGN hrgn, HDC hdc_lptodp)
     cgrect = (CGRect *)data->Buffer;
     if (hdc_lptodp)  /* map to device coordinates */
     {
-        LPtoDP(hdc_lptodp, (POINT *)rect, data->rdh.nCount * 2);
+        NtGdiTransformPoints(hdc_lptodp, (POINT *)rect, (POINT *)rect,
+                             data->rdh.nCount * 2, NtGdiLPtoDP);
         for (i = 0; i < data->rdh.nCount; i++)
         {
             if (rect[i].right < rect[i].left)
@@ -1200,9 +1202,9 @@ static void move_window_bits(HWND hwnd, macdrv_window window, const RECT *old_re
     if (!window)
     {
         OffsetRect(&dst_rect, -new_window_rect->left, -new_window_rect->top);
-        parent = GetAncestor(hwnd, GA_PARENT);
-        hdc_src = GetDCEx(parent, 0, DCX_CACHE);
-        hdc_dst = GetDCEx(hwnd, 0, DCX_CACHE | DCX_WINDOW);
+        parent = NtUserGetAncestor(hwnd, GA_PARENT);
+        hdc_src = NtUserGetDCEx(parent, 0, DCX_CACHE);
+        hdc_dst = NtUserGetDCEx(hwnd, 0, DCX_CACHE | DCX_WINDOW);
     }
     else
     {
@@ -1210,22 +1212,22 @@ static void move_window_bits(HWND hwnd, macdrv_window window, const RECT *old_re
         /* make src rect relative to the old position of the window */
         OffsetRect(&src_rect, -old_client_rect->left, -old_client_rect->top);
         if (dst_rect.left == src_rect.left && dst_rect.top == src_rect.top) return;
-        hdc_src = hdc_dst = GetDCEx(hwnd, 0, DCX_CACHE);
+        hdc_src = hdc_dst = NtUserGetDCEx(hwnd, 0, DCX_CACHE);
     }
 
-    rgn = CreateRectRgnIndirect(&dst_rect);
-    SelectClipRgn(hdc_dst, rgn);
-    DeleteObject(rgn);
-    ExcludeUpdateRgn(hdc_dst, hwnd);
+    rgn = NtGdiCreateRectRgn(dst_rect.left, dst_rect.top, dst_rect.right, dst_rect.bottom);
+    NtGdiExtSelectClipRgn(hdc_dst, rgn, RGN_COPY);
+    NtGdiDeleteObjectApp(rgn);
+    NtUserExcludeUpdateRgn(hdc_dst, hwnd);
 
     TRACE("copying bits for win %p/%p %s -> %s\n", hwnd, window,
           wine_dbgstr_rect(&src_rect), wine_dbgstr_rect(&dst_rect));
-    BitBlt(hdc_dst, dst_rect.left, dst_rect.top,
-           dst_rect.right - dst_rect.left, dst_rect.bottom - dst_rect.top,
-           hdc_src, src_rect.left, src_rect.top, SRCCOPY);
+    NtGdiBitBlt(hdc_dst, dst_rect.left, dst_rect.top,
+                dst_rect.right - dst_rect.left, dst_rect.bottom - dst_rect.top,
+                hdc_src, src_rect.left, src_rect.top, SRCCOPY, 0, 0);
 
-    ReleaseDC(hwnd, hdc_dst);
-    if (hdc_src != hdc_dst) ReleaseDC(parent, hdc_src);
+    NtUserReleaseDC(hwnd, hdc_dst);
+    if (hdc_src != hdc_dst) NtUserReleaseDC(parent, hdc_src);
 }
 
 
@@ -1278,9 +1280,18 @@ static BOOL set_capture_window_for_move(HWND hwnd)
         macdrv_SetCapture(hwnd, GUI_INMOVESIZE);
 
         if (previous && previous != hwnd)
-            SendMessageW(previous, WM_CAPTURECHANGED, 0, (LPARAM)hwnd);
+            send_message(previous, WM_CAPTURECHANGED, 0, (LPARAM)hwnd);
     }
     return ret;
+}
+
+
+static HMONITOR monitor_from_point(POINT pt, UINT flags)
+{
+    RECT rect;
+
+    SetRect(&rect, pt.x, pt.y, pt.x + 1, pt.y + 1);
+    return NtUserMonitorFromRect(&rect, flags);
 }
 
 
@@ -1297,9 +1308,9 @@ static LRESULT move_window(HWND hwnd, WPARAM wparam)
     RECT origRect, movedRect, desktopRect;
     LONG hittest = (LONG)(wparam & 0x0f);
     POINT capturePoint;
-    LONG style = GetWindowLongW(hwnd, GWL_STYLE);
+    LONG style = NtUserGetWindowLongW(hwnd, GWL_STYLE);
     BOOL moved = FALSE;
-    DWORD dwPoint = GetMessagePos();
+    DWORD dwPoint = NtUserGetThreadInfo()->message_pos;
     INT captionHeight;
     HMONITOR mon = 0;
     MONITORINFO info;
@@ -1309,17 +1320,17 @@ static LRESULT move_window(HWND hwnd, WPARAM wparam)
 
     capturePoint.x = (short)LOWORD(dwPoint);
     capturePoint.y = (short)HIWORD(dwPoint);
-    ClipCursor(NULL);
+    NtUserClipCursor(NULL);
 
     TRACE("hwnd %p hittest %d, pos %d,%d\n", hwnd, hittest, capturePoint.x, capturePoint.y);
 
     origRect.left = origRect.right = origRect.top = origRect.bottom = 0;
-    if (AdjustWindowRectEx(&origRect, style, FALSE, GetWindowLongW(hwnd, GWL_EXSTYLE)))
+    if (AdjustWindowRectEx(&origRect, style, FALSE, NtUserGetWindowLongW(hwnd, GWL_EXSTYLE)))
         captionHeight = -origRect.top;
     else
         captionHeight = 0;
 
-    GetWindowRect(hwnd, &origRect);
+    NtUserGetWindowRect(hwnd, &origRect);
     movedRect = origRect;
 
     if (!hittest)
@@ -1330,30 +1341,30 @@ static LRESULT move_window(HWND hwnd, WPARAM wparam)
         /* Note: to be exactly centered we should take the different types
          * of border into account, but it shouldn't make more than a few pixels
          * of difference so let's not bother with that */
-        rect.top += GetSystemMetrics(SM_CYBORDER);
+        rect.top += NtUserGetSystemMetrics(SM_CYBORDER);
         if (style & WS_SYSMENU)
-            rect.left += GetSystemMetrics(SM_CXSIZE) + 1;
+            rect.left += NtUserGetSystemMetrics(SM_CXSIZE) + 1;
         if (style & WS_MINIMIZEBOX)
-            rect.right -= GetSystemMetrics(SM_CXSIZE) + 1;
+            rect.right -= NtUserGetSystemMetrics(SM_CXSIZE) + 1;
         if (style & WS_MAXIMIZEBOX)
-            rect.right -= GetSystemMetrics(SM_CXSIZE) + 1;
+            rect.right -= NtUserGetSystemMetrics(SM_CXSIZE) + 1;
         capturePoint.x = (rect.right + rect.left) / 2;
-        capturePoint.y = rect.top + GetSystemMetrics(SM_CYSIZE)/2;
+        capturePoint.y = rect.top + NtUserGetSystemMetrics(SM_CYSIZE)/2;
 
-        SetCursorPos(capturePoint.x, capturePoint.y);
-        SendMessageW(hwnd, WM_SETCURSOR, (WPARAM)hwnd, MAKELONG(HTCAPTION, WM_MOUSEMOVE));
+        NtUserSetCursorPos(capturePoint.x, capturePoint.y);
+        send_message(hwnd, WM_SETCURSOR, (WPARAM)hwnd, MAKELONG(HTCAPTION, WM_MOUSEMOVE));
     }
 
     desktopRect = rect_from_cgrect(macdrv_get_desktop_rect());
-    mon = MonitorFromPoint(capturePoint, MONITOR_DEFAULTTONEAREST);
+    mon = monitor_from_point(capturePoint, MONITOR_DEFAULTTONEAREST);
     info.cbSize = sizeof(info);
-    if (mon && !GetMonitorInfoW(mon, &info))
+    if (mon && !NtUserGetMonitorInfo(mon, &info))
         mon = 0;
 
     /* repaint the window before moving it around */
-    RedrawWindow(hwnd, NULL, 0, RDW_UPDATENOW | RDW_ALLCHILDREN);
+    NtUserRedrawWindow(hwnd, NULL, 0, RDW_UPDATENOW | RDW_ALLCHILDREN);
 
-    SendMessageW(hwnd, WM_ENTERSIZEMOVE, 0, 0);
+    send_message(hwnd, WM_ENTERSIZEMOVE, 0, 0);
     set_capture_window_for_move(hwnd);
 
     while(1)
@@ -1362,8 +1373,8 @@ static LRESULT move_window(HWND hwnd, WPARAM wparam)
         int dx = 0, dy = 0;
         HMONITOR newmon;
 
-        if (!GetMessageW(&msg, 0, 0, 0)) break;
-        if (CallMsgFilterW(&msg, MSGF_SIZE)) continue;
+        if (!NtUserGetMessage(&msg, 0, 0, 0)) break;
+        if (NtUserCallMsgFilter(&msg, MSGF_SIZE)) continue;
 
         /* Exit on button-up, Return, or Esc */
         if (msg.message == WM_LBUTTONUP ||
@@ -1372,8 +1383,8 @@ static LRESULT move_window(HWND hwnd, WPARAM wparam)
 
         if (msg.message != WM_KEYDOWN && msg.message != WM_MOUSEMOVE)
         {
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
+            NtUserTranslateMessage(&msg, 0);
+            NtUserDispatchMessage(&msg);
             continue;  /* We are not interested in other messages */
         }
 
@@ -1392,9 +1403,9 @@ static LRESULT move_window(HWND hwnd, WPARAM wparam)
         pt.y = max(pt.y, desktopRect.top);
         pt.y = min(pt.y, desktopRect.bottom - 1);
 
-        if ((newmon = MonitorFromPoint(pt, MONITOR_DEFAULTTONULL)) && newmon != mon)
+        if ((newmon = monitor_from_point(pt, MONITOR_DEFAULTTONULL)) && newmon != mon)
         {
-            if (GetMonitorInfoW(newmon, &info))
+            if (NtUserGetMonitorInfo(newmon, &info))
                 mon = newmon;
             else
                 mon = 0;
@@ -1440,29 +1451,29 @@ static LRESULT move_window(HWND hwnd, WPARAM wparam)
         {
             moved = TRUE;
 
-            if (msg.message == WM_KEYDOWN) SetCursorPos(pt.x, pt.y);
+            if (msg.message == WM_KEYDOWN) NtUserSetCursorPos(pt.x, pt.y);
             else
             {
                 OffsetRect(&movedRect, dx, dy);
                 capturePoint = pt;
 
-                SendMessageW(hwnd, WM_MOVING, 0, (LPARAM)&movedRect);
-                SetWindowPos(hwnd, 0, movedRect.left, movedRect.top, 0, 0,
-                             SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOZORDER);
+                send_message(hwnd, WM_MOVING, 0, (LPARAM)&movedRect);
+                NtUserSetWindowPos(hwnd, 0, movedRect.left, movedRect.top, 0, 0,
+                                   SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOZORDER);
             }
         }
     }
 
     set_capture_window_for_move(0);
 
-    SendMessageW(hwnd, WM_EXITSIZEMOVE, 0, 0);
-    SendMessageW(hwnd, WM_SETVISIBLE, TRUE, 0L);
+    send_message(hwnd, WM_EXITSIZEMOVE, 0, 0);
+    send_message(hwnd, WM_SETVISIBLE, TRUE, 0L);
 
     /* if the move is canceled, restore the previous position */
     if (moved && msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE)
     {
-        SetWindowPos(hwnd, 0, origRect.left, origRect.top, 0, 0,
-                     SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOZORDER);
+        NtUserSetWindowPos(hwnd, 0, origRect.left, origRect.top, 0, 0,
+                           SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOZORDER);
     }
 
     return 0;
@@ -1479,16 +1490,16 @@ static void perform_window_command(HWND hwnd, DWORD style_any, DWORD style_none,
     TRACE("win %p style_any 0x%08x style_none 0x%08x command 0x%04x hittest 0x%04x\n",
           hwnd, style_any, style_none, command, hittest);
 
-    style = GetWindowLongW(hwnd, GWL_STYLE);
+    style = NtUserGetWindowLongW(hwnd, GWL_STYLE);
     if ((style_any && !(style & style_any)) || (style & (WS_DISABLED | style_none)))
     {
         TRACE("not changing win %p style 0x%08x\n", hwnd, style);
         return;
     }
 
-    if (GetActiveWindow() != hwnd)
+    if (get_active_window() != hwnd)
     {
-        LRESULT ma = SendMessageW(hwnd, WM_MOUSEACTIVATE, (WPARAM)GetAncestor(hwnd, GA_ROOT),
+        LRESULT ma = send_message(hwnd, WM_MOUSEACTIVATE, (WPARAM)NtUserGetAncestor(hwnd, GA_ROOT),
                                   MAKELPARAM(hittest, WM_NCLBUTTONDOWN));
         switch (ma)
         {
@@ -1500,7 +1511,7 @@ static void perform_window_command(HWND hwnd, DWORD style_any, DWORD style_none,
                 break;
             case MA_ACTIVATE:
             case 0:
-                SetActiveWindow(hwnd);
+                NtUserSetActiveWindow(hwnd);
                 break;
             default:
                 WARN("unknown WM_MOUSEACTIVATE code %ld\n", ma);
@@ -1509,7 +1520,7 @@ static void perform_window_command(HWND hwnd, DWORD style_any, DWORD style_none,
     }
 
     TRACE("changing win %p\n", hwnd);
-    PostMessageW(hwnd, WM_SYSCOMMAND, command, 0);
+    NtUserPostMessage(hwnd, WM_SYSCOMMAND, command, 0);
 }
 
 
@@ -1557,11 +1568,9 @@ BOOL macdrv_CreateDesktopWindow(HWND hwnd)
 }
 
 
-static WNDPROC desktop_orig_wndproc;
-
 #define WM_WINE_NOTIFY_ACTIVITY WM_USER
 
-static LRESULT CALLBACK desktop_wndproc_wrapper( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
+LRESULT macdrv_DesktopWindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     switch (msg)
     {
@@ -1580,7 +1589,7 @@ static LRESULT CALLBACK desktop_wndproc_wrapper( HWND hwnd, UINT msg, WPARAM wp,
         break;
     }
     }
-    return desktop_orig_wndproc( hwnd, msg, wp, lp );
+    return NtUserMessageCall(hwnd, msg, wp, lp, 0, NtUserDefWindowProc, FALSE);
 }
 
 /**********************************************************************
@@ -1588,11 +1597,8 @@ static LRESULT CALLBACK desktop_wndproc_wrapper( HWND hwnd, UINT msg, WPARAM wp,
  */
 BOOL macdrv_CreateWindow(HWND hwnd)
 {
-    if (hwnd == GetDesktopWindow())
+    if (hwnd == NtUserGetDesktopWindow())
     {
-        desktop_orig_wndproc = (WNDPROC)SetWindowLongPtrW( GetDesktopWindow(),
-            GWLP_WNDPROC, (LONG_PTR)desktop_wndproc_wrapper );
-
         macdrv_init_clipboard();
     }
     return TRUE;
@@ -1610,7 +1616,7 @@ void macdrv_DestroyWindow(HWND hwnd)
 
     if (!(data = get_win_data(hwnd))) return;
 
-    if (hwnd == GetCapture()) macdrv_SetCapture(0, 0);
+    if (hwnd == get_capture()) macdrv_SetCapture(0, 0);
     if (data->drag_event) SetEvent(data->drag_event);
 
     destroy_cocoa_window(data);
@@ -1619,7 +1625,7 @@ void macdrv_DestroyWindow(HWND hwnd)
 
     CFDictionaryRemoveValue(win_datas, hwnd);
     release_win_data(data);
-    HeapFree(GetProcessHeap(), 0, data);
+    free(data);
 }
 
 
@@ -1660,7 +1666,7 @@ void macdrv_SetLayeredWindowAttributes(HWND hwnd, COLORREF key, BYTE alpha, DWOR
         {
             sync_window_opacity(data, key, alpha, FALSE, flags);
             /* since layered attributes are now set, can now show the window */
-            if ((GetWindowLongW(hwnd, GWL_STYLE) & WS_VISIBLE) && !data->on_screen)
+            if ((NtUserGetWindowLongW(hwnd, GWL_STYLE) & WS_VISIBLE) && !data->on_screen)
                 show_window(data);
         }
         release_win_data(data);
@@ -1682,9 +1688,9 @@ void macdrv_SetParent(HWND hwnd, HWND parent, HWND old_parent)
     if (parent == old_parent) return;
     if (!(data = get_win_data(hwnd))) return;
 
-    if (parent != GetDesktopWindow()) /* a child window */
+    if (parent != NtUserGetDesktopWindow()) /* a child window */
     {
-        if (old_parent == GetDesktopWindow())
+        if (old_parent == NtUserGetDesktopWindow())
         {
             /* destroy the old Mac window */
             destroy_cocoa_window(data);
@@ -1722,9 +1728,9 @@ void macdrv_SetWindowRgn(HWND hwnd, HRGN hrgn, BOOL redraw)
     {
         DWORD procid;
 
-        GetWindowThreadProcessId(hwnd, &procid);
+        NtUserGetWindowThread(hwnd, &procid);
         if (procid != GetCurrentProcessId())
-            SendMessageW(hwnd, WM_MACDRV_SET_WIN_REGION, 0, 0);
+            send_message(hwnd, WM_MACDRV_SET_WIN_REGION, 0, 0);
     }
 }
 
@@ -1740,7 +1746,7 @@ void macdrv_SetWindowStyle(HWND hwnd, INT offset, STYLESTRUCT *style)
 
     TRACE("hwnd %p offset %d styleOld 0x%08x styleNew 0x%08x\n", hwnd, offset, style->styleOld, style->styleNew);
 
-    if (hwnd == GetDesktopWindow()) return;
+    if (hwnd == NtUserGetDesktopWindow()) return;
     if (!(data = get_win_data(hwnd))) return;
 
     if (data->cocoa_window)
@@ -1792,7 +1798,7 @@ UINT macdrv_ShowWindow(HWND hwnd, INT cmd, RECT *rect, UINT swp)
           hwnd, data ? data->cocoa_window : NULL, cmd, wine_dbgstr_rect(rect), swp);
 
     if (!data || !data->cocoa_window) goto done;
-    if (GetWindowLongW(hwnd, GWL_STYLE) & WS_MINIMIZE)
+    if (NtUserGetWindowLongW(hwnd, GWL_STYLE) & WS_MINIMIZE)
     {
         if (rect->left != -32000 || rect->top != -32000)
         {
@@ -1843,7 +1849,7 @@ LRESULT macdrv_SysCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
     /* prevent a simple ALT press+release from activating the system menu,
        as that can get confusing */
     if (command == SC_KEYMENU && !(WCHAR)lparam && !GetMenu(hwnd) &&
-        (GetWindowLongW(hwnd, GWL_STYLE) & WS_SYSMENU))
+        (NtUserGetWindowLongW(hwnd, GWL_STYLE) & WS_SYSMENU))
     {
         TRACE("ignoring SC_KEYMENU wp %lx lp %lx\n", wparam, lparam);
         ret = 0;
@@ -1924,26 +1930,27 @@ BOOL macdrv_UpdateLayeredWindow(HWND hwnd, const UPDATELAYEREDWINDOWINFO *info,
 
     dst_bits = surface->funcs->get_info(surface, bmi);
 
-    if (!(dib = CreateDIBSection(info->hdcDst, bmi, DIB_RGB_COLORS, &src_bits, NULL, 0))) goto done;
-    if (!(hdc = CreateCompatibleDC(0))) goto done;
+    if (!(dib = NtGdiCreateDIBSection(info->hdcDst, NULL, 0, bmi, DIB_RGB_COLORS,
+                                      0, 0, 0, &src_bits))) goto done;
+    if (!(hdc = NtGdiCreateCompatibleDC(0))) goto done;
 
-    SelectObject(hdc, dib);
+    NtGdiSelectBitmap(hdc, dib);
     if (info->prcDirty)
     {
-        IntersectRect(&rect, &rect, info->prcDirty);
+        intersect_rect(&rect, &rect, info->prcDirty);
         surface->funcs->lock(surface);
         memcpy(src_bits, dst_bits, bmi->bmiHeader.biSizeImage);
         surface->funcs->unlock(surface);
-        PatBlt(hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, BLACKNESS);
+        NtGdiPatBlt(hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, BLACKNESS);
     }
     src_rect = rect;
     if (info->pptSrc) OffsetRect( &src_rect, info->pptSrc->x, info->pptSrc->y );
-    DPtoLP( info->hdcSrc, (POINT *)&src_rect, 2 );
+    NtGdiTransformPoints(info->hdcSrc, (POINT *)&src_rect, (POINT *)&src_rect, 2, NtGdiDPtoLP);
 
-    if (!(ret = GdiAlphaBlend(hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
-                              info->hdcSrc, src_rect.left, src_rect.top,
-                              src_rect.right - src_rect.left, src_rect.bottom - src_rect.top,
-                              blend)))
+    if (!(ret = NtGdiAlphaBlend(hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
+                                info->hdcSrc, src_rect.left, src_rect.top,
+                                src_rect.right - src_rect.left, src_rect.bottom - src_rect.top,
+                                blend, 0)))
         goto done;
 
     if ((data = get_win_data(hwnd)))
@@ -1965,8 +1972,8 @@ BOOL macdrv_UpdateLayeredWindow(HWND hwnd, const UPDATELAYEREDWINDOWINFO *info,
 
 done:
     window_surface_release(surface);
-    if (hdc) DeleteDC(hdc);
-    if (dib) DeleteObject(dib);
+    if (hdc) NtGdiDeleteObjectApp(hdc);
+    if (dib) NtGdiDeleteObjectApp(dib);
     return ret;
 }
 
@@ -1990,23 +1997,23 @@ LRESULT macdrv_WindowMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         return 0;
     case WM_MACDRV_UPDATE_DESKTOP_RECT:
-        if (hwnd == GetDesktopWindow())
+        if (hwnd == NtUserGetDesktopWindow())
         {
             CGRect new_desktop_rect;
             RECT current_desktop_rect;
 
             macdrv_reset_device_metrics();
             new_desktop_rect = macdrv_get_desktop_rect();
-            if (!GetWindowRect(hwnd, &current_desktop_rect) ||
+            if (!NtUserGetWindowRect(hwnd, &current_desktop_rect) ||
                 !CGRectEqualToRect(cgrect_from_rect(current_desktop_rect), new_desktop_rect))
             {
-                SendMessageTimeoutW(HWND_BROADCAST, WM_MACDRV_RESET_DEVICE_METRICS, 0, 0,
-                                    SMTO_ABORTIFHUNG, 2000, NULL);
-                SetWindowPos(hwnd, 0, CGRectGetMinX(new_desktop_rect), CGRectGetMinY(new_desktop_rect),
-                             CGRectGetWidth(new_desktop_rect), CGRectGetHeight(new_desktop_rect),
-                             SWP_NOZORDER | SWP_NOACTIVATE | SWP_DEFERERASE);
-                SendMessageTimeoutW(HWND_BROADCAST, WM_MACDRV_DISPLAYCHANGE, wp, lp,
-                                    SMTO_ABORTIFHUNG, 2000, NULL);
+                send_message_timeout(HWND_BROADCAST, WM_MACDRV_RESET_DEVICE_METRICS, 0, 0,
+                                     SMTO_ABORTIFHUNG, 2000, NULL);
+                NtUserSetWindowPos(hwnd, 0, CGRectGetMinX(new_desktop_rect), CGRectGetMinY(new_desktop_rect),
+                                   CGRectGetWidth(new_desktop_rect), CGRectGetHeight(new_desktop_rect),
+                                   SWP_NOZORDER | SWP_NOACTIVATE | SWP_DEFERERASE);
+                send_message_timeout(HWND_BROADCAST, WM_MACDRV_DISPLAYCHANGE, wp, lp,
+                                     SMTO_ABORTIFHUNG, 2000, NULL);
             }
         }
         return 0;
@@ -2015,7 +2022,7 @@ LRESULT macdrv_WindowMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_MACDRV_DISPLAYCHANGE:
         macdrv_reassert_window_position(hwnd);
-        SendMessageW(hwnd, WM_DISPLAYCHANGE, wp, lp);
+        send_message(hwnd, WM_DISPLAYCHANGE, wp, lp);
         return 0;
     case WM_MACDRV_ACTIVATE_ON_FOLLOWING_FOCUS:
         activate_on_following_focus();
@@ -2033,7 +2040,7 @@ static inline RECT get_surface_rect(const RECT *visible_rect)
     RECT rect;
     RECT desktop_rect = rect_from_cgrect(macdrv_get_desktop_rect());
 
-    IntersectRect(&rect, visible_rect, &desktop_rect);
+    intersect_rect(&rect, visible_rect, &desktop_rect);
     OffsetRect(&rect, -visible_rect->left, -visible_rect->top);
     rect.left &= ~127;
     rect.top  &= ~127;
@@ -2051,7 +2058,7 @@ BOOL macdrv_WindowPosChanging(HWND hwnd, HWND insert_after, UINT swp_flags,
                               RECT *visible_rect, struct window_surface **surface)
 {
     struct macdrv_win_data *data = get_win_data(hwnd);
-    DWORD style = GetWindowLongW(hwnd, GWL_STYLE);
+    DWORD style = NtUserGetWindowLongW(hwnd, GWL_STYLE);
     RECT surface_rect;
 
     TRACE("%p after %p swp %04x window %s client %s visible %s surface %p\n", hwnd, insert_after,
@@ -2105,7 +2112,7 @@ void macdrv_WindowPosChanged(HWND hwnd, HWND insert_after, UINT swp_flags,
 {
     struct macdrv_thread_data *thread_data;
     struct macdrv_win_data *data;
-    DWORD new_style = GetWindowLongW(hwnd, GWL_STYLE);
+    DWORD new_style = NtUserGetWindowLongW(hwnd, GWL_STYLE);
     RECT old_window_rect, old_whole_rect, old_client_rect;
 
     if (!(data = get_win_data(hwnd))) return;
@@ -2216,7 +2223,7 @@ void macdrv_WindowPosChanged(HWND hwnd, HWND insert_after, UINT swp_flags,
 
             /* layered windows are not shown until their attributes are set */
             if (!data->on_screen &&
-                (data->layered || !(GetWindowLongW( hwnd, GWL_EXSTYLE ) & WS_EX_LAYERED)))
+                (data->layered || !(NtUserGetWindowLongW( hwnd, GWL_EXSTYLE ) & WS_EX_LAYERED)))
                 show_window(data);
         }
         else if (!data->on_screen)
@@ -2237,16 +2244,17 @@ void macdrv_window_close_requested(HWND hwnd)
 {
     HMENU sysmenu;
 
-    if (GetClassLongW(hwnd, GCL_STYLE) & CS_NOCLOSE)
+    if (NtUserGetClassLongW(hwnd, GCL_STYLE) & CS_NOCLOSE)
     {
         TRACE("not closing win %p class style CS_NOCLOSE\n", hwnd);
         return;
     }
 
-    sysmenu = GetSystemMenu(hwnd, FALSE);
+    sysmenu = NtUserGetSystemMenu(hwnd, FALSE);
     if (sysmenu)
     {
-        UINT state = GetMenuState(sysmenu, SC_CLOSE, MF_BYCOMMAND);
+        UINT state = NtUserThunkedMenuItemInfo(sysmenu, SC_CLOSE, MF_BYCOMMAND,
+                                               NtUserGetMenuState, NULL, NULL);
         if (state == 0xFFFFFFFF || (state & (MF_DISABLED | MF_GRAYED)))
         {
             TRACE("not closing win %p menu state 0x%08x\n", hwnd, state);
@@ -2282,7 +2290,7 @@ void macdrv_window_frame_changed(HWND hwnd, const macdrv_event *event)
 
     /* Get geometry */
 
-    parent = GetAncestor(hwnd, GA_PARENT);
+    parent = NtUserGetAncestor(hwnd, GA_PARENT);
 
     TRACE("win %p/%p new Cocoa frame %s fullscreen %d in_resize %d\n", hwnd, data->cocoa_window,
           wine_dbgstr_cgrect(event->window_frame_changed.frame),
@@ -2290,7 +2298,7 @@ void macdrv_window_frame_changed(HWND hwnd, const macdrv_event *event)
 
     rect = rect_from_cgrect(event->window_frame_changed.frame);
     macdrv_mac_to_window_rect(data, &rect);
-    MapWindowPoints(0, parent, (POINT *)&rect, 2);
+    NtUserMapWindowPoints(0, parent, (POINT *)&rect, 2);
 
     width = rect.right - rect.left;
     height = rect.bottom - rect.top;
@@ -2318,10 +2326,10 @@ void macdrv_window_frame_changed(HWND hwnd, const macdrv_event *event)
     {
         int send_sizemove = !event->window_frame_changed.in_resize && !being_dragged && !event->window_frame_changed.skip_size_move_loop;
         if (send_sizemove)
-            SendMessageW(hwnd, WM_ENTERSIZEMOVE, 0, 0);
-        SetWindowPos(hwnd, 0, rect.left, rect.top, width, height, flags);
+            send_message(hwnd, WM_ENTERSIZEMOVE, 0, 0);
+        NtUserSetWindowPos(hwnd, 0, rect.left, rect.top, width, height, flags);
         if (send_sizemove)
-            SendMessageW(hwnd, WM_EXITSIZEMOVE, 0, 0);
+            send_message(hwnd, WM_EXITSIZEMOVE, 0, 0);
     }
 }
 
@@ -2333,25 +2341,25 @@ void macdrv_window_frame_changed(HWND hwnd, const macdrv_event *event)
  */
 void macdrv_window_got_focus(HWND hwnd, const macdrv_event *event)
 {
-    LONG style = GetWindowLongW(hwnd, GWL_STYLE);
+    LONG style = NtUserGetWindowLongW(hwnd, GWL_STYLE);
 
     if (!hwnd) return;
 
     TRACE("win %p/%p serial %lu enabled %d visible %d style %08x focus %p active %p fg %p\n",
-          hwnd, event->window, event->window_got_focus.serial, IsWindowEnabled(hwnd),
-          IsWindowVisible(hwnd), style, GetFocus(), GetActiveWindow(), GetForegroundWindow());
+          hwnd, event->window, event->window_got_focus.serial, NtUserIsWindowEnabled(hwnd),
+          NtUserIsWindowVisible(hwnd), style, get_focus(), get_active_window(), NtUserGetForegroundWindow());
 
     if (can_window_become_foreground(hwnd) && !(style & WS_MINIMIZE))
     {
         /* simulate a mouse click on the menu to find out
          * whether the window wants to be activated */
-        LRESULT ma = SendMessageW(hwnd, WM_MOUSEACTIVATE,
-                                  (WPARAM)GetAncestor(hwnd, GA_ROOT),
+        LRESULT ma = send_message(hwnd, WM_MOUSEACTIVATE,
+                                  (WPARAM)NtUserGetAncestor(hwnd, GA_ROOT),
                                   MAKELONG(HTMENU, WM_LBUTTONDOWN));
         if (ma != MA_NOACTIVATEANDEAT && ma != MA_NOACTIVATE)
         {
             TRACE("setting foreground window to %p\n", hwnd);
-            SetForegroundWindow(hwnd);
+            NtUserSetForegroundWindow(hwnd, FALSE);
             return;
         }
     }
@@ -2370,13 +2378,13 @@ void macdrv_window_lost_focus(HWND hwnd, const macdrv_event *event)
 {
     if (!hwnd) return;
 
-    TRACE("win %p/%p fg %p\n", hwnd, event->window, GetForegroundWindow());
+    TRACE("win %p/%p fg %p\n", hwnd, event->window, NtUserGetForegroundWindow());
 
-    if (hwnd == GetForegroundWindow())
+    if (hwnd == NtUserGetForegroundWindow())
     {
-        SendMessageW(hwnd, WM_CANCELMODE, 0, 0);
-        if (hwnd == GetForegroundWindow())
-            SetForegroundWindow(GetDesktopWindow());
+        send_message(hwnd, WM_CANCELMODE, 0, 0);
+        if (hwnd == NtUserGetForegroundWindow())
+            NtUserSetForegroundWindow(NtUserGetDesktopWindow(), FALSE);
     }
 }
 
@@ -2400,12 +2408,12 @@ void macdrv_app_activated(void)
  */
 void macdrv_app_deactivated(void)
 {
-    ClipCursor(NULL);
+    NtUserClipCursor(NULL);
 
-    if (GetActiveWindow() == GetForegroundWindow())
+    if (get_active_window() == NtUserGetForegroundWindow())
     {
         TRACE("setting fg to desktop\n");
-        SetForegroundWindow(GetDesktopWindow());
+        NtUserSetForegroundWindow(NtUserGetDesktopWindow(), FALSE);
     }
 }
 
@@ -2443,7 +2451,7 @@ void macdrv_window_did_minimize(HWND hwnd)
 
     /* If all our windows are minimized, disable cursor clipping. */
     if (!macdrv_is_any_wine_window_visible())
-        ClipCursor(NULL);
+        NtUserClipCursor(NULL);
 }
 
 
@@ -2462,15 +2470,15 @@ void macdrv_window_did_unminimize(HWND hwnd)
     if (!(data = get_win_data(hwnd))) return;
     if (!data->minimized) goto done;
 
-    style = GetWindowLongW(hwnd, GWL_STYLE);
+    style = NtUserGetWindowLongW(hwnd, GWL_STYLE);
 
     data->minimized = FALSE;
     if ((style & (WS_MINIMIZE | WS_VISIBLE)) == (WS_MINIMIZE | WS_VISIBLE))
     {
         TRACE("restoring win %p/%p\n", hwnd, data->cocoa_window);
         release_win_data(data);
-        SetActiveWindow(hwnd);
-        SendMessageW(hwnd, WM_SYSCOMMAND, SC_RESTORE, 0);
+        NtUserSetActiveWindow(hwnd);
+        send_message(hwnd, WM_SYSCOMMAND, SC_RESTORE, 0);
         return;
     }
 
@@ -2489,7 +2497,7 @@ done:
 void macdrv_window_brought_forward(HWND hwnd)
 {
     TRACE("win %p\n", hwnd);
-    SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    NtUserSetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 }
 
 
@@ -2501,7 +2509,7 @@ void macdrv_window_brought_forward(HWND hwnd)
 void macdrv_window_resize_ended(HWND hwnd)
 {
     TRACE("hwnd %p\n", hwnd);
-    SendMessageW(hwnd, WM_EXITSIZEMOVE, 0, 0);
+    send_message(hwnd, WM_EXITSIZEMOVE, 0, 0);
 }
 
 
@@ -2515,21 +2523,21 @@ void macdrv_window_restore_requested(HWND hwnd, const macdrv_event *event)
 {
     if (event->window_restore_requested.keep_frame && hwnd)
     {
-        DWORD style = GetWindowLongW(hwnd, GWL_STYLE);
+        DWORD style = NtUserGetWindowLongW(hwnd, GWL_STYLE);
         struct macdrv_win_data *data;
 
         if ((style & WS_MAXIMIZE) && (style & WS_VISIBLE) && (data = get_win_data(hwnd)))
         {
             RECT rect;
-            HWND parent = GetAncestor(hwnd, GA_PARENT);
+            HWND parent = NtUserGetAncestor(hwnd, GA_PARENT);
 
             rect = rect_from_cgrect(event->window_restore_requested.frame);
             macdrv_mac_to_window_rect(data, &rect);
-            MapWindowPoints(0, parent, (POINT *)&rect, 2);
+            NtUserMapWindowPoints(0, parent, (POINT *)&rect, 2);
 
             release_win_data(data);
 
-            SetInternalWindowPos(hwnd, SW_SHOW, &rect, NULL);
+            NtUserSetInternalWindowPos(hwnd, SW_SHOW, &rect, NULL);
         }
     }
 
@@ -2544,7 +2552,7 @@ void macdrv_window_restore_requested(HWND hwnd, const macdrv_event *event)
  */
 void macdrv_window_drag_begin(HWND hwnd, const macdrv_event *event)
 {
-    DWORD style = GetWindowLongW(hwnd, GWL_STYLE);
+    DWORD style = NtUserGetWindowLongW(hwnd, GWL_STYLE);
     struct macdrv_win_data *data;
     HANDLE drag_event = NULL;
     BOOL loop = TRUE;
@@ -2564,27 +2572,29 @@ void macdrv_window_drag_begin(HWND hwnd, const macdrv_event *event)
     data->drag_event = drag_event;
     release_win_data(data);
 
-    if (!event->window_drag_begin.no_activate && can_window_become_foreground(hwnd) && GetForegroundWindow() != hwnd)
+    if (!event->window_drag_begin.no_activate && can_window_become_foreground(hwnd) &&
+        NtUserGetForegroundWindow() != hwnd)
     {
         /* ask whether the window wants to be activated */
-        LRESULT ma = SendMessageW(hwnd, WM_MOUSEACTIVATE, (WPARAM)GetAncestor(hwnd, GA_ROOT),
+        LRESULT ma = send_message(hwnd, WM_MOUSEACTIVATE, (WPARAM)NtUserGetAncestor(hwnd, GA_ROOT),
                                   MAKELONG(HTCAPTION, WM_LBUTTONDOWN));
         if (ma != MA_NOACTIVATEANDEAT && ma != MA_NOACTIVATE)
         {
             TRACE("setting foreground window to %p\n", hwnd);
-            SetForegroundWindow(hwnd);
+            NtUserSetForegroundWindow(hwnd, FALSE);
         }
     }
 
-    ClipCursor(NULL);
-    SendMessageW(hwnd, WM_ENTERSIZEMOVE, 0, 0);
-    ReleaseCapture();
+    NtUserClipCursor(NULL);
+    send_message(hwnd, WM_ENTERSIZEMOVE, 0, 0);
+    NtUserReleaseCapture();
 
     while (loop)
     {
-        while (!PeekMessageW(&msg, 0, 0, 0, PM_REMOVE))
+        while (!NtUserPeekMessage(&msg, 0, 0, 0, PM_REMOVE))
         {
-            DWORD result = MsgWaitForMultipleObjectsEx(1, &drag_event, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            DWORD result = NtUserMsgWaitForMultipleObjectsEx(1, &drag_event, INFINITE, QS_ALLINPUT,
+                                                             MWMO_INPUTAVAILABLE);
             if (result == WAIT_OBJECT_0)
             {
                 loop = FALSE;
@@ -2597,15 +2607,15 @@ void macdrv_window_drag_begin(HWND hwnd, const macdrv_event *event)
         if (msg.message == WM_QUIT)
             break;
 
-        if (!CallMsgFilterW(&msg, MSGF_SIZE) && msg.message != WM_KEYDOWN &&
+        if (!NtUserCallMsgFilter(&msg, MSGF_SIZE) && msg.message != WM_KEYDOWN &&
             msg.message != WM_MOUSEMOVE && msg.message != WM_LBUTTONDOWN && msg.message != WM_LBUTTONUP)
         {
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
+            NtUserTranslateMessage(&msg, 0);
+            NtUserDispatchMessage(&msg);
         }
     }
 
-    SendMessageW(hwnd, WM_EXITSIZEMOVE, 0, 0);
+    send_message(hwnd, WM_EXITSIZEMOVE, 0, 0);
 
     TRACE("done\n");
 
@@ -2669,14 +2679,13 @@ static BOOL CALLBACK get_process_windows(HWND hwnd, LPARAM lp)
     struct quit_info *qi = (struct quit_info*)lp;
     DWORD pid;
 
-    GetWindowThreadProcessId(hwnd, &pid);
+    NtUserGetWindowThread(hwnd, &pid);
     if (pid == GetCurrentProcessId())
     {
         if (qi->count >= qi->capacity)
         {
             UINT new_cap = qi->capacity * 2;
-            HWND *new_wins = HeapReAlloc(GetProcessHeap(), 0, qi->wins,
-                                         new_cap * sizeof(*qi->wins));
+            HWND *new_wins = realloc(qi->wins, new_cap * sizeof(*qi->wins));
             if (!new_wins) return FALSE;
             qi->wins = new_wins;
             qi->capacity = new_cap;
@@ -2755,8 +2764,8 @@ static void CALLBACK quit_callback(HWND hwnd, UINT msg, ULONG_PTR data, LRESULT 
             if (qi->result)
                 TerminateProcess(GetCurrentProcess(), 0);
 
-            HeapFree(GetProcessHeap(), 0, qi->wins);
-            HeapFree(GetProcessHeap(), 0, qi);
+            free(qi->wins);
+            free(qi);
         }
     }
 }
@@ -2774,12 +2783,12 @@ void macdrv_app_quit_requested(const macdrv_event *event)
 
     TRACE("reason %d\n", event->app_quit_requested.reason);
 
-    qi = HeapAlloc(GetProcessHeap(), 0, sizeof(*qi));
+    qi = malloc(sizeof(*qi));
     if (!qi)
         goto fail;
 
     qi->capacity = 32;
-    qi->wins = HeapAlloc(GetProcessHeap(), 0, qi->capacity * sizeof(*qi->wins));
+    qi->wins = malloc(qi->capacity * sizeof(*qi->wins));
     qi->count = qi->done = 0;
 
     if (!qi->wins || !EnumWindows(get_process_windows, (LPARAM)qi))
@@ -2825,8 +2834,8 @@ fail:
     WARN("failed to allocate window list\n");
     if (qi)
     {
-        HeapFree(GetProcessHeap(), 0, qi->wins);
-        HeapFree(GetProcessHeap(), 0, qi);
+        free(qi->wins);
+        free(qi);
     }
     macdrv_quit_reply(FALSE);
 }
@@ -2860,9 +2869,9 @@ BOOL query_resize_size(HWND hwnd, macdrv_query *query)
     else
         corner = WMSZ_BOTTOMRIGHT;
 
-    if (SendMessageW(hwnd, WM_SIZING, corner, (LPARAM)&rect))
+    if (send_message(hwnd, WM_SIZING, corner, (LPARAM)&rect))
     {
-        macdrv_window_to_mac_rect(data, GetWindowLongW(hwnd, GWL_STYLE), &rect,
+        macdrv_window_to_mac_rect(data, NtUserGetWindowLongW(hwnd, GWL_STYLE), &rect,
                                   &data->window_rect, &data->client_rect);
         query->resize_size.rect = cgrect_from_rect(rect);
         ret = TRUE;
@@ -2882,10 +2891,10 @@ BOOL query_resize_start(HWND hwnd)
 {
     TRACE("hwnd %p\n", hwnd);
 
-    ClipCursor(NULL);
+    NtUserClipCursor(NULL);
 
     sync_window_min_max_info(hwnd);
-    SendMessageW(hwnd, WM_ENTERSIZEMOVE, 0, 0);
+    send_message(hwnd, WM_ENTERSIZEMOVE, 0, 0);
 
     return TRUE;
 }
