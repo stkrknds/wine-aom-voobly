@@ -136,6 +136,11 @@ MAKE_FUNCPTR(gnutls_x509_privkey_deinit);
 #define GNUTLS_ALPN_SERVER_PRECEDENCE (1<<1)
 #endif
 
+static inline gnutls_session_t session_from_handle(UINT64 handle)
+{
+   return (gnutls_session_t)(ULONG_PTR)handle;
+}
+
 static int compat_cipher_get_block_size(gnutls_cipher_algorithm_t cipher)
 {
     switch(cipher) {
@@ -369,7 +374,7 @@ static char *get_buffer(const struct schan_transport *t, struct schan_buffers *s
 static ssize_t pull_adapter(gnutls_transport_ptr_t transport, void *buff, size_t buff_len)
 {
     struct schan_transport *t = (struct schan_transport*)transport;
-    gnutls_session_t s = (gnutls_session_t)t->session;
+    gnutls_session_t s = session_from_handle(t->session);
     SIZE_T len = buff_len;
     char *b;
 
@@ -390,7 +395,7 @@ static ssize_t pull_adapter(gnutls_transport_ptr_t transport, void *buff, size_t
 static ssize_t push_adapter(gnutls_transport_ptr_t transport, const void *buff, size_t buff_len)
 {
     struct schan_transport *t = (struct schan_transport*)transport;
-    gnutls_session_t s = (gnutls_session_t)t->session;
+    gnutls_session_t s = session_from_handle(t->session);
     SIZE_T len = buff_len;
     char *b;
 
@@ -475,18 +480,20 @@ static NTSTATUS schan_create_session( void *args )
 {
     const struct create_session_params *params = args;
     schan_credentials *cred = params->cred;
-    gnutls_session_t *s = (gnutls_session_t*)&params->transport->session;
     char priority[128] = "NORMAL:%LATEST_RECORD_VERSION", *p;
     BOOL using_vers_all = FALSE, disabled;
     unsigned int i, flags = (cred->credential_use == SECPKG_CRED_INBOUND) ? GNUTLS_SERVER : GNUTLS_CLIENT;
+    gnutls_session_t s;
     int err;
+
+    *params->session = 0;
 
     if (cred->enabled_protocols & (SP_PROT_DTLS1_0_CLIENT | SP_PROT_DTLS1_2_CLIENT))
     {
         flags |= GNUTLS_DATAGRAM | GNUTLS_NONBLOCK;
     }
 
-    err = pgnutls_init(s, flags);
+    err = pgnutls_init(&s, flags);
     if (err != GNUTLS_E_SUCCESS)
     {
         pgnutls_perror(err);
@@ -519,27 +526,28 @@ static NTSTATUS schan_create_session( void *args )
     }
 
     TRACE("Using %s priority\n", debugstr_a(priority));
-    err = pgnutls_priority_set_direct(*s, priority, NULL);
+    err = pgnutls_priority_set_direct(s, priority, NULL);
     if (err != GNUTLS_E_SUCCESS)
     {
         pgnutls_perror(err);
-        pgnutls_deinit(*s);
+        pgnutls_deinit(s);
         return STATUS_INTERNAL_ERROR;
     }
 
-    err = pgnutls_credentials_set(*s, GNUTLS_CRD_CERTIFICATE,
+    err = pgnutls_credentials_set(s, GNUTLS_CRD_CERTIFICATE,
                                   (gnutls_certificate_credentials_t)cred->credentials);
     if (err != GNUTLS_E_SUCCESS)
     {
         pgnutls_perror(err);
-        pgnutls_deinit(*s);
+        pgnutls_deinit(s);
         return STATUS_INTERNAL_ERROR;
     }
 
-    pgnutls_transport_set_pull_function(*s, pull_adapter);
-    if (flags & GNUTLS_DATAGRAM) pgnutls_transport_set_pull_timeout_function(*s, pull_timeout);
-    pgnutls_transport_set_push_function(*s, push_adapter);
-    pgnutls_transport_set_ptr(*s, (gnutls_transport_ptr_t)params->transport);
+    pgnutls_transport_set_pull_function(s, pull_adapter);
+    if (flags & GNUTLS_DATAGRAM) pgnutls_transport_set_pull_timeout_function(s, pull_timeout);
+    pgnutls_transport_set_push_function(s, push_adapter);
+    pgnutls_transport_set_ptr(s, (gnutls_transport_ptr_t)params->transport);
+    *params->session = (ULONG_PTR)s;
 
     return STATUS_SUCCESS;
 }
@@ -547,7 +555,7 @@ static NTSTATUS schan_create_session( void *args )
 static NTSTATUS schan_dispose_session( void *args )
 {
     const struct session_params *params = args;
-    gnutls_session_t s = (gnutls_session_t)params->session;
+    gnutls_session_t s = session_from_handle(params->session);
     pgnutls_deinit(s);
     return STATUS_SUCCESS;
 }
@@ -555,7 +563,7 @@ static NTSTATUS schan_dispose_session( void *args )
 static NTSTATUS schan_set_session_target( void *args )
 {
     const struct set_session_target_params *params = args;
-    gnutls_session_t s = (gnutls_session_t)params->session;
+    gnutls_session_t s = session_from_handle(params->session);
     pgnutls_server_name_set( s, GNUTLS_NAME_DNS, params->target, strlen(params->target) );
     return STATUS_SUCCESS;
 }
@@ -563,7 +571,7 @@ static NTSTATUS schan_set_session_target( void *args )
 static NTSTATUS schan_handshake( void *args )
 {
     const struct handshake_params *params = args;
-    gnutls_session_t s = (gnutls_session_t)params->session;
+    gnutls_session_t s = session_from_handle(params->session);
     struct schan_transport *t = (struct schan_transport *)pgnutls_transport_get_ptr(s);
     int err;
 
@@ -709,20 +717,21 @@ static ALG_ID get_kx_algid(int kx)
 static NTSTATUS schan_get_session_cipher_block_size( void *args )
 {
     const struct session_params *params = args;
-    gnutls_session_t s = (gnutls_session_t)params->session;
+    gnutls_session_t s = session_from_handle(params->session);
     return pgnutls_cipher_get_block_size(pgnutls_cipher_get(s));
 }
 
 static NTSTATUS schan_get_max_message_size( void *args )
 {
     const struct session_params *params = args;
-    return pgnutls_record_get_max_size((gnutls_session_t)params->session);
+    gnutls_session_t s = session_from_handle(params->session);
+    return pgnutls_record_get_max_size(s);
 }
 
 static NTSTATUS schan_get_connection_info( void *args )
 {
     const struct get_connection_info_params *params = args;
-    gnutls_session_t s = (gnutls_session_t)params->session;
+    gnutls_session_t s = session_from_handle(params->session);
     SecPkgContext_ConnectionInfo *info = params->info;
     gnutls_protocol_t proto = pgnutls_protocol_get_version(s);
     gnutls_cipher_algorithm_t alg = pgnutls_cipher_get(s);
@@ -743,10 +752,10 @@ static NTSTATUS schan_get_connection_info( void *args )
 static NTSTATUS schan_get_unique_channel_binding( void *args )
 {
     const struct get_unique_channel_binding_params *params = args;
+    gnutls_session_t s = session_from_handle(params->session);
     gnutls_datum_t datum;
     int rc;
     SECURITY_STATUS ret;
-    gnutls_session_t s = (gnutls_session_t)params->session;
 
     rc = pgnutls_session_channel_binding(s, GNUTLS_CB_TLS_UNIQUE, &datum);
     if (rc)
@@ -769,10 +778,10 @@ static NTSTATUS schan_get_unique_channel_binding( void *args )
 static NTSTATUS schan_get_key_signature_algorithm( void *args )
 {
     const struct session_params *params = args;
-    gnutls_session_t s = (gnutls_session_t)params->session;
+    gnutls_session_t s = session_from_handle(params->session);
     gnutls_kx_algorithm_t kx = pgnutls_kx_get(s);
 
-    TRACE("(%p)\n", params->session);
+    TRACE("(%p)\n", s);
 
     switch (kx)
     {
@@ -791,29 +800,29 @@ static NTSTATUS schan_get_key_signature_algorithm( void *args )
 static NTSTATUS schan_get_session_peer_certificate( void *args )
 {
     const struct get_session_peer_certificate_params *params = args;
-    gnutls_session_t s = (gnutls_session_t)params->session;
-    CERT_BLOB *certs = params->certs;
+    gnutls_session_t s = session_from_handle(params->session);
     const gnutls_datum_t *datum;
     unsigned int i, size;
     BYTE *ptr;
     unsigned int count;
+    ULONG *sizes;
 
     if (!(datum = pgnutls_certificate_get_peers(s, &count))) return SEC_E_INTERNAL_ERROR;
 
-    size = count * sizeof(certs[0]);
+    size = count * sizeof(*sizes);
     for (i = 0; i < count; i++) size += datum[i].size;
 
-    if (!certs || *params->bufsize < size)
+    if (!params->buffer || *params->bufsize < size)
     {
         *params->bufsize = size;
         return SEC_E_BUFFER_TOO_SMALL;
     }
-    ptr = (BYTE *)&certs[count];
+    sizes = (ULONG *)params->buffer;
+    ptr = params->buffer + count * sizeof(*sizes);
     for (i = 0; i < count; i++)
     {
-        certs[i].cbData = datum[i].size;
-        certs[i].pbData = ptr;
-        memcpy(certs[i].pbData, datum[i].data, datum[i].size);
+        sizes[i] = datum[i].size;
+        memcpy(ptr, datum[i].data, datum[i].size);
         ptr += datum[i].size;
     }
 
@@ -825,7 +834,7 @@ static NTSTATUS schan_get_session_peer_certificate( void *args )
 static NTSTATUS schan_send( void *args )
 {
     const struct send_params *params = args;
-    gnutls_session_t s = (gnutls_session_t)params->session;
+    gnutls_session_t s = session_from_handle(params->session);
     struct schan_transport *t = (struct schan_transport *)pgnutls_transport_get_ptr(s);
     SSIZE_T ret, total = 0;
 
@@ -864,7 +873,7 @@ static NTSTATUS schan_send( void *args )
 static NTSTATUS schan_recv( void *args )
 {
     const struct recv_params *params = args;
-    gnutls_session_t s = (gnutls_session_t)params->session;
+    gnutls_session_t s = session_from_handle(params->session);
     struct schan_transport *t = (struct schan_transport *)pgnutls_transport_get_ptr(s);
     size_t data_size = *params->length;
     size_t received = 0;
@@ -928,7 +937,7 @@ static unsigned int parse_alpn_protocol_list(unsigned char *buffer, unsigned int
 static NTSTATUS schan_set_application_protocols( void *args )
 {
     const struct set_application_protocols_params *params = args;
-    gnutls_session_t s = (gnutls_session_t)params->session;
+    gnutls_session_t s = session_from_handle(params->session);
     unsigned int extension_len, extension, count = 0, offset = 0;
     unsigned short list_len;
     gnutls_datum_t *protocols;
@@ -968,7 +977,7 @@ static NTSTATUS schan_set_application_protocols( void *args )
 static NTSTATUS schan_get_application_protocol( void *args )
 {
     const struct get_application_protocol_params *params = args;
-    gnutls_session_t s = (gnutls_session_t)params->session;
+    gnutls_session_t s = session_from_handle(params->session);
     SecPkgContext_ApplicationProtocol *protocol = params->protocol;
     gnutls_datum_t selected;
 
@@ -989,7 +998,7 @@ static NTSTATUS schan_get_application_protocol( void *args )
 static NTSTATUS schan_set_dtls_mtu( void *args )
 {
     const struct set_dtls_mtu_params *params = args;
-    gnutls_session_t s = (gnutls_session_t)params->session;
+    gnutls_session_t s = session_from_handle(params->session);
 
     pgnutls_dtls_set_mtu(s, params->mtu);
     TRACE("MTU set to %u\n", params->mtu);
@@ -999,7 +1008,7 @@ static NTSTATUS schan_set_dtls_mtu( void *args )
 static NTSTATUS schan_set_dtls_timeouts( void *args )
 {
     const struct set_dtls_timeouts_params *params = args;
-    gnutls_session_t s = (gnutls_session_t)params->session;
+    gnutls_session_t s = session_from_handle(params->session);
 
     pgnutls_dtls_set_timeouts(s, params->retrans_timeout, params->total_timeout);
     return SEC_E_OK;
@@ -1032,19 +1041,19 @@ static ULONG set_component(gnutls_datum_t *comp, BYTE *data, ULONG len, ULONG *b
     return comp->size;
 }
 
-static gnutls_x509_privkey_t get_x509_key(const DATA_BLOB *key_blob)
+static gnutls_x509_privkey_t get_x509_key(ULONG key_size, const BYTE *key_blob)
 {
     gnutls_privkey_t key = NULL;
     gnutls_x509_privkey_t x509key = NULL;
     gnutls_datum_t m, e, d, p, q, u, e1, e2;
     BYTE *ptr;
     RSAPUBKEY *rsakey;
-    DWORD size = key_blob->cbData;
+    DWORD size = key_size;
     int ret;
 
     if (size < sizeof(BLOBHEADER)) return NULL;
 
-    rsakey = (RSAPUBKEY *)(key_blob->pbData + sizeof(BLOBHEADER));
+    rsakey = (RSAPUBKEY *)(key_blob + sizeof(BLOBHEADER));
     TRACE("RSA key bitlen %u pubexp %u\n", (unsigned)rsakey->bitlen, (unsigned)rsakey->pubexp);
 
     size -= sizeof(BLOBHEADER) + FIELD_OFFSET(RSAPUBKEY, pubexp);
@@ -1076,16 +1085,15 @@ static gnutls_x509_privkey_t get_x509_key(const DATA_BLOB *key_blob)
     return x509key;
 }
 
-static gnutls_x509_crt_t get_x509_crt(const CERT_CONTEXT *ctx)
+static gnutls_x509_crt_t get_x509_crt(const struct allocate_certificate_credentials_params *params)
 {
     gnutls_datum_t data;
     gnutls_x509_crt_t crt;
     int ret;
 
-    if (!ctx) return FALSE;
-    if (ctx->dwCertEncodingType != X509_ASN_ENCODING)
+    if (params->cert_encoding != X509_ASN_ENCODING)
     {
-        FIXME("encoding type %u not supported\n", (unsigned)ctx->dwCertEncodingType);
+        FIXME("encoding type %u not supported\n", (unsigned)params->cert_encoding);
         return NULL;
     }
 
@@ -1095,8 +1103,8 @@ static gnutls_x509_crt_t get_x509_crt(const CERT_CONTEXT *ctx)
         return NULL;
     }
 
-    data.data = ctx->pbCertEncoded;
-    data.size = ctx->cbCertEncoded;
+    data.data = params->cert_blob;
+    data.size = params->cert_size;
     if ((ret = pgnutls_x509_crt_import(crt, &data, GNUTLS_X509_FMT_DER)) < 0)
     {
         pgnutls_perror(ret);
@@ -1122,19 +1130,19 @@ static NTSTATUS schan_allocate_certificate_credentials( void *args )
         return STATUS_INTERNAL_ERROR;
     }
 
-    if (!params->ctx)
+    if (!params->cert_blob)
     {
         params->c->credentials = creds;
         return STATUS_SUCCESS;
     }
 
-    if (!(crt = get_x509_crt(params->ctx)))
+    if (!(crt = get_x509_crt(params)))
     {
         pgnutls_certificate_free_credentials(creds);
         return STATUS_INTERNAL_ERROR;
     }
 
-    if (!(key = get_x509_key(params->key_blob)))
+    if (!(key = get_x509_key(params->key_size, params->key_blob)))
     {
         pgnutls_x509_crt_deinit(crt);
         pgnutls_certificate_free_credentials(creds);

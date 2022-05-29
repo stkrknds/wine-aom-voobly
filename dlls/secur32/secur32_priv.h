@@ -79,7 +79,7 @@ void load_auth_packages(void) DECLSPEC_HIDDEN;
 void SECUR32_deinitSchannelSP(void) DECLSPEC_HIDDEN;
 
 /* schannel internal interface */
-typedef struct schan_session_opaque *schan_session;
+typedef UINT64 schan_session;
 
 typedef struct schan_credentials
 {
@@ -102,7 +102,6 @@ struct schan_buffers
 
 struct schan_transport
 {
-    struct schan_context *ctx;
     schan_session session;
     struct schan_buffers in;
     struct schan_buffers out;
@@ -116,14 +115,18 @@ struct session_params
 struct allocate_certificate_credentials_params
 {
     schan_credentials *c;
-    const CERT_CONTEXT *ctx;
-    const DATA_BLOB *key_blob;
+    ULONG cert_encoding;
+    ULONG cert_size;
+    BYTE *cert_blob;
+    ULONG key_size;
+    BYTE *key_blob;
 };
 
 struct create_session_params
 {
     struct schan_transport *transport;
     schan_credentials *cred;
+    schan_session *session;
 };
 
 struct free_certificate_credentials_params
@@ -146,7 +149,7 @@ struct get_connection_info_params
 struct get_session_peer_certificate_params
 {
     schan_session session;
-    CERT_BLOB *certs;
+    BYTE *buffer;          /* Starts with array of ULONG sizes, followed by contiguous data blob. */
     ULONG *bufsize;
     ULONG *retcount;
 };

@@ -444,40 +444,38 @@ static WCHAR *get_key_container_path(const CERT_CONTEXT *ctx)
     {
         char *str;
         if (!CryptGetProvParam(keyctx.hCryptProv, PP_CONTAINER, NULL, &size, 0)) return NULL;
-        if (!(str = RtlAllocateHeap(GetProcessHeap(), 0, size))) return NULL;
+        if (!(str = malloc(size))) return NULL;
         if (!CryptGetProvParam(keyctx.hCryptProv, PP_CONTAINER, (BYTE *)str, &size, 0)) return NULL;
 
         len = MultiByteToWideChar(CP_ACP, 0, str, -1, NULL, 0);
-        if (!(ret = RtlAllocateHeap(GetProcessHeap(), 0, sizeof(L"Software\\Wine\\Crypto\\RSA\\") + len * sizeof(WCHAR))))
+        if (!(ret = malloc(sizeof(L"Software\\Wine\\Crypto\\RSA\\") + len * sizeof(WCHAR))))
         {
-            RtlFreeHeap(GetProcessHeap(), 0, str);
+            free(str);
             return NULL;
         }
         wcscpy(ret, L"Software\\Wine\\Crypto\\RSA\\");
         MultiByteToWideChar(CP_ACP, 0, str, -1, ret + wcslen(ret), len);
-        RtlFreeHeap(GetProcessHeap(), 0, str);
+        free(str);
     }
     else if (CertGetCertificateContextProperty(ctx, CERT_KEY_PROV_INFO_PROP_ID, NULL, &prov_size))
     {
-        if (!(prov = RtlAllocateHeap(GetProcessHeap(), 0, prov_size))) return NULL;
+        if (!(prov = malloc(prov_size))) return NULL;
         if (!CertGetCertificateContextProperty(ctx, CERT_KEY_PROV_INFO_PROP_ID, prov, &prov_size))
         {
-            RtlFreeHeap(GetProcessHeap(), 0, prov);
+            free(prov);
             return NULL;
         }
-        if (!(ret = RtlAllocateHeap(GetProcessHeap(), 0,
-                                    sizeof(L"Software\\Wine\\Crypto\\RSA\\") + wcslen(prov->pwszContainerName) * sizeof(WCHAR))))
+        if (!(ret = malloc(sizeof(L"Software\\Wine\\Crypto\\RSA\\") + wcslen(prov->pwszContainerName) * sizeof(WCHAR))))
         {
-            RtlFreeHeap(GetProcessHeap(), 0, prov);
+            free(prov);
             return NULL;
         }
         wcscpy(ret, L"Software\\Wine\\Crypto\\RSA\\");
         wcscat(ret, prov->pwszContainerName);
-        RtlFreeHeap(GetProcessHeap(), 0, prov);
+        free(prov);
     }
 
-    if (!ret && GetUserNameW(username, &len) &&
-        (ret = RtlAllocateHeap(GetProcessHeap(), 0, sizeof(L"Software\\Wine\\Crypto\\RSA\\") + len * sizeof(WCHAR))))
+    if (!ret && GetUserNameW(username, &len) && (ret = malloc(sizeof(L"Software\\Wine\\Crypto\\RSA\\") + len * sizeof(WCHAR))))
     {
         wcscpy(ret, L"Software\\Wine\\Crypto\\RSA\\");
         wcscat(ret, username);
@@ -492,16 +490,15 @@ static BYTE *get_key_blob(const CERT_CONTEXT *ctx, DWORD *size)
     BYTE *buf, *ret = NULL;
     DATA_BLOB blob_in, blob_out;
     DWORD spec = 0, type, len;
+    LSTATUS retval;
     WCHAR *path;
     HKEY hkey;
 
     if (!(path = get_key_container_path(ctx))) return NULL;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, path, 0, KEY_READ, &hkey))
-    {
-        RtlFreeHeap(GetProcessHeap(), 0, path);
+    retval = RegOpenKeyExW(HKEY_CURRENT_USER, path, 0, KEY_READ, &hkey);
+    free(path);
+    if (retval)
         return NULL;
-    }
-    RtlFreeHeap(GetProcessHeap(), 0, path);
 
     if (!RegQueryValueExW(hkey, L"KeyExchangeKeyPair", 0, &type, NULL, &len)) spec = AT_KEYEXCHANGE;
     else if (!RegQueryValueExW(hkey, L"SignatureKeyPair", 0, &type, NULL, &len)) spec = AT_SIGNATURE;
@@ -511,7 +508,7 @@ static BYTE *get_key_blob(const CERT_CONTEXT *ctx, DWORD *size)
         return NULL;
     }
 
-    if (!(buf = RtlAllocateHeap(GetProcessHeap(), 0, len + MAX_LEAD_BYTES)))
+    if (!(buf = malloc(len + MAX_LEAD_BYTES)))
     {
         RegCloseKey(hkey);
         return NULL;
@@ -531,7 +528,7 @@ static BYTE *get_key_blob(const CERT_CONTEXT *ctx, DWORD *size)
             ret = buf;
         }
     }
-    else RtlFreeHeap(GetProcessHeap(), 0, buf);
+    else free(buf);
 
     RegCloseKey(hkey);
     return ret;
@@ -545,8 +542,9 @@ static SECURITY_STATUS schan_AcquireClientCredentials(const void *schanCred,
     ULONG_PTR handle;
     SECURITY_STATUS status = SEC_E_OK;
     const CERT_CONTEXT *cert = NULL;
-    DATA_BLOB key_blob = {0};
-    struct allocate_certificate_credentials_params params;
+    struct allocate_certificate_credentials_params params = { 0 };
+    BYTE *key_blob = NULL;
+    ULONG key_size = 0;
 
     TRACE("schanCred %p, phCredential %p, ptsExpiry %p\n", schanCred, phCredential, ptsExpiry);
 
@@ -581,12 +579,18 @@ static SECURITY_STATUS schan_AcquireClientCredentials(const void *schanCred,
     creds->credential_use = SECPKG_CRED_OUTBOUND;
     creds->enabled_protocols = enabled_protocols;
 
-    if (cert && !(key_blob.pbData = get_key_blob(cert, &key_blob.cbData))) goto fail;
+    if (cert && !(key_blob = get_key_blob(cert, &key_size))) goto fail;
     params.c = creds;
-    params.ctx = cert;
-    params.key_blob = &key_blob;
+    if (cert)
+    {
+        params.cert_encoding = cert->dwCertEncodingType;
+        params.cert_size = cert->cbCertEncoded;
+        params.cert_blob = cert->pbCertEncoded;
+    }
+    params.key_size = key_size;
+    params.key_blob = key_blob;
     if (GNUTLS_CALL( allocate_certificate_credentials, &params )) goto fail;
-    RtlFreeHeap(GetProcessHeap(), 0, key_blob.pbData);
+    free(key_blob);
 
     handle = schan_alloc_handle(creds, SCHAN_HANDLE_CRED);
     if (handle == SCHAN_INVALID_HANDLE) goto fail;
@@ -605,7 +609,7 @@ static SECURITY_STATUS schan_AcquireClientCredentials(const void *schanCred,
 
 fail:
     free(creds);
-    RtlFreeHeap(GetProcessHeap(), 0, key_blob.pbData);
+    free(key_blob);
     return SEC_E_INTERNAL_ERROR;
 }
 
@@ -802,9 +806,8 @@ static SECURITY_STATUS SEC_ENTRY schan_InitializeSecurityContextW(
             return SEC_E_INVALID_HANDLE;
         }
 
-        if (!(ctx = malloc(sizeof(*ctx)))) return SEC_E_INSUFFICIENT_MEMORY;
+        if (!(ctx = calloc(1, sizeof(*ctx)))) return SEC_E_INSUFFICIENT_MEMORY;
 
-        ctx->cert = NULL;
         handle = schan_alloc_handle(ctx, SCHAN_HANDLE_CTX);
         if (handle == SCHAN_INVALID_HANDLE)
         {
@@ -814,6 +817,7 @@ static SECURITY_STATUS SEC_ENTRY schan_InitializeSecurityContextW(
 
         create_params.transport = &ctx->transport;
         create_params.cred = cred;
+        create_params.session = &ctx->transport.session;
         if (GNUTLS_CALL( create_session, &create_params ))
         {
             schan_free_handle(handle, SCHAN_HANDLE_CTX);
@@ -825,8 +829,6 @@ static SECURITY_STATUS SEC_ENTRY schan_InitializeSecurityContextW(
             ctx->header_size = HEADER_SIZE_DTLS;
         else
             ctx->header_size = HEADER_SIZE_TLS;
-
-        ctx->transport.ctx = ctx;
 
         if (pszTargetName && *pszTargetName)
         {
@@ -1028,7 +1030,6 @@ static SECURITY_STATUS ensure_remote_cert(struct schan_context *ctx)
     HCERTSTORE store;
     PCCERT_CONTEXT cert = NULL;
     SECURITY_STATUS status;
-    CERT_BLOB *certs;
     ULONG count, size = 0;
     struct get_session_peer_certificate_params params = { ctx->transport.session, NULL, &size, &count };
 
@@ -1038,28 +1039,33 @@ static SECURITY_STATUS ensure_remote_cert(struct schan_context *ctx)
 
     status = GNUTLS_CALL( get_session_peer_certificate, &params );
     if (status != SEC_E_BUFFER_TOO_SMALL) goto done;
-    if (!(certs = malloc( size )))
+    if (!(params.buffer = malloc( size )))
     {
         status = SEC_E_INSUFFICIENT_MEMORY;
         goto done;
     }
-    params.certs = certs;
     status = GNUTLS_CALL( get_session_peer_certificate, &params );
     if (status == SEC_E_OK)
     {
         unsigned int i;
+        ULONG *sizes;
+        BYTE *blob;
+
+        sizes = (ULONG *)params.buffer;
+        blob = params.buffer + count * sizeof(*sizes);
+
         for (i = 0; i < count; i++)
         {
-            if (!CertAddEncodedCertificateToStore(store, X509_ASN_ENCODING, certs[i].pbData,
-                                                  certs[i].cbData, CERT_STORE_ADD_REPLACE_EXISTING,
-                                                  i ? NULL : &cert))
+            if (!CertAddEncodedCertificateToStore(store, X509_ASN_ENCODING, blob, sizes[i],
+                    CERT_STORE_ADD_REPLACE_EXISTING, i ? NULL : &cert))
             {
                 if (i) CertFreeCertificateContext(cert);
                 return GetLastError();
             }
+            blob += sizes[i];
         }
     }
-    free(certs);
+    free(params.buffer);
 done:
     ctx->cert = cert;
     CertCloseStore(store, 0);

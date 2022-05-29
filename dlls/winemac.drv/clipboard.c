@@ -190,7 +190,7 @@ static DWORD clipboard_thread_id;
 static HWND clipboard_hwnd;
 static BOOL is_clipboard_owner;
 static macdrv_window clipboard_cocoa_window;
-static ULONG64 last_clipboard_update;
+static ULONG last_clipboard_update;
 static DWORD last_get_seqno;
 static WINE_CLIPFORMAT **current_mac_formats;
 static unsigned int nb_current_mac_formats;
@@ -567,6 +567,21 @@ static void *import_html(CFDataRef data, size_t *ret_size)
 }
 
 
+static CPTABLEINFO *get_ansi_cp(void)
+{
+    USHORT utf8_hdr[2] = { 0, CP_UTF8 };
+    static CPTABLEINFO cp;
+    if (!cp.CodePage)
+    {
+        if (NtCurrentTeb()->Peb->AnsiCodePageData)
+            RtlInitCodePageTable(NtCurrentTeb()->Peb->AnsiCodePageData, &cp);
+        else
+            RtlInitCodePageTable(utf8_hdr, &cp);
+    }
+    return &cp;
+}
+
+
 /* based on wine_get_dos_file_name */
 static WCHAR *get_dos_file_name(const char *path)
 {
@@ -808,7 +823,11 @@ static void *import_utf8_to_unicodetext(CFDataRef data, size_t *ret_size)
         dst[j++] = 0;
 
         if ((ret = malloc(j * sizeof(WCHAR))))
-            *ret_size = MultiByteToWideChar(CP_UTF8, 0, dst, j, ret, j) * sizeof(WCHAR);
+        {
+            DWORD dst_size;
+            RtlUTF8ToUnicodeN(ret, j * sizeof(WCHAR), &dst_size, dst, j);
+            *ret_size = dst_size;
+        }
 
         free(dst);
     }
@@ -938,21 +957,22 @@ static CFDataRef export_hdrop_to_filenames(void *data, size_t size)
             unixname = get_unix_file_name(p);
         else
         {
-            int len = MultiByteToWideChar(CP_ACP, 0, p, -1, NULL, 0);
-            if (len)
-            {
-                if (len > buffer_len)
-                {
-                    free(buffer);
-                    buffer_len = len * 2;
-                    buffer = malloc(buffer_len * sizeof(*buffer));
-                }
+            CPTABLEINFO *cp = get_ansi_cp();
+            DWORD len = strlen(p) + 1;
 
-                MultiByteToWideChar(CP_ACP, 0, p, -1, buffer, buffer_len);
-                unixname = get_unix_file_name(buffer);
+            if (len * 3 > buffer_len)
+            {
+                free(buffer);
+                buffer_len = len * 3;
+                buffer = malloc(buffer_len * sizeof(*buffer));
             }
+
+            if (cp->CodePage == CP_UTF8)
+                RtlUTF8ToUnicodeN(buffer, buffer_len * sizeof(WCHAR), &len, p, len);
             else
-                unixname = NULL;
+                RtlCustomCPToUnicodeN(cp, buffer, buffer_len * sizeof(WCHAR), &len, p, len);
+
+            unixname = get_unix_file_name(buffer);
         }
         if (!unixname)
         {
@@ -1031,10 +1051,12 @@ static CFDataRef export_html(void *data, size_t size)
 static CFDataRef export_unicodetext_to_utf8(void *data, size_t size)
 {
     CFMutableDataRef ret;
-    INT dst_len;
+    WCHAR *src = data;
+    DWORD dst_len = 0;
 
-    dst_len = WideCharToMultiByte(CP_UTF8, 0, data, -1, NULL, 0, NULL, NULL);
-    if (dst_len) dst_len--; /* Leave off null terminator. */
+    /* Leave off null terminator. */
+    if (size >= sizeof(WCHAR) && !src[size / sizeof(WCHAR) - 1]) size -= sizeof(WCHAR);
+    RtlUnicodeToUTF8N(NULL, 0, &dst_len, src, size);
     ret = CFDataCreateMutable(NULL, dst_len);
     if (ret)
     {
@@ -1043,7 +1065,7 @@ static CFDataRef export_unicodetext_to_utf8(void *data, size_t size)
 
         CFDataSetLength(ret, dst_len);
         dst = (LPSTR)CFDataGetMutableBytePtr(ret);
-        WideCharToMultiByte(CP_UTF8, 0, data, -1, dst, dst_len, NULL, NULL);
+        RtlUnicodeToUTF8N(dst, dst_len, &dst_len, src, size);
 
         /* Remove carriage returns */
         for (i = 0, j = 0; i < dst_len; i++)
@@ -1451,8 +1473,9 @@ static void set_win32_clipboard_formats_from_mac_pasteboard(CFArrayRef types)
 
     for (i = 0; i < count; i++)
     {
+        struct set_clipboard_params params = { 0 };
         TRACE("adding format %s\n", debugstr_format(formats[i]->format_id));
-        SetClipboardData(formats[i]->format_id, 0);
+        NtUserSetClipboardData(formats[i]->format_id, 0, &params);
     }
 
     free(current_mac_formats);
@@ -1519,7 +1542,7 @@ static void grab_win32_clipboard(void)
     if (!NtUserOpenClipboard(clipboard_hwnd, 0)) return;
     NtUserEmptyClipboard();
     is_clipboard_owner = TRUE;
-    last_clipboard_update = GetTickCount64();
+    last_clipboard_update = NtGetTickCount();
     set_win32_clipboard_formats_from_mac_pasteboard(types);
     NtUserCloseClipboard();
     NtUserSetTimer(clipboard_hwnd, 1, CLIPBOARD_UPDATE_DELAY, NULL, TIMERV_DEFAULT_COALESCING);
@@ -1536,15 +1559,15 @@ static void update_clipboard(void)
 {
     static BOOL updating;
 
-    TRACE("is_clipboard_owner %d last_clipboard_update %llu now %llu\n",
-          is_clipboard_owner, (unsigned long long)last_clipboard_update, (unsigned long long)GetTickCount64());
+    TRACE("is_clipboard_owner %d last_clipboard_update %u now %u\n",
+          is_clipboard_owner, last_clipboard_update, NtGetTickCount());
 
     if (updating) return;
     updating = TRUE;
 
     if (is_clipboard_owner)
     {
-        if (GetTickCount64() - last_clipboard_update > CLIPBOARD_UPDATE_DELAY)
+        if (NtGetTickCount() - last_clipboard_update > CLIPBOARD_UPDATE_DELAY)
             grab_win32_clipboard();
     }
     else if (!macdrv_is_pasteboard_owner(clipboard_cocoa_window))

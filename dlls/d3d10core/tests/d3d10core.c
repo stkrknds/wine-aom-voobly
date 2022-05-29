@@ -3890,16 +3890,27 @@ void main(point float4 vin[1] : POSITION, inout TriangleStream<gs_out> vout)
     refcount = ID3D10VertexShader_Release(vs);
     ok(!refcount, "Vertex shader has %u references left.\n", refcount);
 
+    vs = (void *)0xdeadbeef;
     hr = ID3D10Device_CreateVertexShader(device, vs_2_0, sizeof(vs_2_0), &vs);
     ok(hr == E_INVALIDARG, "Created a SM2 vertex shader, hr %#x\n", hr);
+    ok(!vs, "Unexpected pointer %p.\n", vs);
 
+    vs = (void *)0xdeadbeef;
     hr = ID3D10Device_CreateVertexShader(device, vs_3_0, sizeof(vs_3_0), &vs);
     ok(hr == E_INVALIDARG, "Created a SM3 vertex shader, hr %#x\n", hr);
+    ok(!vs, "Unexpected pointer %p.\n", vs);
 
+    vs = (void *)0xdeadbeef;
     hr = ID3D10Device_CreateVertexShader(device, ps_4_0, sizeof(ps_4_0), &vs);
     ok(hr == E_INVALIDARG, "Created a SM4 vertex shader from a pixel shader source, hr %#x\n", hr);
+    ok(!vs, "Unexpected pointer %p.\n", vs);
 
     /* pixel shader */
+    ps = (void *)0xdeadbeef;
+    hr = ID3D10Device_CreatePixelShader(device, vs_2_0, sizeof(vs_2_0), &ps);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#x.\n", hr);
+    ok(!ps, "Unexpected pointer %p.\n", ps);
+
     expected_refcount = get_refcount(device) + 1;
     hr = ID3D10Device_CreatePixelShader(device, ps_4_0, sizeof(ps_4_0), &ps);
     ok(SUCCEEDED(hr), "Failed to create SM4 pixel shader, hr %#x.\n", hr);
@@ -15114,6 +15125,12 @@ float4 main(struct ps_data ps_input) : SV_Target
         return;
 
     device = test_context.device;
+
+    /* Failing case */
+    gs = (void *)0xdeadbeef;
+    hr = ID3D10Device_CreateGeometryShader(device, vs_code, sizeof(vs_code), &gs);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#x.\n", hr);
+    ok(!gs, "Unexpected pointer %p.\n", gs);
 
     hr = ID3D10Device_CreateInputLayout(device, layout_desc, ARRAY_SIZE(layout_desc),
             vs_code, sizeof(vs_code), &input_layout);
