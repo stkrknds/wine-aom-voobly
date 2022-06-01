@@ -280,69 +280,128 @@ static void load_config( const WCHAR *key_name, struct console_config *config )
     TRACE( "%s\n", debugstr_config( config ));
 }
 
-static void save_registry_key( HKEY key, const struct console_config *config )
+static void save_registry_key( HKEY key, const struct console_config *config, BOOL save_all )
 {
+    struct console_config default_config;
     DWORD val, width, height, i;
     WCHAR color_name[13];
 
     TRACE( "%s\n", debugstr_config( config ));
 
+    if (!save_all)
+        load_config( NULL, &default_config );
+
     for (i = 0; i < ARRAY_SIZE(config->color_map); i++)
     {
-        wsprintfW( color_name, L"ColorTable%02d", i );
-        val = config->color_map[i];
-        RegSetValueExW( key, color_name, 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+        if (save_all || config->color_map[i] != default_config.color_map[i])
+        {
+            wsprintfW( color_name, L"ColorTable%02d", i );
+            val = config->color_map[i];
+            RegSetValueExW( key, color_name, 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+        }
     }
 
-    val = config->cursor_size;
-    RegSetValueExW( key, L"CursorSize", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    if (save_all || config->cursor_size != default_config.cursor_size)
+    {
+        val = config->cursor_size;
+        RegSetValueExW( key, L"CursorSize", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    }
 
-    val = config->cursor_visible;
-    RegSetValueExW( key, L"CursorVisible", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    if (save_all || config->cursor_visible != default_config.cursor_visible)
+    {
+        val = config->cursor_visible;
+        RegSetValueExW( key, L"CursorVisible", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    }
 
-    val = config->edition_mode;
-    RegSetValueExW( key, L"EditionMode", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    if (save_all || config->edition_mode != default_config.edition_mode)
+    {
+        val = config->edition_mode;
+        RegSetValueExW( key, L"EditionMode", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    }
 
-    RegSetValueExW( key, L"FaceName", 0, REG_SZ, (BYTE *)&config->face_name,
-                    (lstrlenW(config->face_name) + 1) * sizeof(WCHAR) );
+    if (save_all || lstrcmpW( config->face_name, default_config.face_name ))
+    {
+        RegSetValueExW( key, L"FaceName", 0, REG_SZ, (BYTE *)&config->face_name,
+                        (lstrlenW(config->face_name) + 1) * sizeof(WCHAR) );
+    }
 
-    val = config->font_pitch_family;
-    RegSetValueExW( key, L"FontPitchFamily", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    if (save_all || config->font_pitch_family != default_config.font_pitch_family)
+    {
+        val = config->font_pitch_family;
+        RegSetValueExW( key, L"FontPitchFamily", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    }
 
-    width  = MulDiv( config->cell_width,  USER_DEFAULT_SCREEN_DPI, GetDpiForSystem() );
-    height = MulDiv( config->cell_height, USER_DEFAULT_SCREEN_DPI, GetDpiForSystem() );
-    val = MAKELONG( width, height );
-    RegSetValueExW( key, L"FontSize", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    if (save_all || config->cell_height != default_config.cell_height ||
+        config->cell_width != default_config.cell_width)
+    {
+        width  = MulDiv( config->cell_width,  USER_DEFAULT_SCREEN_DPI, GetDpiForSystem() );
+        height = MulDiv( config->cell_height, USER_DEFAULT_SCREEN_DPI, GetDpiForSystem() );
+        val = MAKELONG( width, height );
 
-    val = config->font_weight;
-    RegSetValueExW( key, L"FontWeight", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+        RegSetValueExW( key, L"FontSize", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    }
 
-    val = config->history_size;
-    RegSetValueExW( key, L"HistoryBufferSize", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    if (save_all || config->font_weight != default_config.font_weight)
+    {
+        val = config->font_weight;
+        RegSetValueExW( key, L"FontWeight", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    }
 
-    val = config->history_mode;
-    RegSetValueExW( key, L"HistoryNoDup", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    if (save_all || config->history_size != default_config.history_size)
+    {
+        val = config->history_size;
+        RegSetValueExW( key, L"HistoryBufferSize", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    }
 
-    val = config->insert_mode;
-    RegSetValueExW( key, L"InsertMode", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    if (save_all || config->history_mode != default_config.history_mode)
+    {
+        val = config->history_mode;
+        RegSetValueExW( key, L"HistoryNoDup", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    }
 
-    val = config->menu_mask;
-    RegSetValueExW( key, L"MenuMask", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    if (save_all || config->insert_mode != default_config.insert_mode)
+    {
+        val = config->insert_mode;
+        RegSetValueExW( key, L"InsertMode", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    }
 
-    val = config->popup_attr;
-    RegSetValueExW( key, L"PopupColors", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    if (save_all || config->menu_mask != default_config.menu_mask)
+    {
+        val = config->menu_mask;
+        RegSetValueExW( key, L"MenuMask", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    }
 
-    val = config->quick_edit;
-    RegSetValueExW( key, L"QuickEdit", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    if (save_all || config->popup_attr != default_config.popup_attr)
+    {
+        val = config->popup_attr;
+        RegSetValueExW( key, L"PopupColors", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    }
 
-    val = MAKELONG(config->sb_width, config->sb_height);
-    RegSetValueExW( key, L"ScreenBufferSize", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    if (save_all || config->quick_edit != default_config.quick_edit)
+    {
+        val = config->quick_edit;
+        RegSetValueExW( key, L"QuickEdit", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    }
 
-    val = config->attr;
-    RegSetValueExW( key, L"ScreenColors", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    if (save_all || config->sb_width != default_config.sb_width ||
+        config->sb_height != default_config.sb_height)
+    {
+        val = MAKELONG(config->sb_width, config->sb_height);
+        RegSetValueExW( key, L"ScreenBufferSize", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    }
 
-    val = MAKELONG( config->win_width, config->win_height );
-    RegSetValueExW( key, L"WindowSize", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    if (save_all || config->attr != default_config.attr)
+    {
+        val = config->attr;
+        RegSetValueExW( key, L"ScreenColors", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    }
+
+    if (save_all || config->win_width != default_config.win_width ||
+        config->win_height != default_config.win_height)
+    {
+        val = MAKELONG( config->win_width, config->win_height );
+        RegSetValueExW( key, L"WindowSize", 0, REG_DWORD, (BYTE *)&val, sizeof(val) );
+    }
 }
 
 static void save_config( const WCHAR *key_name, const struct console_config *config )
@@ -365,12 +424,11 @@ static void save_config( const WCHAR *key_name, const struct console_config *con
         }
         else
         {
-            /* FIXME: maybe only save the values different from the default value ? */
-            save_registry_key( app_key, config );
+            save_registry_key( app_key, config, FALSE );
             RegCloseKey( app_key );
         }
     }
-    else save_registry_key( key, config );
+    else save_registry_key( key, config, TRUE );
     RegCloseKey(key);
 }
 
@@ -850,7 +908,7 @@ static void set_first_font( struct console *console, struct console_config *conf
     if (fc.pass > 5)
         ERR("Unable to find a valid console font\n");
 
-    /* Save font configuration to the registry */
+    /* Update active configuration */
     config->cell_width  = console->active->font.width;
     config->cell_height = console->active->font.height;
     config->font_pitch_family = console->active->font.pitch_family;
@@ -858,7 +916,8 @@ static void set_first_font( struct console *console, struct console_config *conf
             console->active->font.face_len * sizeof(WCHAR) );
     config->face_name[console->active->font.face_len] = 0;
 
-    save_config( console->window->config_key, config );
+    /* Save default console configuration to the registry */
+    save_config( NULL, config );
 }
 
 /* Sets the font specified in the LOGFONT as the new console font */
@@ -1697,34 +1756,6 @@ static INT_PTR WINAPI config_dialog_proc( HWND dialog, UINT msg, WPARAM wparam, 
     return TRUE;
 }
 
-/* dialog proc for choosing how to handle modification to the console settings */
-static INT_PTR WINAPI save_dialog_proc( HWND dialog, UINT msg, WPARAM wparam, LPARAM lparam )
-{
-    switch (msg)
-    {
-    case WM_INITDIALOG:
-        SendMessageW( dialog, WM_NEXTDLGCTL, (WPARAM)GetDlgItem( dialog, IDC_SAV_SESSION ), TRUE );
-        SendDlgItemMessageW( dialog, IDC_SAV_SESSION, BM_SETCHECK, BST_CHECKED, 0 );
-        return FALSE;
-
-    case WM_COMMAND:
-        switch (LOWORD(wparam))
-        {
-        case IDOK:
-            EndDialog( dialog,
-                       (IsDlgButtonChecked(dialog, IDC_SAV_SAVE) == BST_CHECKED) ?
-                       IDC_SAV_SAVE : IDC_SAV_SESSION );
-            break;
-        case IDCANCEL:
-            EndDialog( dialog, IDCANCEL ); break;
-        }
-        break;
-    default:
-        return FALSE;
-    }
-    return TRUE;
-}
-
 static void apply_config( struct console *console, const struct console_config *config )
 {
     if (console->active->width != config->sb_width || console->active->height != config->sb_height)
@@ -1842,19 +1873,17 @@ static BOOL config_dialog( struct console *console, BOOL current )
     PROPSHEETPAGEW psp;
     WNDCLASSW wndclass;
     WCHAR buff[256];
-    BOOL modify_session = FALSE;
-    BOOL save = FALSE;
 
     InitCommonControls();
 
     memset( &di, 0, sizeof(di) );
     di.console = console;
-    if (!current)
-    {
+
+    if (current)
+        current_config( console, &di.config );
+    else
         load_config( NULL, &di.config );
-        save = TRUE;
-    }
-    else current_config( console, &di.config );
+
     prev_config = di.config;
 
     wndclass.style         = 0;
@@ -1920,35 +1949,14 @@ static BOOL config_dialog( struct console *console, BOOL current )
 
     TRACE( "%s\n", debugstr_config(&di.config) );
 
-    if (!save)
-    {
-        switch (DialogBoxW( GetModuleHandleW( NULL ), MAKEINTRESOURCEW(IDD_SAVE_SETTINGS),
-                            console->win, save_dialog_proc ))
-        {
-        case IDC_SAV_SAVE:
-            save = TRUE;
-            modify_session = TRUE;
-            break;
-        case IDC_SAV_SESSION:
-            modify_session = TRUE;
-            break;
-        default:
-            ERR( "dialog failed\n" );
-            /* fall through */
-        case IDCANCEL:
-            modify_session = FALSE;
-            save = FALSE;
-            break;
-        }
-    }
-
-    if (modify_session)
+    if (current)
     {
         apply_config( console, &di.config );
         update_window( di.console );
     }
-    if (save)
-        save_config( current ? console->window->config_key : NULL, &di.config );
+
+    save_config( current ? console->window->config_key : NULL, &di.config );
+
     return TRUE;
 }
 

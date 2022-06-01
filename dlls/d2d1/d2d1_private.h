@@ -395,6 +395,7 @@ struct d2d_bitmap
     ID3D11RenderTargetView *rtv;
     IDXGISurface *surface;
     ID3D11Resource *resource;
+    D3D11_MAPPED_SUBRESOURCE mapped_resource;
     D2D1_SIZE_U pixel_size;
     D2D1_PIXEL_FORMAT format;
     float dpi_x;
@@ -408,6 +409,7 @@ HRESULT d2d_bitmap_create_shared(struct d2d_device_context *context, REFIID iid,
         const D2D1_BITMAP_PROPERTIES1 *desc, struct d2d_bitmap **bitmap) DECLSPEC_HIDDEN;
 HRESULT d2d_bitmap_create_from_wic_bitmap(struct d2d_device_context *context, IWICBitmapSource *bitmap_source,
         const D2D1_BITMAP_PROPERTIES1 *desc, struct d2d_bitmap **bitmap) DECLSPEC_HIDDEN;
+unsigned int d2d_get_bitmap_options_for_surface(IDXGISurface *surface) DECLSPEC_HIDDEN;
 struct d2d_bitmap *unsafe_impl_from_ID2D1Bitmap(ID2D1Bitmap *iface) DECLSPEC_HIDDEN;
 
 struct d2d_state_block
