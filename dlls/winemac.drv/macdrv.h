@@ -33,6 +33,7 @@
 #include "ntgdi.h"
 #include "wine/debug.h"
 #include "wine/gdi_driver.h"
+#include "unixlib.h"
 
 
 extern BOOL skip_single_buffer_flushes DECLSPEC_HIDDEN;
@@ -280,17 +281,21 @@ extern void macdrv_status_item_mouse_move(const macdrv_event *event) DECLSPEC_HI
 extern void check_retina_status(void) DECLSPEC_HIDDEN;
 extern void macdrv_init_display_devices(BOOL force) DECLSPEC_HIDDEN;
 extern void init_user_driver(void) DECLSPEC_HIDDEN;
+extern NTSTATUS macdrv_init(void *arg) DECLSPEC_HIDDEN;
 
 /**************************************************************************
  * Mac IME driver
  */
 
-extern void macdrv_process_text_input(UINT vkey, UINT scan, UINT repeat, const BYTE *key_state,
-                                      void *himc, int* done) DECLSPEC_HIDDEN;
+extern NTSTATUS macdrv_ime_process_text_input(void *arg) DECLSPEC_HIDDEN;
 
 extern void macdrv_im_set_text(const macdrv_event *event) DECLSPEC_HIDDEN;
 extern void macdrv_sent_text_input(const macdrv_event *event) DECLSPEC_HIDDEN;
 extern BOOL query_ime_char_rect(macdrv_query* query) DECLSPEC_HIDDEN;
+
+/* unixlib interface */
+
+extern NTSTATUS macdrv_notify_icon(void *arg) DECLSPEC_HIDDEN;
 
 /* user helpers */
 
