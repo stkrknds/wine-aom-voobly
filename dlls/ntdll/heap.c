@@ -76,12 +76,13 @@ struct rtl_heap_entry
 
 #define ALIGNMENT (2 * sizeof(void *))
 
-typedef struct block
+struct block
 {
-    DWORD  size;                    /* Block size; must be the first field */
-    DWORD  magic : 24;              /* Magic number */
-    DWORD  unused_bytes : 8;        /* Number of bytes in the block not used by user data (max value is HEAP_MIN_DATA_SIZE+HEAP_MIN_SHRINK_SIZE) */
-} ARENA_INUSE;
+    WORD block_size;   /* block size in multiple of ALIGNMENT */
+    BYTE block_flags;
+    BYTE tail_size;    /* unused size (used block) / high size bits (free block) */
+    DWORD magic;
+};
 
 C_ASSERT( sizeof(struct block) == 8 );
 
@@ -127,20 +128,18 @@ typedef struct
 
 /* everything is aligned on 8 byte boundaries (16 for Win64) */
 #define LARGE_ALIGNMENT        16  /* large blocks have stricter alignment */
-#define ARENA_OFFSET           (ALIGNMENT - sizeof(ARENA_INUSE))
 #define COMMIT_MASK            0xffff  /* bitmask for commit/decommit granularity */
 
 C_ASSERT( sizeof(ARENA_LARGE) % LARGE_ALIGNMENT == 0 );
 
 #define ROUND_ADDR(addr, mask) ((void *)((UINT_PTR)(addr) & ~(UINT_PTR)(mask)))
-#define ROUND_SIZE(size)       ((((size) + ALIGNMENT - 1) & ~(ALIGNMENT-1)) + ARENA_OFFSET)
+#define ROUND_SIZE(size, mask) ((((SIZE_T)(size) + (mask)) & ~(SIZE_T)(mask)))
 
-/* minimum data size (without arenas) of an allocated block */
-/* make sure that it's larger than a free list entry */
-#define HEAP_MIN_DATA_SIZE    ROUND_SIZE(2 * sizeof(struct list))
-#define HEAP_MIN_BLOCK_SIZE   (HEAP_MIN_DATA_SIZE + sizeof(ARENA_INUSE))
-/* minimum size that must remain to shrink an allocated block */
-#define HEAP_MIN_SHRINK_SIZE  (HEAP_MIN_DATA_SIZE+sizeof(struct entry))
+#define HEAP_MIN_BLOCK_SIZE   ROUND_SIZE(sizeof(struct entry) + ALIGNMENT, ALIGNMENT - 1)
+
+C_ASSERT( sizeof(struct block) <= HEAP_MIN_BLOCK_SIZE );
+C_ASSERT( sizeof(struct entry) <= HEAP_MIN_BLOCK_SIZE );
+
 /* minimum size to start allocating large blocks */
 #define HEAP_MIN_LARGE_BLOCK_SIZE  (0x10000 * ALIGNMENT - 0x1000)
 /* extra size to add at the end of block for tail checking */
@@ -195,7 +194,7 @@ typedef struct tagHEAP
     SIZE_T           min_size;      /* Minimum committed size */
     DWORD            magic;         /* Magic number */
     DWORD            pending_pos;   /* Position in pending free requests ring */
-    ARENA_INUSE    **pending_free;  /* Ring buffer for pending free requests */
+    struct block   **pending_free;  /* Ring buffer for pending free requests */
     RTL_CRITICAL_SECTION cs;
     struct entry     free_lists[HEAP_NB_FREE_LISTS];
     SUBHEAP          subheap;
@@ -208,7 +207,7 @@ C_ASSERT( offsetof(HEAP, subheap) <= COMMIT_MASK );
 
 #define HEAP_MAGIC       ((DWORD)('H' | ('E'<<8) | ('A'<<16) | ('P'<<24)))
 
-#define HEAP_DEF_SIZE        0x110000   /* Default heap size = 1Mb + 64Kb */
+#define HEAP_DEF_SIZE        (0x40000 * ALIGNMENT)
 #define MAX_FREE_PENDING     1024    /* max number of free requests to delay */
 
 /* some undocumented flags (names are made up) */
@@ -217,6 +216,7 @@ C_ASSERT( offsetof(HEAP, subheap) <= COMMIT_MASK );
 #define HEAP_VALIDATE         0x10000000
 #define HEAP_VALIDATE_ALL     0x20000000
 #define HEAP_VALIDATE_PARAMS  0x40000000
+#define HEAP_CHECKING_ENABLED 0x80000000
 
 static HEAP *processHeap;  /* main process heap */
 
@@ -229,36 +229,39 @@ static inline BOOL contains( const void *a, SIZE_T a_size, const void *b, SIZE_T
 
 static inline UINT block_get_flags( const struct block *block )
 {
-    return block->size & ~ARENA_SIZE_MASK;
+    return block->block_flags;
 }
 
 static inline UINT block_get_type( const struct block *block )
 {
-    if (block_get_flags( block ) & BLOCK_FLAG_FREE) return (block->unused_bytes << 24)|block->magic;
     return block->magic;
 }
 
 static inline void block_set_type( struct block *block, UINT type )
 {
-    if (type >> 24) block->unused_bytes = type >> 24;
     block->magic = type;
 }
 
 static inline UINT block_get_overhead( const struct block *block )
 {
     if (block_get_flags( block ) & BLOCK_FLAG_FREE) return sizeof(*block) + sizeof(struct list);
-    return sizeof(*block) + block->unused_bytes;
+    return sizeof(*block) + block->tail_size;
 }
 
 /* return the size of a block, including its header */
 static inline UINT block_get_size( const struct block *block )
 {
-    return block->size & ARENA_SIZE_MASK;
+    UINT block_size = block->block_size;
+    if (block_get_flags( block ) & BLOCK_FLAG_FREE) block_size += (UINT)block->tail_size << 16;
+    return block_size * ALIGNMENT;
 }
 
-static inline void block_set_size( struct block *block, UINT flags, UINT block_size )
+static inline void block_set_size( struct block *block, UINT block_flags, UINT block_size )
 {
-    block->size = (block_size & ARENA_SIZE_MASK) | (flags & ~ARENA_SIZE_MASK);
+    block_size /= ALIGNMENT;
+    if (block_flags & BLOCK_FLAG_FREE) block->tail_size = block_size >> 16;
+    block->block_size = block_size;
+    block->block_flags = block_flags;
 }
 
 static inline void *subheap_base( const SUBHEAP *subheap )
@@ -349,18 +352,19 @@ static inline void mark_block_free( void *ptr, SIZE_T size, DWORD flags )
 }
 
 /* mark a block of memory as a tail block */
-static inline void mark_block_tail( void *ptr, SIZE_T size, DWORD flags )
+static inline void mark_block_tail( struct block *block, DWORD flags )
 {
+    char *tail = (char *)block + block_get_size( block ) - block->tail_size;
     if (flags & HEAP_TAIL_CHECKING_ENABLED)
     {
-        valgrind_make_writable( ptr, size );
-        memset( ptr, ARENA_TAIL_FILLER, size );
+        valgrind_make_writable( tail, ALIGNMENT );
+        memset( tail, ARENA_TAIL_FILLER, ALIGNMENT );
     }
-    valgrind_make_noaccess( ptr, size );
+    valgrind_make_noaccess( tail, ALIGNMENT );
 }
 
 /* initialize contents of a newly created block of memory */
-static inline void initialize_block( void *ptr, SIZE_T size, SIZE_T unused, DWORD flags )
+static inline void initialize_block( void *ptr, SIZE_T size, DWORD flags )
 {
     if (flags & HEAP_ZERO_MEMORY)
     {
@@ -372,8 +376,6 @@ static inline void initialize_block( void *ptr, SIZE_T size, SIZE_T unused, DWOR
         valgrind_make_writable( ptr, size );
         memset( ptr, ARENA_INUSE_FILLER, size );
     }
-
-    mark_block_tail( (char *)ptr + size, unused, flags );
 }
 
 /* notify that a new block of memory has been allocated for debugging purposes */
@@ -448,7 +450,8 @@ static RTL_CRITICAL_SECTION_DEBUG process_heap_cs_debug =
 
 static inline ULONG heap_get_flags( const HEAP *heap, ULONG flags )
 {
-    flags &= HEAP_GENERATE_EXCEPTIONS | HEAP_NO_SERIALIZE | HEAP_ZERO_MEMORY | HEAP_REALLOC_IN_PLACE_ONLY;
+    if (flags & (HEAP_TAIL_CHECKING_ENABLED | HEAP_FREE_CHECKING_ENABLED)) flags |= HEAP_CHECKING_ENABLED;
+    flags &= HEAP_GENERATE_EXCEPTIONS | HEAP_NO_SERIALIZE | HEAP_ZERO_MEMORY | HEAP_REALLOC_IN_PLACE_ONLY | HEAP_CHECKING_ENABLED;
     return heap->flags | flags;
 }
 
@@ -519,7 +522,7 @@ static void heap_dump( const HEAP *heap )
             {
                 TRACE( "      %p: (used) type %#10x, size %#8x, flags %#4x, unused %#4x", block,
                        block_get_type( block ), block_get_size( block ), block_get_flags( block ),
-                       block->unused_bytes );
+                       block->tail_size );
                 if (!(block_get_flags( block ) & BLOCK_FLAG_PREV_FREE)) TRACE( "\n" );
                 else TRACE( ", back %p\n", *((struct block **)block - 1) );
 
@@ -549,7 +552,7 @@ static void heap_dump( const HEAP *heap )
             if (!(block = heap->pending_free[i])) break;
 
             TRACE( "   %c%p: (pend) type %#10x, size %#8x, flags %#4x, unused %#4x", i == heap->pending_pos ? '*' : ' ',
-                   block, block_get_type( block ), block_get_size( block ), block_get_flags( block ), block->unused_bytes );
+                   block, block_get_type( block ), block_get_size( block ), block_get_flags( block ), block->tail_size );
             if (!(block_get_flags( block ) & BLOCK_FLAG_PREV_FREE)) TRACE( "\n" );
             else TRACE( ", back %p\n", *((struct block **)block - 1) );
         }
@@ -761,18 +764,18 @@ static void free_used_block( SUBHEAP *subheap, struct block *block )
 static inline void shrink_used_block( SUBHEAP *subheap, struct block *block, UINT flags,
                                       SIZE_T old_block_size, SIZE_T block_size, SIZE_T size )
 {
-    if (old_block_size >= block_size + HEAP_MIN_SHRINK_SIZE)
+    if (old_block_size >= block_size + HEAP_MIN_BLOCK_SIZE)
     {
         block_set_size( block, flags, block_size );
-        block->unused_bytes = block_size - sizeof(*block) - size;
+        block->tail_size = block_size - sizeof(*block) - size;
         create_free_block( subheap, next_block( subheap, block ), old_block_size - block_size );
     }
     else
     {
         struct block *next;
         block_set_size( block, flags, old_block_size );
-        block->unused_bytes = old_block_size - sizeof(*block) - size;
-        if ((next = next_block( subheap, block ))) next->size &= ~BLOCK_FLAG_PREV_FREE;
+        block->tail_size = old_block_size - sizeof(*block) - size;
+        if ((next = next_block( subheap, block ))) next->block_flags &= ~BLOCK_FLAG_PREV_FREE;
     }
 }
 
@@ -783,7 +786,7 @@ static inline void shrink_used_block( SUBHEAP *subheap, struct block *block, UIN
 static void *allocate_large_block( HEAP *heap, DWORD flags, SIZE_T size )
 {
     ARENA_LARGE *arena;
-    SIZE_T block_size = sizeof(*arena) + ROUND_SIZE( size );
+    SIZE_T block_size = ROUND_SIZE( sizeof(*arena) + size, COMMIT_MASK );
     LPVOID address = NULL;
 
     if (!(flags & HEAP_GROWABLE)) return NULL;
@@ -833,7 +836,7 @@ static void *realloc_large_block( HEAP *heap, DWORD flags, void *ptr, SIZE_T siz
     {
         /* FIXME: we could remap zero-pages instead */
         valgrind_notify_resize( arena + 1, old_size, size );
-        if (size > old_size) initialize_block( (char *)ptr + old_size, size - old_size, 0, flags );
+        if (size > old_size) initialize_block( (char *)ptr + old_size, size - old_size, flags );
         arena->data_size = size;
         valgrind_make_noaccess( (char *)arena + sizeof(*arena) + arena->data_size,
                                 arena->block_size - sizeof(*arena) - arena->data_size );
@@ -893,6 +896,7 @@ static SUBHEAP *HEAP_CreateSubHeap( HEAP *heap, LPVOID address, DWORD flags,
                                     SIZE_T commitSize, SIZE_T totalSize )
 {
     struct entry *pEntry;
+    SIZE_T block_size;
     SUBHEAP *subheap;
     unsigned int i;
 
@@ -992,9 +996,9 @@ static SUBHEAP *HEAP_CreateSubHeap( HEAP *heap, LPVOID address, DWORD flags,
         }
     }
 
-    /* Create the first free block */
-
-    create_free_block( subheap, first_block( subheap ), subheap_size( subheap ) - subheap_overhead( subheap ) );
+    block_size = subheap_size( subheap ) - subheap_overhead( subheap );
+    block_size &= ~(ALIGNMENT - 1);
+    create_free_block( subheap, first_block( subheap ), block_size );
 
     return subheap;
 }
@@ -1136,7 +1140,7 @@ static BOOL validate_used_block( const SUBHEAP *subheap, const struct block *blo
         err = "invalid block flags";
     else if (!contains( base, commit_end - base, block, block_get_size( block ) ))
         err = "invalid block size";
-    else if (block->unused_bytes > block_get_size( block ) - sizeof(*block))
+    else if (block->tail_size > block_get_size( block ) - sizeof(*block))
         err = "invalid block unused size";
     else if ((next = next_block( subheap, block )) && (block_get_flags( next ) & BLOCK_FLAG_PREV_FREE))
         err = "invalid next block flags";
@@ -1162,8 +1166,8 @@ static BOOL validate_used_block( const SUBHEAP *subheap, const struct block *blo
     }
     else if (!err && (flags & HEAP_TAIL_CHECKING_ENABLED))
     {
-        const unsigned char *tail = (unsigned char *)block + block_get_size( block ) - block->unused_bytes;
-        for (i = 0; !err && i < block->unused_bytes; i++) if (tail[i] != ARENA_TAIL_FILLER) err = "invalid block tail";
+        const unsigned char *tail = (unsigned char *)block + block_get_size( block ) - block->tail_size;
+        for (i = 0; !err && i < ALIGNMENT; i++) if (tail[i] != ARENA_TAIL_FILLER) err = "invalid block tail";
     }
 
     if (err)
@@ -1330,7 +1334,7 @@ static void heap_set_debug_flags( HANDLE handle )
                 else
                 {
                     if (block_get_type( block ) == ARENA_PENDING_MAGIC) mark_block_free( block + 1, block_get_size( block ) - sizeof(*block), flags );
-                    else mark_block_tail( (char *)block + block_get_size( block ) - block->unused_bytes, block->unused_bytes, flags );
+                    else mark_block_tail( block, flags );
                 }
             }
         }
@@ -1470,13 +1474,29 @@ HANDLE WINAPI RtlDestroyHeap( HANDLE heap )
     return 0;
 }
 
+static SIZE_T heap_get_block_size( HEAP *heap, ULONG flags, SIZE_T size )
+{
+    static const ULONG padd_flags = HEAP_VALIDATE | HEAP_VALIDATE_ALL | HEAP_VALIDATE_PARAMS;
+    static const ULONG check_flags = HEAP_TAIL_CHECKING_ENABLED | HEAP_FREE_CHECKING_ENABLED | HEAP_CHECKING_ENABLED;
+    SIZE_T overhead;
+
+    if ((flags & check_flags)) overhead = ALIGNMENT;
+    else overhead = sizeof(struct block);
+
+    if ((flags & HEAP_TAIL_CHECKING_ENABLED) || RUNNING_ON_VALGRIND) overhead += ALIGNMENT;
+    if (flags & padd_flags) overhead += ALIGNMENT;
+
+    if (size < ALIGNMENT) size = ALIGNMENT;
+    return ROUND_SIZE( size + overhead, ALIGNMENT - 1 );
+}
+
 static NTSTATUS heap_allocate( HEAP *heap, ULONG flags, SIZE_T size, void **ret )
 {
     SIZE_T old_block_size, block_size;
     struct block *block;
     SUBHEAP *subheap;
 
-    block_size = sizeof(*block) + ROUND_SIZE(size) + HEAP_TAIL_EXTRA_SIZE(flags);
+    block_size = heap_get_block_size( heap, flags, size );
     if (block_size < size) return STATUS_NO_MEMORY;  /* overflow */
     if (block_size < HEAP_MIN_BLOCK_SIZE) block_size = HEAP_MIN_BLOCK_SIZE;
 
@@ -1494,7 +1514,8 @@ static NTSTATUS heap_allocate( HEAP *heap, ULONG flags, SIZE_T size, void **ret 
 
     block_set_type( block, ARENA_INUSE_MAGIC );
     shrink_used_block( subheap, block, 0, old_block_size, block_size, size );
-    initialize_block( block + 1, size, block->unused_bytes, flags );
+    initialize_block( block + 1, size, flags );
+    mark_block_tail( block, flags );
 
     *ret = block + 1;
     return STATUS_SUCCESS;
@@ -1528,7 +1549,7 @@ void *WINAPI DECLSPEC_HOTPATCH RtlAllocateHeap( HANDLE heap, ULONG flags, SIZE_T
 
 static NTSTATUS heap_free( HEAP *heap, void *ptr )
 {
-    ARENA_INUSE *block;
+    struct block *block;
     SUBHEAP *subheap;
 
     if (!(block = unsafe_block_from_ptr( heap, ptr, &subheap ))) return STATUS_INVALID_PARAMETER;
@@ -1572,7 +1593,7 @@ static NTSTATUS heap_reallocate( HEAP *heap, ULONG flags, void *ptr, SIZE_T size
     SUBHEAP *subheap;
     NTSTATUS status;
 
-    block_size = sizeof(*block) + ROUND_SIZE(size) + HEAP_TAIL_EXTRA_SIZE(flags);
+    block_size = heap_get_block_size( heap, flags, size );
     if (block_size < size) return STATUS_NO_MEMORY;  /* overflow */
     if (block_size < HEAP_MIN_BLOCK_SIZE) block_size = HEAP_MIN_BLOCK_SIZE;
 
@@ -1614,8 +1635,8 @@ static NTSTATUS heap_reallocate( HEAP *heap, ULONG flags, void *ptr, SIZE_T size
     valgrind_notify_resize( block + 1, old_size, size );
     shrink_used_block( subheap, block, block_get_flags( block ), old_block_size, block_size, size );
 
-    if (size <= old_size) mark_block_tail( (char *)(block + 1) + size, block->unused_bytes, flags );
-    else initialize_block( (char *)(block + 1) + old_size, size - old_size, block->unused_bytes, flags );
+    if (size > old_size) initialize_block( (char *)(block + 1) + old_size, size - old_size, flags );
+    mark_block_tail( block, flags );
 
     /* Return the new arena */
 
@@ -1716,7 +1737,7 @@ BOOLEAN WINAPI RtlUnlockHeap( HANDLE heap )
 
 static NTSTATUS heap_size( HEAP *heap, const void *ptr, SIZE_T *size )
 {
-    const ARENA_INUSE *block;
+    const struct block *block;
     SUBHEAP *subheap;
 
     if (!(block = unsafe_block_from_ptr( heap, ptr, &subheap ))) return STATUS_INVALID_PARAMETER;
@@ -1782,11 +1803,15 @@ static NTSTATUS heap_walk_blocks( const HEAP *heap, const SUBHEAP *subheap, stru
 {
     const char *base = subheap_base( subheap ), *commit_end = subheap_commit_end( subheap ), *end = base + subheap_size( subheap );
     const struct block *block, *blocks = first_block( subheap );
+    char *data = entry->lpData;
 
     if (entry->lpData == commit_end) return STATUS_NO_MORE_ENTRIES;
 
+    if (entry->wFlags & RTL_HEAP_ENTRY_BUSY) block = (struct block *)data - 1;
+    else block = (struct block *)(data - sizeof(struct list)) - 1;
+
     if (entry->lpData == base) block = blocks;
-    else if (!(block = next_block( subheap, (struct block *)entry->lpData - 1 )))
+    else if (!(block = next_block( subheap, block )))
     {
         entry->lpData = (void *)commit_end;
         entry->cbData = end - commit_end;
@@ -1802,8 +1827,8 @@ static NTSTATUS heap_walk_blocks( const HEAP *heap, const SUBHEAP *subheap, stru
         entry->cbData = block_get_size( block ) - block_get_overhead( block );
         /* FIXME: last free block should not include uncommitted range, which also has its own overhead */
         if (!contains( blocks, commit_end - (char *)blocks, block, block_get_size( block ) ))
-            entry->cbData = commit_end - (char *)entry->lpData - 8 * sizeof(void *);
-        entry->cbOverhead = 4 * sizeof(void *);
+            entry->cbData = commit_end - (char *)entry->lpData - 4 * ALIGNMENT;
+        entry->cbOverhead = 2 * ALIGNMENT;
         entry->iRegionIndex = 0;
         entry->wFlags = 0;
     }

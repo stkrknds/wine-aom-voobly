@@ -255,13 +255,11 @@ extern void macdrv_displays_changed(const macdrv_event *event) DECLSPEC_HIDDEN;
 extern void macdrv_UpdateClipboard(void) DECLSPEC_HIDDEN;
 extern BOOL query_pasteboard_data(HWND hwnd, CFStringRef type) DECLSPEC_HIDDEN;
 extern void macdrv_lost_pasteboard_ownership(HWND hwnd) DECLSPEC_HIDDEN;
-extern const char *debugstr_format(UINT id) DECLSPEC_HIDDEN;
 extern HANDLE macdrv_get_pasteboard_data(CFTypeRef pasteboard, UINT desired_format) DECLSPEC_HIDDEN;
 extern BOOL macdrv_pasteboard_has_format(CFTypeRef pasteboard, UINT desired_format) DECLSPEC_HIDDEN;
 extern UINT* macdrv_get_pasteboard_formats(CFTypeRef pasteboard, UINT* num_formats) DECLSPEC_HIDDEN;
 
 extern BOOL query_drag_operation(macdrv_query* query) DECLSPEC_HIDDEN;
-extern BOOL query_drag_exited(macdrv_query* query) DECLSPEC_HIDDEN;
 extern BOOL query_drag_drop(macdrv_query* query) DECLSPEC_HIDDEN;
 
 extern struct opengl_funcs *macdrv_wine_get_wgl_driver(UINT version) DECLSPEC_HIDDEN;
@@ -287,15 +285,18 @@ extern NTSTATUS macdrv_init(void *arg) DECLSPEC_HIDDEN;
  * Mac IME driver
  */
 
-extern NTSTATUS macdrv_ime_process_text_input(void *arg) DECLSPEC_HIDDEN;
-
-extern void macdrv_im_set_text(const macdrv_event *event) DECLSPEC_HIDDEN;
-extern void macdrv_sent_text_input(const macdrv_event *event) DECLSPEC_HIDDEN;
-extern BOOL query_ime_char_rect(macdrv_query* query) DECLSPEC_HIDDEN;
+extern NTSTATUS WINAPI macdrv_ime_set_text(void *params, ULONG size) DECLSPEC_HIDDEN;
+extern NTSTATUS WINAPI macdrv_ime_query_char_rect(void *params, ULONG size) DECLSPEC_HIDDEN;
 
 /* unixlib interface */
 
+extern NTSTATUS macdrv_ime_process_text_input(void *arg) DECLSPEC_HIDDEN;
 extern NTSTATUS macdrv_notify_icon(void *arg) DECLSPEC_HIDDEN;
+
+extern NTSTATUS macdrv_client_func(enum macdrv_client_funcs func, const void *params,
+                                   ULONG size) DECLSPEC_HIDDEN;
+
+extern NTSTATUS WINAPI macdrv_dnd_query_exited(void *arg, ULONG size) DECLSPEC_HIDDEN;
 
 /* user helpers */
 

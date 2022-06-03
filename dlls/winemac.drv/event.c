@@ -26,6 +26,7 @@
 #include "winuser.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(event);
+WINE_DECLARE_DEBUG_CHANNEL(imm);
 
 
 /* return the name of an Mac event */
@@ -137,6 +138,87 @@ static macdrv_event_mask get_event_mask(DWORD mask)
     }
 
     return event_mask;
+}
+
+
+/***********************************************************************
+ *              macdrv_im_set_text
+ */
+static void macdrv_im_set_text(const macdrv_event *event)
+{
+    HWND hwnd = macdrv_get_window_hwnd(event->window);
+    struct ime_set_text_params *params;
+    CFIndex length = 0, size;
+
+    TRACE_(imm)("win %p/%p himc %p text %s complete %u\n", hwnd, event->window, event->im_set_text.data,
+                debugstr_cf(event->im_set_text.text), event->im_set_text.complete);
+
+    if (event->im_set_text.text)
+        length = CFStringGetLength(event->im_set_text.text);
+
+    size = offsetof(struct ime_set_text_params, text[length]);
+    if (!(params = malloc(size))) return;
+    params->hwnd = hwnd;
+    params->data = event->im_set_text.data;
+    params->cursor_pos = event->im_set_text.cursor_pos;
+    params->complete = event->im_set_text.complete;
+
+    if (length)
+        CFStringGetCharacters(event->im_set_text.text, CFRangeMake(0, length), params->text);
+
+    macdrv_client_func(client_func_ime_set_text, params, size);
+}
+
+/***********************************************************************
+ *              macdrv_sent_text_input
+ */
+static void macdrv_sent_text_input(const macdrv_event *event)
+{
+    TRACE_(imm)("handled: %s\n", event->sent_text_input.handled ? "TRUE" : "FALSE");
+    *event->sent_text_input.done = event->sent_text_input.handled ? 1 : -1;
+}
+
+
+/**************************************************************************
+ *              query_drag_exited
+ */
+static BOOL query_drag_exited(macdrv_query *query)
+{
+    struct dnd_query_exited_params params;
+    params.hwnd = macdrv_get_window_hwnd(query->window);
+    return macdrv_client_func(client_func_dnd_query_exited, &params, sizeof(params));
+}
+
+
+/**************************************************************************
+ *              query_ime_char_rect
+ */
+BOOL query_ime_char_rect(macdrv_query* query)
+{
+    HWND hwnd = macdrv_get_window_hwnd(query->window);
+    void *himc = query->ime_char_rect.data;
+    CFRange *range = &query->ime_char_rect.range;
+    CGRect *rect = &query->ime_char_rect.rect;
+    struct ime_query_char_rect_result result = {0};
+    struct ime_query_char_rect_params params;
+    BOOL ret;
+
+    TRACE_(imm)("win %p/%p himc %p range %ld-%ld\n", hwnd, query->window, himc, range->location,
+                range->length);
+
+    params.hwnd = hwnd;
+    params.data = himc;
+    params.result = &result;
+    params.location = range->location;
+    params.length = range->length;
+    ret = macdrv_client_func(client_func_ime_query_char_rect, &params, sizeof(params));
+    *range = CFRangeMake(result.location, result.length);
+    *rect = cgrect_from_rect(result.rect);
+
+    TRACE_(imm)(" -> %s range %ld-%ld rect %s\n", ret ? "TRUE" : "FALSE", range->location,
+                range->length, wine_dbgstr_cgrect(*rect));
+
+    return ret;
 }
 
 

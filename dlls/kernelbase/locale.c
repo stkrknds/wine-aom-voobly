@@ -2000,6 +2000,22 @@ static inline WORD get_char_type( DWORD type, WCHAR ch )
 }
 
 
+static inline void map_byterev( const WCHAR *src, int len, WCHAR *dst )
+{
+    while (len--) *dst++ = RtlUshortByteSwap( *src++ );
+}
+
+
+static int casemap_string( const USHORT *table, const WCHAR *src, int srclen, WCHAR *dst, int dstlen )
+{
+    int pos, ret = srclen;
+
+    for (pos = 0; pos < dstlen && srclen; pos++, src++, srclen--)
+        dst[pos] = casemap( table, *src );
+    return ret;
+}
+
+
 static union char_weights get_char_weights( WCHAR c, UINT except )
 {
     union char_weights ret;
@@ -2205,13 +2221,12 @@ static NTSTATUS expand_ligatures( const WCHAR *src, int srclen, WCHAR *dst, int 
 
 static NTSTATUS fold_digits( const WCHAR *src, int srclen, WCHAR *dst, int *dstlen )
 {
-    int i, len = *dstlen;
+    NTSTATUS ret = STATUS_SUCCESS;
+    int len = casemap_string( charmaps[CHARMAP_FOLDDIGITS], src, srclen, dst, *dstlen );
 
-    *dstlen = srclen;
-    if (!len) return STATUS_SUCCESS;
-    if (srclen > len) return STATUS_BUFFER_TOO_SMALL;
-    for (i = 0; i < srclen; i++) dst[i] = casemap( charmaps[CHARMAP_FOLDDIGITS], src[i] );
-    return STATUS_SUCCESS;
+    if (*dstlen && *dstlen < len) ret = STATUS_BUFFER_TOO_SMALL;
+    *dstlen = len;
+    return ret;
 }
 
 
@@ -3740,6 +3755,8 @@ static int get_sortkey( const struct sortguid *sortid, DWORD flags,
         SetLastError( ERROR_INSUFFICIENT_BUFFER );
         return 0;
     }
+    if (flags & LCMAP_BYTEREV)
+        map_byterev( (WCHAR *)dst, min( ret, dstlen ) / sizeof(WCHAR), (WCHAR *)dst );
     return ret;
 }
 
@@ -3892,44 +3909,57 @@ static int find_substring( const struct sortguid *sortid, DWORD flags, const WCH
 }
 
 
-/* compose a full-width katakana. return consumed source characters. */
-static int map_to_fullwidth( const WCHAR *src, int srclen, WCHAR *dst )
+/* map buffer to full-width katakana */
+static int map_to_fullwidth( const USHORT *table, const WCHAR *src, int srclen, WCHAR *dst, int dstlen )
 {
-    *dst = casemap( charmaps[CHARMAP_FULLWIDTH], *src );
-    if (srclen <= 1) return 1;
+    int pos;
 
-    switch (src[1])
+    for (pos = 0; srclen; pos++, src++, srclen--)
     {
-    case 0xff9e:  /* datakuten (voiced sound) */
-        if ((*src >= 0xff76 && *src <= 0xff84) || (*src >= 0xff8a && *src <= 0xff8e) || *src == 0x30fd)
-            *dst += 1;
-        else if (*src == 0xff73)
-            *dst = 0x30f4; /* KATAKANA LETTER VU */
-        else if (*src == 0xff9c)
-            *dst = 0x30f7; /* KATAKANA LETTER VA */
-        else if (*src == 0x30f0)
-            *dst = 0x30f8; /* KATAKANA LETTER VI */
-        else if (*src == 0x30f1)
-            *dst = 0x30f9; /* KATAKANA LETTER VE */
-        else if (*src == 0xff66)
-            *dst = 0x30fa; /* KATAKANA LETTER VO */
-        else
-            return 1;
-        break;
-    case 0xff9f:  /* handakuten (semi-voiced sound) */
-        if (*src >= 0xff8a && *src <= 0xff8e)
-            *dst += 2;
-        else
-            return 1;
-        break;
-    default:
-        return 1;
+        WCHAR wch = casemap( charmaps[CHARMAP_FULLWIDTH], *src );
+        if (srclen > 1)
+        {
+            switch (src[1])
+            {
+            case 0xff9e:  /* dakuten (voiced sound) */
+                if ((*src >= 0xff76 && *src <= 0xff84) ||
+                    (*src >= 0xff8a && *src <= 0xff8e) ||
+                    *src == 0x30fd)
+                    wch++;
+                else if (*src == 0xff73)
+                    wch = 0x30f4; /* KATAKANA LETTER VU */
+                else if (*src == 0xff9c)
+                    wch = 0x30f7; /* KATAKANA LETTER VA */
+                else if (*src == 0x30f0)
+                    wch = 0x30f8; /* KATAKANA LETTER VI */
+                else if (*src == 0x30f1)
+                    wch = 0x30f9; /* KATAKANA LETTER VE */
+                else if (*src == 0xff66)
+                    wch = 0x30fa; /* KATAKANA LETTER VO */
+                else
+                    break;
+                src++;
+                srclen--;
+                break;
+            case 0xff9f:  /* handakuten (semi-voiced sound) */
+                if (*src >= 0xff8a && *src <= 0xff8e)
+                {
+                    wch += 2;
+                    src++;
+                    srclen--;
+                }
+                break;
+            default:
+                break;
+            }
+        }
+        if (pos < dstlen) dst[pos] = table ? casemap( table, wch ) : wch;
     }
-    return 2;
+    return pos;
 }
 
-/* map single full-width character to single or double half-width characters. */
-static int map_to_halfwidth( WCHAR c, WCHAR *dst, int dstlen )
+/* map full-width characters to single or double half-width characters. */
+static int map_to_halfwidth( const USHORT *table, const WCHAR *src, int srclen, WCHAR *dst, int dstlen )
 {
     static const BYTE katakana_map[] =
     {
@@ -3945,20 +3975,126 @@ static int map_to_halfwidth( WCHAR c, WCHAR *dst, int dstlen )
         0x00, 0x00, 0x00, 0x00, 0x4e, 0x00, 0x00, 0x08, /* U+30f0- */
         0x08, 0x08, 0x08, 0x00, 0x00, 0x00, 0x01        /* U+30f8- */
     };
-    USHORT shift = c - 0x30ac;
-    BYTE k;
+    int pos;
 
-    if (shift < ARRAY_SIZE(katakana_map) && (k = katakana_map[shift]))
+    for (pos = 0; srclen; src++, srclen--)
     {
-        if (dstlen >= 2)
+        WCHAR ch = table ? casemap( table, *src ) : *src;
+        USHORT shift = ch - 0x30ac;
+        BYTE k;
+
+        if (shift < ARRAY_SIZE(katakana_map) && (k = katakana_map[shift]))
         {
-            dst[0] = casemap( charmaps[CHARMAP_HALFWIDTH], c - k );
-            dst[1] = (k == 2) ? 0xff9f : 0xff9e;
+            if (pos < dstlen - 1)
+            {
+                dst[pos] = casemap( charmaps[CHARMAP_HALFWIDTH], ch - k );
+                dst[pos + 1] = (k == 2) ? 0xff9f : 0xff9e;
+            }
+            pos += 2;
         }
-        return 2;
+        else
+        {
+            if (pos < dstlen) dst[pos] = casemap( charmaps[CHARMAP_HALFWIDTH], ch );
+            pos++;
+        }
     }
-    if (dstlen >= 1) dst[0] = casemap( charmaps[CHARMAP_HALFWIDTH], c );
-    return 1;
+    return pos;
+}
+
+
+static int lcmap_string( const struct sortguid *sortid, DWORD flags,
+                         const WCHAR *src, int srclen, WCHAR *dst, int dstlen )
+{
+    const USHORT *case_table = NULL;
+    int ret;
+
+    if (flags & (LCMAP_LOWERCASE | LCMAP_UPPERCASE))
+    {
+        if ((flags & LCMAP_TITLECASE) == LCMAP_TITLECASE)  /* FIXME */
+        {
+            SetLastError( ERROR_INVALID_FLAGS );
+            return 0;
+        }
+        case_table = sort.casemap + (flags & LCMAP_LINGUISTIC_CASING ? sortid->casemap : 0);
+        case_table = case_table + 2 + (flags & LCMAP_LOWERCASE ? case_table[1] : 0);
+    }
+
+    switch (flags & ~(LCMAP_BYTEREV | LCMAP_LOWERCASE | LCMAP_UPPERCASE | LCMAP_LINGUISTIC_CASING))
+    {
+    case LCMAP_HIRAGANA:
+        ret = casemap_string( charmaps[CHARMAP_HIRAGANA], src, srclen, dst, dstlen );
+        break;
+    case LCMAP_KATAKANA:
+        ret = casemap_string( charmaps[CHARMAP_KATAKANA], src, srclen, dst, dstlen );
+        break;
+    case LCMAP_HALFWIDTH:
+        ret = map_to_halfwidth( NULL, src, srclen, dst, dstlen );
+        break;
+    case LCMAP_HIRAGANA | LCMAP_HALFWIDTH:
+        ret = map_to_halfwidth( charmaps[CHARMAP_HIRAGANA], src, srclen, dst, dstlen );
+        break;
+    case LCMAP_KATAKANA | LCMAP_HALFWIDTH:
+        ret = map_to_halfwidth( charmaps[CHARMAP_KATAKANA], src, srclen, dst, dstlen );
+        break;
+    case LCMAP_FULLWIDTH:
+        ret = map_to_fullwidth( NULL, src, srclen, dst, dstlen );
+        break;
+    case LCMAP_HIRAGANA | LCMAP_FULLWIDTH:
+        ret = map_to_fullwidth( charmaps[CHARMAP_HIRAGANA], src, srclen, dst, dstlen );
+        break;
+    case LCMAP_KATAKANA | LCMAP_FULLWIDTH:
+        ret = map_to_fullwidth( charmaps[CHARMAP_KATAKANA], src, srclen, dst, dstlen );
+        break;
+    case LCMAP_SIMPLIFIED_CHINESE:
+        ret = casemap_string( charmaps[CHARMAP_SIMPLIFIED], src, srclen, dst, dstlen );
+        break;
+    case LCMAP_TRADITIONAL_CHINESE:
+        ret = casemap_string( charmaps[CHARMAP_TRADITIONAL], src, srclen, dst, dstlen );
+        break;
+    case NORM_IGNORENONSPACE:
+    case NORM_IGNORESYMBOLS:
+    case NORM_IGNORENONSPACE | NORM_IGNORESYMBOLS:
+        if (flags & ~(NORM_IGNORENONSPACE | NORM_IGNORESYMBOLS | LCMAP_BYTEREV))
+        {
+            SetLastError( ERROR_INVALID_FLAGS );
+            return 0;
+        }
+        for (ret = 0; srclen; src++, srclen--)
+        {
+            if ((flags & NORM_IGNORESYMBOLS) && (get_char_type( CT_CTYPE1, *src ) & (C1_PUNCT | C1_SPACE)))
+                continue;
+            if (ret < dstlen) dst[ret] = *src;
+            ret++;
+        }
+        break;
+    case 0:
+        if (case_table)
+        {
+            ret = casemap_string( case_table, src, srclen, dst, dstlen );
+            case_table = NULL;
+            break;
+        }
+        if (flags & LCMAP_BYTEREV)
+        {
+            ret = min( srclen, dstlen );
+            memcpy( dst, src, ret * sizeof(WCHAR) );
+            break;
+        }
+        /* fall through */
+    default:
+        SetLastError( ERROR_INVALID_FLAGS );
+        return 0;
+    }
+
+    if (dstlen && case_table) ret = casemap_string( case_table, dst, ret, dst, dstlen );
+    if (flags & LCMAP_BYTEREV) map_byterev( dst, min( dstlen, ret ), dst );
+
+    if (dstlen && dstlen < ret)
+    {
+        SetLastError( ERROR_INSUFFICIENT_BUFFER );
+        return 0;
+    }
+    return ret;
 }
 
 
@@ -6286,8 +6422,6 @@ INT WINAPI DECLSPEC_HOTPATCH LCMapStringEx( const WCHAR *locale, DWORD flags, co
                                             void *reserved, LPARAM handle )
 {
     const struct sortguid *sortid = NULL;
-    LPWSTR dst_ptr;
-    INT len;
 
     if (version) FIXME( "unsupported version structure %p\n", version );
     if (reserved) FIXME( "unsupported reserved pointer %p\n", reserved );
@@ -6303,182 +6437,35 @@ INT WINAPI DECLSPEC_HOTPATCH LCMapStringEx( const WCHAR *locale, DWORD flags, co
         return 0;
     }
 
-    /* mutually exclusive flags */
-    if ((flags & (LCMAP_LOWERCASE | LCMAP_UPPERCASE)) == (LCMAP_LOWERCASE | LCMAP_UPPERCASE) ||
-        (flags & (LCMAP_HIRAGANA | LCMAP_KATAKANA)) == (LCMAP_HIRAGANA | LCMAP_KATAKANA) ||
-        (flags & (LCMAP_HALFWIDTH | LCMAP_FULLWIDTH)) == (LCMAP_HALFWIDTH | LCMAP_FULLWIDTH) ||
-        (flags & (LCMAP_TRADITIONAL_CHINESE | LCMAP_SIMPLIFIED_CHINESE)) == (LCMAP_TRADITIONAL_CHINESE | LCMAP_SIMPLIFIED_CHINESE) ||
-        !flags)
-    {
-        SetLastError( ERROR_INVALID_FLAGS );
-        return 0;
-    }
-
-    if (!dstlen) dst = NULL;
-
-    if (flags & (LCMAP_LOWERCASE | LCMAP_UPPERCASE | LCMAP_SORTKEY))
-    {
-        if (!(sortid = get_language_sort( locale ))) return 0;
-    }
-    if (flags & LCMAP_SORTKEY)
-    {
-        if (src == dst)
-        {
-            SetLastError( ERROR_INVALID_FLAGS );
-            return 0;
-        }
-        if (srclen < 0) srclen = lstrlenW(src);
-
-        TRACE( "(%s,0x%08lx,%s,%d,%p,%d)\n",
-               debugstr_w(locale), flags, debugstr_wn(src, srclen), srclen, dst, dstlen );
-
-        return get_sortkey( sortid, flags, src, srclen, (BYTE *)dst, dstlen );
-    }
-
-    /* SORT_STRINGSORT must be used exclusively with LCMAP_SORTKEY */
-    if (flags & SORT_STRINGSORT)
-    {
-        SetLastError( ERROR_INVALID_FLAGS );
-        return 0;
-    }
-    if (((flags & (NORM_IGNORENONSPACE | NORM_IGNORESYMBOLS)) &&
-         (flags & ~(NORM_IGNORENONSPACE | NORM_IGNORESYMBOLS))) ||
-        ((flags & (LCMAP_HIRAGANA | LCMAP_KATAKANA | LCMAP_HALFWIDTH | LCMAP_FULLWIDTH)) &&
-         (flags & (LCMAP_SIMPLIFIED_CHINESE | LCMAP_TRADITIONAL_CHINESE))))
-    {
-        SetLastError( ERROR_INVALID_FLAGS );
-        return 0;
-    }
-
     if (srclen < 0) srclen = lstrlenW(src) + 1;
 
     TRACE( "(%s,0x%08lx,%s,%d,%p,%d)\n",
            debugstr_w(locale), flags, debugstr_wn(src, srclen), srclen, dst, dstlen );
 
-    if (!dst) /* return required string length */
-    {
-        if (flags & NORM_IGNORESYMBOLS)
-        {
-            for (len = 0; srclen; src++, srclen--)
-                if (!(get_char_type( CT_CTYPE1, *src ) & (C1_PUNCT | C1_SPACE))) len++;
-        }
-        else if (flags & LCMAP_FULLWIDTH)
-        {
-            WCHAR wch;
-            for (len = 0; srclen; src++, srclen--, len++)
-            {
-                if (map_to_fullwidth( src, srclen, &wch ) == 2)
-                {
-                    src++;
-                    srclen--;
-                }
-            }
-        }
-        else if (flags & LCMAP_HALFWIDTH)
-        {
-            for (len = 0; srclen; src++, srclen--, len++)
-            {
-                WCHAR wch = *src;
-                /* map Hiragana to Katakana before decomposition if needed */
-                if (flags & LCMAP_KATAKANA) wch = casemap( charmaps[CHARMAP_KATAKANA], wch );
-                if (map_to_halfwidth( wch, NULL, 0 ) == 2) len++;
-            }
-        }
-        else len = srclen;
-        return len;
-    }
+    flags &= ~LOCALE_USE_CP_ACP;
 
     if (src == dst && (flags & ~(LCMAP_LOWERCASE | LCMAP_UPPERCASE)))
     {
         SetLastError( ERROR_INVALID_FLAGS );
         return 0;
     }
-
-    if (flags & (NORM_IGNORENONSPACE | NORM_IGNORESYMBOLS))
+    if (flags & (LCMAP_LOWERCASE | LCMAP_UPPERCASE | LCMAP_SORTKEY))
     {
-        for (len = dstlen, dst_ptr = dst; srclen && len; src++, srclen--)
-        {
-            if ((flags & NORM_IGNORESYMBOLS) && (get_char_type( CT_CTYPE1, *src ) & (C1_PUNCT | C1_SPACE)))
-                continue;
-            *dst_ptr++ = *src;
-            len--;
-        }
-        goto done;
+        if (!(sortid = get_language_sort( locale ))) return 0;
     }
-
-    if (flags & LCMAP_TRADITIONAL_CHINESE)
+    if (flags & LCMAP_HASH)
     {
-        for (len = dstlen, dst_ptr = dst; srclen && len; srclen--, len--)
-            *dst_ptr++ = casemap( charmaps[CHARMAP_TRADITIONAL], *src++ );
-    }
-    if (flags & LCMAP_SIMPLIFIED_CHINESE)
-    {
-        for (len = dstlen, dst_ptr = dst; srclen && len; srclen--, len--)
-            *dst_ptr++ = casemap( charmaps[CHARMAP_SIMPLIFIED], *src++ );
-    }
-
-    if (flags & (LCMAP_FULLWIDTH | LCMAP_HALFWIDTH | LCMAP_HIRAGANA | LCMAP_KATAKANA))
-    {
-        for (len = dstlen, dst_ptr = dst; len && srclen; src++, srclen--, len--, dst_ptr++)
-        {
-            WCHAR wch;
-            if (flags & LCMAP_FULLWIDTH)
-            {
-                /* map half-width character to full-width one,
-                   e.g. U+FF71 -> U+30A2, U+FF8C U+FF9F -> U+30D7. */
-                if (map_to_fullwidth( src, srclen, &wch ) == 2)
-                {
-                    src++;
-                    srclen--;
-                }
-            }
-            else wch = *src;
-
-            if (flags & LCMAP_KATAKANA) wch = casemap( charmaps[CHARMAP_KATAKANA], wch );
-            else if (flags & LCMAP_HIRAGANA) wch = casemap( charmaps[CHARMAP_HIRAGANA], wch );
-
-            if (flags & LCMAP_HALFWIDTH)
-            {
-                /* map full-width character to half-width one,
-                   e.g. U+30A2 -> U+FF71, U+30D7 -> U+FF8C U+FF9F. */
-                if (map_to_halfwidth(wch, dst_ptr, len) == 2)
-                {
-                    len--;
-                    dst_ptr++;
-                    if (!len) break;
-                }
-            }
-            else *dst_ptr = wch;
-        }
-        if (!(flags & (LCMAP_UPPERCASE | LCMAP_LOWERCASE)) || srclen) goto done;
-
-        srclen = dst_ptr - dst;
-        src = dst;
-    }
-
-    if (flags & (LCMAP_UPPERCASE | LCMAP_LOWERCASE))
-    {
-        const USHORT *table = sort.casemap + (flags & LCMAP_LINGUISTIC_CASING ? sortid->casemap : 0);
-        table = table + 2 + (flags & LCMAP_LOWERCASE ? table[1] : 0);
-        for (len = dstlen, dst_ptr = dst; srclen && len; src++, srclen--, len--)
-            *dst_ptr++ = casemap( table, *src );
-    }
-    else
-    {
-        len = min( srclen, dstlen );
-        memcpy( dst, src, len * sizeof(WCHAR) );
-        dst_ptr = dst + len;
-        srclen -= len;
-    }
-
-done:
-    if (srclen)
-    {
-        SetLastError( ERROR_INSUFFICIENT_BUFFER );
+        FIXME( "LCMAP_HASH %s not supported\n", debugstr_wn( src, srclen ));
         return 0;
     }
+    if (flags & LCMAP_SORTHANDLE)
+    {
+        FIXME( "LCMAP_SORTHANDLE not supported\n" );
+        return 0;
+    }
+    if (flags & LCMAP_SORTKEY) return get_sortkey( sortid, flags, src, srclen, (BYTE *)dst, dstlen );
 
-    return dst_ptr - dst;
+    return lcmap_string( sortid, flags, src, srclen, dst, dstlen );
 }
 
 

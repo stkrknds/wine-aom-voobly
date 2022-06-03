@@ -21,6 +21,7 @@
 
 enum macdrv_funcs
 {
+    unix_ime_clear,
     unix_ime_process_text_input,
     unix_ime_using_input_method,
     unix_init,
@@ -62,3 +63,48 @@ struct notify_icon_params
     DWORD msg;
     struct _NOTIFYICONDATAW *data;
 };
+
+/* driver client callbacks exposed with KernelCallbackTable interface */
+enum macdrv_client_funcs
+{
+    client_func_dnd_query_exited = NtUserDriverCallbackFirst,
+    client_func_ime_query_char_rect,
+    client_func_ime_set_text,
+    client_func_last
+};
+
+/* macdrv_dnd_query_exited params */
+struct dnd_query_exited_params
+{
+    HWND hwnd;
+};
+
+/* macdrv_ime_query_char_rect result */
+struct ime_query_char_rect_result
+{
+    RECT rect;
+    UINT32 location;
+    UINT32 length;
+};
+
+/* macdrv_ime_query_char_rect params */
+struct ime_query_char_rect_params
+{
+    HWND hwnd;
+    void *data;
+    UINT32 location;
+    UINT32 length;
+    struct ime_query_char_rect_result *result; /* FIXME: Use NtCallbackReturn instead */
+};
+
+/* macdrv_ime_set_text params */
+struct ime_set_text_params
+{
+    HWND hwnd;
+    void *data;
+    UINT32 cursor_pos;
+    UINT32 complete;
+    WCHAR text[1];
+};
+
+C_ASSERT(client_func_last <= NtUserDriverCallbackLast + 1);
