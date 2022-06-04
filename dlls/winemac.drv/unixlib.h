@@ -21,17 +21,46 @@
 
 enum macdrv_funcs
 {
+    unix_dnd_get_data,
+    unix_dnd_get_formats,
+    unix_dnd_have_format,
+    unix_dnd_release,
+    unix_dnd_retain,
     unix_ime_clear,
     unix_ime_process_text_input,
     unix_ime_using_input_method,
     unix_init,
     unix_notify_icon,
+    unix_quit_result,
     unix_funcs_count
 };
 
 /* FIXME: Use __wine_unix_call when the rest of the stack is ready */
-extern NTSTATUS unix_call(enum macdrv_funcs code, void *params) DECLSPEC_HIDDEN;
-#define MACDRV_CALL(func, params) unix_call( unix_ ## func, params )
+extern NTSTATUS (CDECL *macdrv_unix_call)(enum macdrv_funcs code, void *params) DECLSPEC_HIDDEN;
+#define MACDRV_CALL(func, params) macdrv_unix_call(unix_ ## func, params)
+
+/* macdrv_dnd_get_data params */
+struct dnd_get_data_params
+{
+    UINT64 handle;
+    UINT format;
+    size_t size;
+    void *data;
+};
+
+/* macdrv_dnd_get_formats params */
+struct dnd_get_formats_params
+{
+    UINT64 handle;
+    UINT formats[64];
+};
+
+/* macdrv_dnd_have_format params */
+struct dnd_have_format_params
+{
+    UINT64 handle;
+    UINT format;
+};
 
 /* macdrv_ime_process_text_input params */
 struct process_text_input_params
@@ -54,7 +83,9 @@ struct localized_string
 
 struct init_params
 {
+    NTSTATUS (WINAPI *pNtWaitForMultipleObjects)(ULONG,const HANDLE*,BOOLEAN,BOOLEAN,const LARGE_INTEGER*);
     struct localized_string *strings;
+    NTSTATUS (CDECL *unix_call)(enum macdrv_funcs code, void *params);
 };
 
 /* macdrv_notify_icon params */
@@ -64,13 +95,71 @@ struct notify_icon_params
     struct _NOTIFYICONDATAW *data;
 };
 
+/* macdrv_quit_result params */
+struct quit_result_params
+{
+    int result;
+};
+
 /* driver client callbacks exposed with KernelCallbackTable interface */
 enum macdrv_client_funcs
 {
-    client_func_dnd_query_exited = NtUserDriverCallbackFirst,
+    client_func_app_icon = NtUserDriverCallbackFirst,
+    client_func_app_quit_request,
+    client_func_dnd_query_drag,
+    client_func_dnd_query_drop,
+    client_func_dnd_query_exited,
     client_func_ime_query_char_rect,
     client_func_ime_set_text,
     client_func_last
+};
+
+/* macdrv_app_icon result */
+struct app_icon_entry
+{
+    UINT32 width;
+    UINT32 height;
+    UINT32 size;
+    void *png;
+    HICON icon;
+};
+
+struct app_icon_result
+{
+    UINT32 count;
+    struct app_icon_entry entries[64];
+};
+
+/* macdrv_app_icon params */
+struct app_icon_params
+{
+    struct app_icon_result *result; /* FIXME: Use NtCallbackReturn instead */
+};
+
+/* macdrv_app_quit_request params */
+struct app_quit_request_params
+{
+    UINT flags;
+};
+
+/* macdrv_dnd_query_drag params */
+struct dnd_query_drag_params
+{
+    HWND hwnd;
+    UINT32 effect;
+    INT32 x;
+    INT32 y;
+    UINT64 handle;
+};
+
+/* macdrv_dnd_query_drop params */
+struct dnd_query_drop_params
+{
+    HWND hwnd;
+    UINT32 effect;
+    INT32 x;
+    INT32 y;
+    UINT64 handle;
 };
 
 /* macdrv_dnd_query_exited params */

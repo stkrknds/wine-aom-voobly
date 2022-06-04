@@ -19,6 +19,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#if 0
+#pragma makedep unix
+#endif
+
 #include "config.h"
 
 #include "macdrv.h"
@@ -27,7 +31,6 @@
 #include "ddrawi.h"
 #define WIN32_NO_STATUS
 #include "winternl.h"
-#include "wine/unicode.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(display);
 
@@ -992,7 +995,7 @@ better:
         }
         else if (flags & (CDS_TEST | CDS_NORESET))
             ret = DISP_CHANGE_SUCCESSFUL;
-        else if (lstrcmpiW(primary_adapter, devname))
+        else if (wcsicmp(primary_adapter, devname))
         {
             FIXME("Changing non-primary adapter settings is currently unsupported.\n");
             ret = DISP_CHANGE_SUCCESSFUL;

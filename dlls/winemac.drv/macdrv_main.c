@@ -19,6 +19,11 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
+
+#if 0
+#pragma makedep unix
+#endif
+
 #include "config.h"
 
 #include <Security/AuthSession.h>
@@ -27,10 +32,7 @@
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 #include "macdrv.h"
-#include "winuser.h"
-#include "winreg.h"
 #include "wine/server.h"
-#include "wine/unicode.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(macdrv);
 
@@ -67,6 +69,8 @@ int enable_app_nap = FALSE;
 
 CFDictionaryRef localized_strings;
 
+NTSTATUS (WINAPI *pNtWaitForMultipleObjects)(ULONG,const HANDLE*,BOOLEAN,
+                                             BOOLEAN,const LARGE_INTEGER*);
 
 /**************************************************************************
  *              debugstr_cf
@@ -313,9 +317,9 @@ static void setup_options(void)
     {
         static const WCHAR noneW[] = {'n','o','n','e',0};
         static const WCHAR allW[] = {'a','l','l',0};
-        if (!lstrcmpW(buffer, noneW))
+        if (!wcscmp(buffer, noneW))
             topmost_float_inactive = TOPMOST_FLOAT_INACTIVE_NONE;
-        else if (!lstrcmpW(buffer, allW))
+        else if (!wcscmp(buffer, allW))
             topmost_float_inactive = TOPMOST_FLOAT_INACTIVE_ALL;
         else
             topmost_float_inactive = TOPMOST_FLOAT_INACTIVE_NONFULLSCREEN;
@@ -371,9 +375,9 @@ static void setup_options(void)
     {
         static const WCHAR transparentW[] = {'t','r','a','n','s','p','a','r','e','n','t',0};
         static const WCHAR behindW[] = {'b','e','h','i','n','d',0};
-        if (!lstrcmpW(buffer, transparentW))
+        if (!wcscmp(buffer, transparentW))
             gl_surface_mode = GL_SURFACE_IN_FRONT_TRANSPARENT;
-        else if (!lstrcmpW(buffer, behindW))
+        else if (!wcscmp(buffer, behindW))
             gl_surface_mode = GL_SURFACE_BEHIND;
         else
             gl_surface_mode = GL_SURFACE_IN_FRONT_OPAQUE;
@@ -427,10 +431,13 @@ static void load_strings(struct localized_string *str)
 }
 
 
+static NTSTATUS CDECL unix_call( enum macdrv_funcs code, void *params );
+
+
 /***********************************************************************
  *              macdrv_init
  */
-NTSTATUS macdrv_init(void *arg)
+static NTSTATUS macdrv_init(void *arg)
 {
     struct init_params *params = arg;
     SessionAttributeBits attributes;
@@ -454,6 +461,8 @@ NTSTATUS macdrv_init(void *arg)
     init_user_driver();
     macdrv_init_display_devices(FALSE);
 
+    pNtWaitForMultipleObjects = params->pNtWaitForMultipleObjects;
+    params->unix_call = unix_call;
     return STATUS_SUCCESS;
 }
 
@@ -609,9 +618,9 @@ BOOL macdrv_SystemParametersInfo( UINT action, UINT int_param, void *ptr_param, 
 
 NTSTATUS macdrv_client_func(enum macdrv_client_funcs id, const void *params, ULONG size)
 {
-    /* FIXME: use KeUserModeCallback instead */
-    NTSTATUS (WINAPI *func)(const void *, ULONG) = ((void **)NtCurrentTeb()->Peb->KernelCallbackTable)[id];
-    return func(params, size);
+    void *ret_ptr;
+    ULONG ret_len;
+    return KeUserModeCallback(id, params, size, &ret_ptr, &ret_len);
 }
 
 
@@ -628,20 +637,34 @@ static NTSTATUS macdrv_ime_using_input_method(void *arg)
 }
 
 
+static NTSTATUS macdrv_quit_result(void *arg)
+{
+    struct quit_result_params *params = arg;
+    macdrv_quit_reply(params->result);
+    return 0;
+}
+
+
 const unixlib_entry_t __wine_unix_call_funcs[] =
 {
+    macdrv_dnd_get_data,
+    macdrv_dnd_get_formats,
+    macdrv_dnd_have_format,
+    macdrv_dnd_release,
+    macdrv_dnd_retain,
     macdrv_ime_clear,
     macdrv_ime_process_text_input,
     macdrv_ime_using_input_method,
     macdrv_init,
     macdrv_notify_icon,
+    macdrv_quit_result,
 };
 
 C_ASSERT( ARRAYSIZE(__wine_unix_call_funcs) == unix_funcs_count );
 
 
 /* FIXME: Use __wine_unix_call instead */
-NTSTATUS unix_call(enum macdrv_funcs code, void *params)
+static NTSTATUS CDECL unix_call(enum macdrv_funcs code, void *params)
 {
     return __wine_unix_call_funcs[code]( params );
 }

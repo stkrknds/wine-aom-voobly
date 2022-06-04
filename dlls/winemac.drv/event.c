@@ -20,10 +20,14 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#if 0
+#pragma makedep unix
+#endif
+
 #include "config.h"
 
 #include "macdrv.h"
-#include "winuser.h"
+#include "oleidl.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(event);
 WINE_DECLARE_DEBUG_CHANNEL(imm);
@@ -44,7 +48,7 @@ static const char *dbgstr_event(int type)
         "KEYBOARD_CHANGED",
         "LOST_PASTEBOARD_OWNERSHIP",
         "MOUSE_BUTTON",
-        "MOUSE_MOVED",
+        "MOUSE_MOVED_RELATIVE",
         "MOUSE_MOVED_ABSOLUTE",
         "MOUSE_SCROLL",
         "QUERY_EVENT",
@@ -100,7 +104,7 @@ static macdrv_event_mask get_event_mask(DWORD mask)
 
     if (mask & QS_MOUSEMOVE)
     {
-        event_mask |= event_mask_for_type(MOUSE_MOVED);
+        event_mask |= event_mask_for_type(MOUSE_MOVED_RELATIVE);
         event_mask |= event_mask_for_type(MOUSE_MOVED_ABSOLUTE);
     }
 
@@ -180,6 +184,61 @@ static void macdrv_sent_text_input(const macdrv_event *event)
 
 
 /**************************************************************************
+ *              drag_operations_to_dropeffects
+ */
+static DWORD drag_operations_to_dropeffects(uint32_t ops)
+{
+    DWORD effects = 0;
+    if (ops & (DRAG_OP_COPY | DRAG_OP_GENERIC))
+        effects |= DROPEFFECT_COPY;
+    if (ops & DRAG_OP_MOVE)
+        effects |= DROPEFFECT_MOVE;
+    if (ops & (DRAG_OP_LINK | DRAG_OP_GENERIC))
+        effects |= DROPEFFECT_LINK;
+    return effects;
+}
+
+
+/**************************************************************************
+ *              dropeffect_to_drag_operation
+ */
+static uint32_t dropeffect_to_drag_operation(DWORD effect, uint32_t ops)
+{
+    if (effect & DROPEFFECT_LINK && ops & DRAG_OP_LINK) return DRAG_OP_LINK;
+    if (effect & DROPEFFECT_COPY && ops & DRAG_OP_COPY) return DRAG_OP_COPY;
+    if (effect & DROPEFFECT_MOVE && ops & DRAG_OP_MOVE) return DRAG_OP_MOVE;
+    if (effect & DROPEFFECT_LINK && ops & DRAG_OP_GENERIC) return DRAG_OP_GENERIC;
+    if (effect & DROPEFFECT_COPY && ops & DRAG_OP_GENERIC) return DRAG_OP_GENERIC;
+
+    return DRAG_OP_NONE;
+}
+
+
+/**************************************************************************
+ *              query_drag_drop
+ */
+static BOOL query_drag_drop(macdrv_query *query)
+{
+    HWND hwnd = macdrv_get_window_hwnd(query->window);
+    struct macdrv_win_data *data = get_win_data(hwnd);
+    struct dnd_query_drop_params params;
+
+    if (!data)
+    {
+        WARN("no win_data for win %p/%p\n", hwnd, query->window);
+        return FALSE;
+    }
+
+    params.hwnd = hwnd;
+    params.effect = drag_operations_to_dropeffects(query->drag_drop.op);
+    params.x = query->drag_drop.x + data->whole_rect.left;
+    params.y = query->drag_drop.y + data->whole_rect.top;
+    params.handle = (UINT_PTR)query->drag_drop.pasteboard;
+    release_win_data(data);
+    return macdrv_client_func(client_func_dnd_query_drop, &params, sizeof(params));
+}
+
+/**************************************************************************
  *              query_drag_exited
  */
 static BOOL query_drag_exited(macdrv_query *query)
@@ -187,6 +246,38 @@ static BOOL query_drag_exited(macdrv_query *query)
     struct dnd_query_exited_params params;
     params.hwnd = macdrv_get_window_hwnd(query->window);
     return macdrv_client_func(client_func_dnd_query_exited, &params, sizeof(params));
+}
+
+
+/**************************************************************************
+ *              query_drag_operation
+ */
+static BOOL query_drag_operation(macdrv_query *query)
+{
+    struct dnd_query_drag_params params;
+    HWND hwnd = macdrv_get_window_hwnd(query->window);
+    struct macdrv_win_data *data = get_win_data(hwnd);
+    DWORD effect;
+
+    if (!data)
+    {
+        WARN("no win_data for win %p/%p\n", hwnd, query->window);
+        return FALSE;
+    }
+
+    params.hwnd = hwnd;
+    params.effect = drag_operations_to_dropeffects(query->drag_operation.offered_ops);
+    params.x = query->drag_operation.x + data->whole_rect.left;
+    params.y = query->drag_operation.y + data->whole_rect.top;
+    params.handle = (UINT_PTR)query->drag_operation.pasteboard;
+    release_win_data(data);
+
+    effect = macdrv_client_func(client_func_dnd_query_drag, &params, sizeof(params));
+    if (!effect) return FALSE;
+
+    query->drag_operation.accepted_op = dropeffect_to_drag_operation(effect,
+                                                                     query->drag_operation.offered_ops);
+    return TRUE;
 }
 
 
@@ -325,7 +416,7 @@ void macdrv_handle_event(const macdrv_event *event)
     case MOUSE_BUTTON:
         macdrv_mouse_button(hwnd, event);
         break;
-    case MOUSE_MOVED:
+    case MOUSE_MOVED_RELATIVE:
     case MOUSE_MOVED_ABSOLUTE:
         macdrv_mouse_moved(hwnd, event);
         break;
@@ -434,8 +525,8 @@ NTSTATUS macdrv_MsgWaitForMultipleObjectsEx(DWORD count, const HANDLE *handles,
     if (!data)
     {
         if (!count && timeout && !timeout->QuadPart) return WAIT_TIMEOUT;
-        return NtWaitForMultipleObjects( count, handles, !(flags & MWMO_WAITALL),
-                                         !!(flags & MWMO_ALERTABLE), timeout );
+        return pNtWaitForMultipleObjects( count, handles, !(flags & MWMO_WAITALL),
+                                          !!(flags & MWMO_ALERTABLE), timeout );
     }
 
     if (data->current_event && data->current_event->type != QUERY_EVENT &&
@@ -447,8 +538,8 @@ NTSTATUS macdrv_MsgWaitForMultipleObjectsEx(DWORD count, const HANDLE *handles,
     if (process_events(data->queue, event_mask)) ret = count - 1;
     else if (count || !timeout || timeout->QuadPart)
     {
-        ret = NtWaitForMultipleObjects( count, handles, !(flags & MWMO_WAITALL),
-                                        !!(flags & MWMO_ALERTABLE), timeout );
+        ret = pNtWaitForMultipleObjects( count, handles, !(flags & MWMO_WAITALL),
+                                         !!(flags & MWMO_ALERTABLE), timeout );
         if (ret == count - 1) process_events(data->queue, event_mask);
     }
     else ret = WAIT_TIMEOUT;

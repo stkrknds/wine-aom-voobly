@@ -20,14 +20,15 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#if 0
+#pragma makedep unix
+#endif
+
 #include "config.h"
 
 #define OEMRESOURCE
 #include "macdrv.h"
-#include "winuser.h"
-#include "winreg.h"
 #include "wine/server.h"
-#include "wine/unicode.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(cursor);
 
@@ -166,7 +167,6 @@ static void send_mouse_input(HWND hwnd, macdrv_window cocoa_window, UINT flags, 
  */
 CFStringRef copy_system_cursor_name(ICONINFOEXW *info)
 {
-    static const WCHAR idW[] = {'%','h','u',0};
     const struct system_cursors *cursors;
     unsigned int i;
     CFStringRef cursor_name = NULL;
@@ -179,12 +179,17 @@ CFStringRef copy_system_cursor_name(ICONINFOEXW *info)
 
     if (!info->szModName[0]) return NULL;
 
-    p = strrchrW(info->szModName, '\\');
-    strcpyW(name, p ? p + 1 : info->szModName);
-    p = name + strlenW(name);
+    p = wcsrchr(info->szModName, '\\');
+    wcscpy(name, p ? p + 1 : info->szModName);
+    p = name + wcslen(name);
     *p++ = ',';
-    if (info->szResName[0]) strcpyW(p, info->szResName);
-    else sprintfW(p, idW, info->wResID);
+    if (info->szResName[0]) wcscpy(p, info->szResName);
+    else
+    {
+        char buf[16];
+        sprintf(buf, "%hu", info->wResID);
+        asciiz_to_unicode(p, buf);
+    }
 
     /* @@ Wine registry key: HKCU\Software\Wine\Mac Driver\Cursors */
     if (!(key = open_hkcu_key("Software\\Wine\\Mac Driver\\Cursors")))
@@ -204,7 +209,7 @@ CFStringRef copy_system_cursor_name(ICONINFOEXW *info)
                 return NULL; /* force standard cursor */
             }
 
-            cursor_name = CFStringCreateWithCharacters(NULL, value, strlenW(value));
+            cursor_name = CFStringCreateWithCharacters(NULL, value, wcslen(value));
             if (!cursor_name)
             {
                 WARN("CFStringCreateWithCharacters failed for %s\n", debugstr_w(value));
@@ -892,14 +897,14 @@ void macdrv_mouse_button(HWND hwnd, const macdrv_event *event)
 /***********************************************************************
  *              macdrv_mouse_moved
  *
- * Handler for MOUSE_MOVED and MOUSE_MOVED_ABSOLUTE events.
+ * Handler for MOUSE_MOVED_RELATIVE and MOUSE_MOVED_ABSOLUTE events.
  */
 void macdrv_mouse_moved(HWND hwnd, const macdrv_event *event)
 {
     UINT flags = MOUSEEVENTF_MOVE;
 
     TRACE("win %p/%p %s (%d,%d) drag %d time %lu (%lu ticks ago)\n", hwnd, event->window,
-          (event->type == MOUSE_MOVED) ? "relative" : "absolute",
+          (event->type == MOUSE_MOVED_RELATIVE) ? "relative" : "absolute",
           event->mouse_moved.x, event->mouse_moved.y, event->mouse_moved.drag,
           event->mouse_moved.time_ms, (NtGetTickCount() - event->mouse_moved.time_ms));
 
