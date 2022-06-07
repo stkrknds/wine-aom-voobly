@@ -99,19 +99,22 @@ static inline int get_dib_image_size( const BITMAPINFO *info )
         * abs( info->bmiHeader.biHeight );
 }
 
+static BOOL intersect_rect( RECT *dst, const RECT *src1, const RECT *src2 )
+{
+    dst->left   = max(src1->left, src2->left);
+    dst->top    = max(src1->top, src2->top);
+    dst->right  = min(src1->right, src2->right);
+    dst->bottom = min(src1->bottom, src2->bottom);
+    return !IsRectEmpty( dst );
+}
+
 
 /**********************************************************************
  *	     get_win_monitor_dpi
  */
 static UINT get_win_monitor_dpi( HWND hwnd )
 {
-    DPI_AWARENESS_CONTEXT context;
-    UINT ret;
-
-    context = SetThreadDpiAwarenessContext( DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE );
-    ret = GetDpiForSystem();  /* FIXME: get monitor dpi */
-    SetThreadDpiAwarenessContext( context );
-    return ret;
+    return NtUserGetSystemDpiForProcess( NULL );  /* FIXME: get monitor dpi */
 }
 
 
@@ -126,7 +129,7 @@ static struct android_win_data *alloc_win_data( HWND hwnd )
     {
         data->hwnd = hwnd;
         data->window = create_ioctl_window( hwnd, FALSE,
-                                            (float)get_win_monitor_dpi( hwnd ) / GetDpiForWindow( hwnd ));
+                                            (float)get_win_monitor_dpi( hwnd ) / NtUserGetDpiForWindow( hwnd ));
         EnterCriticalSection( &win_data_section );
         win_data_context[context_idx(hwnd)] = data;
     }
@@ -466,8 +469,8 @@ static int process_events( DWORD mask )
             screen_width = event->data.desktop.width;
             screen_height = event->data.desktop.height;
             init_monitors( screen_width, screen_height );
-            SetWindowPos( GetDesktopWindow(), 0, 0, 0, screen_width, screen_height,
-                          SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW );
+            NtUserSetWindowPos( NtUserGetDesktopWindow(), 0, 0, 0, screen_width, screen_height,
+                                SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW );
             SetThreadDpiAwarenessContext( context );
             break;
 
@@ -702,13 +705,13 @@ static void android_surface_set_region( struct window_surface *window_surface, H
     window_surface->funcs->lock( window_surface );
     if (!region)
     {
-        if (surface->region) DeleteObject( surface->region );
+        if (surface->region) NtGdiDeleteObjectApp( surface->region );
         surface->region = 0;
     }
     else
     {
-        if (!surface->region) surface->region = CreateRectRgn( 0, 0, 0, 0 );
-        CombineRgn( surface->region, region, 0, RGN_COPY );
+        if (!surface->region) surface->region = NtGdiCreateRectRgn( 0, 0, 0, 0 );
+        NtGdiCombineRgn( surface->region, region, 0, RGN_COPY );
     }
     window_surface->funcs->unlock( window_surface );
     set_surface_region( &surface->header, (HRGN)1 );
@@ -728,7 +731,7 @@ static void android_surface_flush( struct window_surface *window_surface )
     window_surface->funcs->lock( window_surface );
     SetRect( &rect, 0, 0, surface->header.rect.right - surface->header.rect.left,
              surface->header.rect.bottom - surface->header.rect.top );
-    needs_flush = IntersectRect( &rect, &rect, &surface->bounds );
+    needs_flush = intersect_rect( &rect, &rect, &surface->bounds );
     reset_bounds( &surface->bounds );
     window_surface->funcs->unlock( window_surface );
     if (!needs_flush) return;
@@ -753,7 +756,7 @@ static void android_surface_flush( struct window_surface *window_surface )
         rect.top    = rc.top;
         rect.right  = rc.right;
         rect.bottom = rc.bottom;
-        IntersectRect( &rect, &rect, &surface->header.rect );
+        intersect_rect( &rect, &rect, &surface->header.rect );
 
         if (surface->region_data)
         {
@@ -809,7 +812,7 @@ static void android_surface_destroy( struct window_surface *window_surface )
     surface->crit.DebugInfo->Spare[0] = 0;
     DeleteCriticalSection( &surface->crit );
     HeapFree( GetProcessHeap(), 0, surface->region_data );
-    if (surface->region) DeleteObject( surface->region );
+    if (surface->region) NtGdiDeleteObjectApp( surface->region );
     release_ioctl_window( surface->window );
     HeapFree( GetProcessHeap(), 0, surface->bits );
     HeapFree( GetProcessHeap(), 0, surface );
@@ -872,18 +875,18 @@ static void set_surface_region( struct window_surface *window_surface, HRGN win_
 
     if (win_region == (HRGN)1)  /* hack: win_region == 1 means retrieve region from server */
     {
-        region = CreateRectRgn( 0, 0, win_data->window_rect.right - win_data->window_rect.left,
-                                win_data->window_rect.bottom - win_data->window_rect.top );
-        if (GetWindowRgn( surface->hwnd, region ) == ERROR && !surface->region) goto done;
+        region = NtGdiCreateRectRgn( 0, 0, win_data->window_rect.right - win_data->window_rect.left,
+                                     win_data->window_rect.bottom - win_data->window_rect.top );
+        if (NtUserGetWindowRgnEx( surface->hwnd, region, 0 ) == ERROR && !surface->region) goto done;
     }
 
-    OffsetRgn( region, offset_x, offset_y );
-    if (surface->region) CombineRgn( region, region, surface->region, RGN_AND );
+    NtGdiOffsetRgn( region, offset_x, offset_y );
+    if (surface->region) NtGdiCombineRgn( region, region, surface->region, RGN_AND );
 
-    if (!(size = GetRegionData( region, 0, NULL ))) goto done;
+    if (!(size = NtGdiGetRegionData( region, 0, NULL ))) goto done;
     if (!(data = HeapAlloc( GetProcessHeap(), 0, size ))) goto done;
 
-    if (!GetRegionData( region, size, data ))
+    if (!NtGdiGetRegionData( region, size, data ))
     {
         HeapFree( GetProcessHeap(), 0, data );
         data = NULL;
@@ -895,7 +898,7 @@ done:
     surface->region_data = data;
     *window_surface->funcs->get_bounds( window_surface ) = surface->header.rect;
     window_surface->funcs->unlock( window_surface );
-    if (region != win_region) DeleteObject( region );
+    if (region != win_region) NtGdiDeleteObjectApp( region );
 }
 
 /***********************************************************************
@@ -974,11 +977,11 @@ static unsigned int *get_mono_icon_argb( HDC hdc, HBITMAP bmp, unsigned int *wid
     char *mask;
     unsigned int i, j, stride, mask_size, bits_size, *bits = NULL, *ptr;
 
-    if (!GetObjectW( bmp, sizeof(bm), &bm )) return NULL;
+    if (!NtGdiExtGetObjectW( bmp, sizeof(bm), &bm )) return NULL;
     stride = ((bm.bmWidth + 15) >> 3) & ~1;
     mask_size = stride * bm.bmHeight;
     if (!(mask = HeapAlloc( GetProcessHeap(), 0, mask_size ))) return NULL;
-    if (!GetBitmapBits( bmp, mask_size, mask )) goto done;
+    if (!NtGdiGetBitmapBits( bmp, mask_size, mask )) goto done;
 
     bm.bmHeight /= 2;
     bits_size = bm.bmWidth * bm.bmHeight * sizeof(*bits);
@@ -1025,7 +1028,7 @@ static unsigned int *get_bitmap_argb( HDC hdc, HBITMAP color, HBITMAP mask, unsi
 
     if (!color) return get_mono_icon_argb( hdc, mask, width, height );
 
-    if (!GetObjectW( color, sizeof(bm), &bm )) return NULL;
+    if (!NtGdiExtGetObjectW( color, sizeof(bm), &bm )) return NULL;
     info->bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
     info->bmiHeader.biWidth = bm.bmWidth;
     info->bmiHeader.biHeight = -bm.bmHeight;
@@ -1039,7 +1042,8 @@ static unsigned int *get_bitmap_argb( HDC hdc, HBITMAP color, HBITMAP mask, unsi
     info->bmiHeader.biClrImportant = 0;
     if (!(bits = HeapAlloc( GetProcessHeap(), 0, bm.bmWidth * bm.bmHeight * sizeof(unsigned int) )))
         goto failed;
-    if (!GetDIBits( hdc, color, 0, bm.bmHeight, bits, info, DIB_RGB_COLORS )) goto failed;
+    if (!NtGdiGetDIBitsInternal( hdc, color, 0, bm.bmHeight, bits, info, DIB_RGB_COLORS, 0, 0 ))
+        goto failed;
 
     *width = bm.bmWidth;
     *height = bm.bmHeight;
@@ -1054,7 +1058,8 @@ static unsigned int *get_bitmap_argb( HDC hdc, HBITMAP color, HBITMAP mask, unsi
         info->bmiHeader.biBitCount = 1;
         info->bmiHeader.biSizeImage = width_bytes * bm.bmHeight;
         if (!(mask_bits = HeapAlloc( GetProcessHeap(), 0, info->bmiHeader.biSizeImage ))) goto failed;
-        if (!GetDIBits( hdc, mask, 0, bm.bmHeight, mask_bits, info, DIB_RGB_COLORS )) goto failed;
+        if (!NtGdiGetDIBitsInternal( hdc, mask, 0, bm.bmHeight, mask_bits, info, DIB_RGB_COLORS, 0, 0 ))
+            goto failed;
         ptr = bits;
         for (i = 0; i < bm.bmHeight; i++)
             for (j = 0; j < bm.bmWidth; j++, ptr++)
@@ -1184,9 +1189,7 @@ static int get_cursor_system_id( const ICONINFOEXW *info )
 }
 
 
-static WNDPROC desktop_orig_wndproc;
-
-static LRESULT CALLBACK desktop_wndproc_wrapper( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
+LRESULT ANDROID_DesktopWindowProc( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
 {
     switch (msg)
     {
@@ -1194,7 +1197,7 @@ static LRESULT CALLBACK desktop_wndproc_wrapper( HWND hwnd, UINT msg, WPARAM wp,
         if (LOWORD(wp) == WM_DESTROY) destroy_ioctl_window( (HWND)lp, FALSE );
         break;
     }
-    return desktop_orig_wndproc( hwnd, msg, wp, lp );
+    return NtUserMessageCall( hwnd, msg, wp, lp, 0, NtUserDefWindowProc, FALSE );
 }
 
 
@@ -1222,7 +1225,7 @@ BOOL ANDROID_CreateWindow( HWND hwnd )
 {
     TRACE( "%p\n", hwnd );
 
-    if (hwnd == GetDesktopWindow())
+    if (hwnd == NtUserGetDesktopWindow())
     {
         struct android_win_data *data;
 
@@ -1262,11 +1265,11 @@ static struct android_win_data *create_win_data( HWND hwnd, const RECT *window_r
     struct android_win_data *data;
     HWND parent;
 
-    if (!(parent = GetAncestor( hwnd, GA_PARENT ))) return NULL;  /* desktop or HWND_MESSAGE */
+    if (!(parent = NtUserGetAncestor( hwnd, GA_PARENT ))) return NULL;  /* desktop or HWND_MESSAGE */
 
     if (!(data = alloc_win_data( hwnd ))) return NULL;
 
-    data->parent = (parent == GetDesktopWindow()) ? 0 : parent;
+    data->parent = (parent == NtUserGetDesktopWindow()) ? 0 : parent;
     data->whole_rect = data->window_rect = *window_rect;
     data->client_rect = *client_rect;
     return data;
@@ -1275,7 +1278,7 @@ static struct android_win_data *create_win_data( HWND hwnd, const RECT *window_r
 
 static inline BOOL get_surface_rect( const RECT *visible_rect, RECT *surface_rect )
 {
-    if (!IntersectRect( surface_rect, visible_rect, &virtual_screen_rect )) return FALSE;
+    if (!intersect_rect( surface_rect, visible_rect, &virtual_screen_rect )) return FALSE;
     OffsetRect( surface_rect, -visible_rect->left, -visible_rect->top );
     surface_rect->left &= ~31;
     surface_rect->top  &= ~31;
@@ -1297,11 +1300,11 @@ BOOL ANDROID_WindowPosChanging( HWND hwnd, HWND insert_after, UINT swp_flags,
     DWORD flags;
     COLORREF key;
     BYTE alpha;
-    BOOL layered = GetWindowLongW( hwnd, GWL_EXSTYLE ) & WS_EX_LAYERED;
+    BOOL layered = NtUserGetWindowLongW( hwnd, GWL_EXSTYLE ) & WS_EX_LAYERED;
 
     TRACE( "win %p window %s client %s style %08x flags %08x\n",
            hwnd, wine_dbgstr_rect(window_rect), wine_dbgstr_rect(client_rect),
-           GetWindowLongW( hwnd, GWL_STYLE ), swp_flags );
+           NtUserGetWindowLongW( hwnd, GWL_STYLE ), swp_flags );
 
     if (!data && !(data = create_win_data( hwnd, window_rect, client_rect ))) return TRUE;
 
@@ -1325,9 +1328,10 @@ BOOL ANDROID_WindowPosChanging( HWND hwnd, HWND insert_after, UINT swp_flags,
             goto done;
         }
     }
-    if (!(swp_flags & SWP_SHOWWINDOW) && !(GetWindowLongW( hwnd, GWL_STYLE ) & WS_VISIBLE)) goto done;
+    if (!(swp_flags & SWP_SHOWWINDOW) && !(NtUserGetWindowLongW( hwnd, GWL_STYLE ) & WS_VISIBLE))
+        goto done;
 
-    if (!layered || !GetLayeredWindowAttributes( hwnd, &key, &alpha, &flags )) flags = 0;
+    if (!layered || !NtUserGetLayeredWindowAttributes( hwnd, &key, &alpha, &flags )) flags = 0;
     if (!(flags & LWA_ALPHA)) alpha = 255;
     if (!(flags & LWA_COLORKEY)) key = CLR_INVALID;
 
@@ -1349,7 +1353,7 @@ void ANDROID_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags,
                                struct window_surface *surface )
 {
     struct android_win_data *data;
-    DWORD new_style = GetWindowLongW( hwnd, GWL_STYLE );
+    DWORD new_style = NtUserGetWindowLongW( hwnd, GWL_STYLE );
     HWND owner = 0;
 
     if (!(data = get_win_data( hwnd ))) return;
@@ -1364,10 +1368,10 @@ void ANDROID_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags,
         if (data->surface) window_surface_release( data->surface );
         data->surface = surface;
     }
-    if (!data->parent) owner = GetWindow( hwnd, GW_OWNER );
+    if (!data->parent) owner = NtUserGetWindowRelative( hwnd, GW_OWNER );
     release_win_data( data );
 
-    if (!(swp_flags & SWP_NOZORDER)) insert_after = GetWindow( hwnd, GW_HWNDPREV );
+    if (!(swp_flags & SWP_NOZORDER)) insert_after = NtUserGetWindowRelative( hwnd, GW_HWNDPREV );
 
     TRACE( "win %p window %s client %s style %08x owner %p after %p flags %08x\n", hwnd,
            wine_dbgstr_rect(window_rect), wine_dbgstr_rect(client_rect),
@@ -1383,7 +1387,7 @@ void ANDROID_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags,
  */
 UINT ANDROID_ShowWindow( HWND hwnd, INT cmd, RECT *rect, UINT swp )
 {
-    if (!IsIconic( hwnd )) return swp;
+    if (!(NtUserGetWindowLongW( hwnd, GWL_STYLE ) & WS_MINIMIZE)) return swp;
     /* always hide icons off-screen */
     if (rect->left != -32000 || rect->top != -32000)
     {
@@ -1406,8 +1410,8 @@ void ANDROID_SetParent( HWND hwnd, HWND parent, HWND old_parent )
 
     TRACE( "win %p parent %p -> %p\n", hwnd, old_parent, parent );
 
-    data->parent = (parent == GetDesktopWindow()) ? 0 : parent;
-    ioctl_set_window_parent( hwnd, parent, (float)get_win_monitor_dpi( hwnd ) / GetDpiForWindow( hwnd ));
+    data->parent = (parent == NtUserGetDesktopWindow()) ? 0 : parent;
+    ioctl_set_window_parent( hwnd, parent, (float)get_win_monitor_dpi( hwnd ) / NtUserGetDpiForWindow( hwnd ));
     release_win_data( data );
 }
 
@@ -1419,6 +1423,28 @@ void ANDROID_SetCapture( HWND hwnd, UINT flags )
 {
     if (!(flags & (GUI_INMOVESIZE | GUI_INMENUMODE))) return;
     ioctl_set_capture( hwnd );
+}
+
+
+static BOOL get_icon_info( HICON handle, ICONINFOEXW *ret )
+{
+    UNICODE_STRING module, res_name;
+    ICONINFO info;
+
+    module.Buffer = ret->szModName;
+    module.MaximumLength = sizeof(ret->szModName) - sizeof(WCHAR);
+    res_name.Buffer = ret->szResName;
+    res_name.MaximumLength = sizeof(ret->szResName) - sizeof(WCHAR);
+    if (!NtUserGetIconInfo( handle, &info, &module, &res_name, NULL, 0 )) return FALSE;
+    ret->fIcon    = info.fIcon;
+    ret->xHotspot = info.xHotspot;
+    ret->yHotspot = info.yHotspot;
+    ret->hbmColor = info.hbmColor;
+    ret->hbmMask  = info.hbmMask;
+    ret->wResID   = res_name.Length ? 0 : LOWORD(res_name.Buffer);
+    ret->szModName[module.Length] = 0;
+    ret->szResName[res_name.Length] = 0;
+    return TRUE;
 }
 
 
@@ -1441,14 +1467,13 @@ void ANDROID_SetCursor( HCURSOR handle )
             ICONINFOEXW info;
             int id;
 
-            info.cbSize = sizeof(info);
-            if (!GetIconInfoExW( handle, &info )) return;
+            if (!get_icon_info( handle, &info )) return;
 
             if (!(id = get_cursor_system_id( &info )))
             {
-                HDC hdc = CreateCompatibleDC( 0 );
+                HDC hdc = NtGdiCreateCompatibleDC( 0 );
                 bits = get_bitmap_argb( hdc, info.hbmColor, info.hbmMask, &width, &height );
-                DeleteDC( hdc );
+                NtGdiDeleteObjectApp( hdc );
 
                 /* make sure hotspot is valid */
                 if (info.xHotspot >= width || info.yHotspot >= height)
@@ -1459,8 +1484,8 @@ void ANDROID_SetCursor( HCURSOR handle )
             }
             ioctl_set_cursor( id, width, height, info.xHotspot, info.yHotspot, bits );
             HeapFree( GetProcessHeap(), 0, bits );
-            DeleteObject( info.hbmColor );
-            DeleteObject( info.hbmMask );
+            NtGdiDeleteObjectApp( info.hbmColor );
+            NtGdiDeleteObjectApp( info.hbmMask );
         }
         else ioctl_set_cursor( 0, 0, 0, 0, 0, NULL );
     }
@@ -1475,7 +1500,7 @@ void ANDROID_SetWindowStyle( HWND hwnd, INT offset, STYLESTRUCT *style )
     struct android_win_data *data;
     DWORD changed = style->styleNew ^ style->styleOld;
 
-    if (hwnd == GetDesktopWindow()) return;
+    if (hwnd == NtUserGetDesktopWindow()) return;
     if (!(data = get_win_data( hwnd ))) return;
 
     if (offset == GWL_EXSTYLE && (changed & WS_EX_LAYERED)) /* changing WS_EX_LAYERED resets attributes */
@@ -1575,27 +1600,28 @@ BOOL ANDROID_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWINFO *info
 
     dst_bits = surface->funcs->get_info( surface, bmi );
 
-    if (!(dib = CreateDIBSection( info->hdcDst, bmi, DIB_RGB_COLORS, &src_bits, NULL, 0 ))) goto done;
-    if (!(hdc = CreateCompatibleDC( 0 ))) goto done;
+    if (!(dib = NtGdiCreateDIBSection( info->hdcDst, NULL, 0, bmi, DIB_RGB_COLORS, 0, 0, 0, &src_bits )))
+        goto done;
+    if (!(hdc = NtGdiCreateCompatibleDC( 0 ))) goto done;
 
-    SelectObject( hdc, dib );
+    NtGdiSelectBitmap( hdc, dib );
 
     surface->funcs->lock( surface );
 
     if (info->prcDirty)
     {
-        IntersectRect( &rect, &rect, info->prcDirty );
+        intersect_rect( &rect, &rect, info->prcDirty );
         memcpy( src_bits, dst_bits, bmi->bmiHeader.biSizeImage );
-        PatBlt( hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, BLACKNESS );
+        NtGdiPatBlt( hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, BLACKNESS );
     }
     src_rect = rect;
     if (info->pptSrc) OffsetRect( &src_rect, info->pptSrc->x, info->pptSrc->y );
-    DPtoLP( info->hdcSrc, (POINT *)&src_rect, 2 );
+    NtGdiTransformPoints( info->hdcSrc, (POINT *)&src_rect, (POINT *)&src_rect, 2, NtGdiDPtoLP );
 
-    ret = GdiAlphaBlend( hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
-                         info->hdcSrc, src_rect.left, src_rect.top,
-                         src_rect.right - src_rect.left, src_rect.bottom - src_rect.top,
-                         (info->dwFlags & ULW_ALPHA) ? *info->pblend : blend );
+    ret = NtGdiAlphaBlend( hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
+                           info->hdcSrc, src_rect.left, src_rect.top,
+                           src_rect.right - src_rect.left, src_rect.bottom - src_rect.top,
+                           (info->dwFlags & ULW_ALPHA) ? *info->pblend : blend, 0 );
     if (ret)
     {
         memcpy( dst_bits, src_bits, bmi->bmiHeader.biSizeImage );
@@ -1607,8 +1633,8 @@ BOOL ANDROID_UpdateLayeredWindow( HWND hwnd, const UPDATELAYEREDWINDOWINFO *info
 
 done:
     window_surface_release( surface );
-    if (hdc) DeleteDC( hdc );
-    if (dib) DeleteObject( dib );
+    if (hdc) NtGdiDeleteObjectApp( hdc );
+    if (dib) NtGdiDeleteObjectApp( dib );
     return ret;
 }
 
@@ -1652,9 +1678,6 @@ LRESULT ANDROID_WindowMessage( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
  */
 BOOL CDECL ANDROID_create_desktop( UINT width, UINT height )
 {
-    desktop_orig_wndproc = (WNDPROC)SetWindowLongPtrW( GetDesktopWindow(), GWLP_WNDPROC,
-                                                       (LONG_PTR)desktop_wndproc_wrapper );
-
     /* wait until we receive the surface changed event */
     while (!screen_width)
     {

@@ -31,8 +31,7 @@
 
 #include "windef.h"
 #include "winbase.h"
-#include "wingdi.h"
-#include "winuser.h"
+#include "ntgdi.h"
 #include "wine/gdi_driver.h"
 #include "android_native.h"
 
@@ -89,6 +88,7 @@ extern void ANDROID_DestroyWindow( HWND hwnd ) DECLSPEC_HIDDEN;
 extern NTSTATUS ANDROID_MsgWaitForMultipleObjectsEx( DWORD count, const HANDLE *handles,
                                                      const LARGE_INTEGER *timeout,
                                                      DWORD mask, DWORD flags ) DECLSPEC_HIDDEN;
+extern LRESULT ANDROID_DesktopWindowProc( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp ) DECLSPEC_HIDDEN;
 extern void ANDROID_SetCursor( HCURSOR handle ) DECLSPEC_HIDDEN;
 extern void ANDROID_SetLayeredWindowAttributes( HWND hwnd, COLORREF key, BYTE alpha,
                                                 DWORD flags ) DECLSPEC_HIDDEN;
@@ -186,5 +186,12 @@ int send_event( const union event_data *data ) DECLSPEC_HIDDEN;
 extern JavaVM **p_java_vm;
 extern jobject *p_java_object;
 extern unsigned short *p_java_gdt_sel;
+
+/* string helpers */
+
+static inline void ascii_to_unicode( WCHAR *dst, const char *src, size_t len )
+{
+    while (len--) *dst++ = (unsigned char)*src++;
+}
 
 #endif  /* __WINE_ANDROID_H */
