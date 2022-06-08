@@ -18,6 +18,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#if 0
+#pragma makedep unix
+#endif
+
 #define NONAMELESSSTRUCT
 #define NONAMELESSUNION
 #include "config.h"
@@ -47,6 +51,8 @@ static const unsigned int screen_bpp = 32;  /* we don't support other modes */
 static RECT monitor_rc_work;
 static int device_init_done;
 static BOOL force_display_devices_refresh;
+
+PNTAPCFUNC register_window_callback;
 
 typedef struct
 {
@@ -210,7 +216,7 @@ static ANDROID_PDEVICE *create_android_physdev(void)
 
     if (!device_init_done) device_init();
 
-    if (!(physdev = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*physdev) ))) return NULL;
+    if (!(physdev = calloc( 1, sizeof(*physdev) ))) return NULL;
     return physdev;
 }
 
@@ -248,7 +254,7 @@ static BOOL CDECL ANDROID_CreateCompatibleDC( PHYSDEV orig, PHYSDEV *pdev )
  */
 static BOOL CDECL ANDROID_DeleteDC( PHYSDEV dev )
 {
-    HeapFree( GetProcessHeap(), 0, dev );
+    free( dev );
     return TRUE;
 }
 
@@ -556,15 +562,21 @@ JavaVM **p_java_vm = NULL;
 jobject *p_java_object = NULL;
 unsigned short *p_java_gdt_sel = NULL;
 
-static BOOL process_attach(void)
+static NTSTATUS CDECL unix_call( enum android_funcs code, void *params );
+NTSTATUS (WINAPI *pNtWaitForMultipleObjects)( ULONG,const HANDLE*,BOOLEAN,
+                                              BOOLEAN,const LARGE_INTEGER* );
+
+static HRESULT android_init( void *arg )
 {
+    struct init_params *params = arg;
+    pthread_mutexattr_t attr;
     jclass class;
     jobject object;
     JNIEnv *jni_env;
     JavaVM *java_vm;
     void *ntdll;
 
-    if (!(ntdll = dlopen( "ntdll.so", RTLD_NOW ))) return FALSE;
+    if (!(ntdll = dlopen( "ntdll.so", RTLD_NOW ))) return STATUS_UNSUCCESSFUL;
 
     p_java_vm = dlsym( ntdll, "java_vm" );
     p_java_object = dlsym( ntdll, "java_object" );
@@ -573,6 +585,14 @@ static BOOL process_attach(void)
     object = *p_java_object;
 
     load_hardware_libs();
+
+    pthread_mutexattr_init( &attr );
+    pthread_mutexattr_settype( &attr, PTHREAD_MUTEX_RECURSIVE );
+    pthread_mutex_init( &drawable_mutex, &attr );
+    pthread_mutex_init( &win_data_mutex, &attr );
+    pthread_mutexattr_destroy( &attr );
+
+    register_window_callback = params->register_window_callback;
 
     if ((java_vm = *p_java_vm))  /* running under Java */
     {
@@ -591,19 +611,27 @@ static BOOL process_attach(void)
 #endif
     }
     __wine_set_user_driver( &android_drv_funcs, WINE_GDI_DRIVER_VERSION );
-    return TRUE;
+    pNtWaitForMultipleObjects = params->pNtWaitForMultipleObjects;
+    params->unix_call = unix_call;
+    return STATUS_SUCCESS;
 }
 
-/***********************************************************************
- *       dll initialisation routine
- */
-BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, LPVOID reserved )
+const unixlib_entry_t __wine_unix_call_funcs[] =
 {
-    switch (reason)
-    {
-    case DLL_PROCESS_ATTACH:
-        DisableThreadLibraryCalls( inst );
-        return process_attach();
-    }
-    return TRUE;
+    android_create_desktop,
+    android_dispatch_ioctl,
+    android_init,
+    android_java_init,
+    android_java_uninit,
+    android_register_window,
+};
+
+
+C_ASSERT( ARRAYSIZE(__wine_unix_call_funcs) == unix_funcs_count );
+
+
+/* FIXME: Use __wine_unix_call instead */
+static NTSTATUS CDECL unix_call( enum android_funcs code, void *params )
+{
+    return __wine_unix_call_funcs[code]( params );
 }

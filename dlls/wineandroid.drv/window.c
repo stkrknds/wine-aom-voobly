@@ -20,6 +20,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#if 0
+#pragma makedep unix
+#endif
+
 #define NONAMELESSUNION
 #define NONAMELESSSTRUCT
 
@@ -60,14 +64,7 @@ struct android_win_data
 
 #define SWP_AGG_NOPOSCHANGE (SWP_NOSIZE | SWP_NOMOVE | SWP_NOCLIENTSIZE | SWP_NOCLIENTMOVE | SWP_NOZORDER)
 
-static CRITICAL_SECTION win_data_section;
-static CRITICAL_SECTION_DEBUG critsect_debug =
-{
-    0, 0, &win_data_section,
-    { &critsect_debug.ProcessLocksList, &critsect_debug.ProcessLocksList },
-      0, 0, { (DWORD_PTR)(__FILE__ ": win_data_section") }
-};
-static CRITICAL_SECTION win_data_section = { &critsect_debug, -1, 0, 0, 0, 0 };
+pthread_mutex_t win_data_mutex;
 
 static struct android_win_data *win_data_context[32768];
 
@@ -125,12 +122,12 @@ static struct android_win_data *alloc_win_data( HWND hwnd )
 {
     struct android_win_data *data;
 
-    if ((data = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*data))))
+    if ((data = calloc( 1, sizeof(*data) )))
     {
         data->hwnd = hwnd;
         data->window = create_ioctl_window( hwnd, FALSE,
                                             (float)get_win_monitor_dpi( hwnd ) / NtUserGetDpiForWindow( hwnd ));
-        EnterCriticalSection( &win_data_section );
+        pthread_mutex_lock( &win_data_mutex );
         win_data_context[context_idx(hwnd)] = data;
     }
     return data;
@@ -143,9 +140,9 @@ static struct android_win_data *alloc_win_data( HWND hwnd )
 static void free_win_data( struct android_win_data *data )
 {
     win_data_context[context_idx( data->hwnd )] = NULL;
-    LeaveCriticalSection( &win_data_section );
+    pthread_mutex_unlock( &win_data_mutex );
     if (data->window) release_ioctl_window( data->window );
-    HeapFree( GetProcessHeap(), 0, data );
+    free( data );
 }
 
 
@@ -159,9 +156,9 @@ static struct android_win_data *get_win_data( HWND hwnd )
     struct android_win_data *data;
 
     if (!hwnd) return NULL;
-    EnterCriticalSection( &win_data_section );
+    pthread_mutex_lock( &win_data_mutex );
     if ((data = win_data_context[context_idx(hwnd)]) && data->hwnd == hwnd) return data;
-    LeaveCriticalSection( &win_data_section );
+    pthread_mutex_unlock( &win_data_mutex );
     return NULL;
 }
 
@@ -173,7 +170,7 @@ static struct android_win_data *get_win_data( HWND hwnd )
  */
 static void release_win_data( struct android_win_data *data )
 {
-    if (data) LeaveCriticalSection( &win_data_section );
+    if (data) pthread_mutex_unlock( &win_data_mutex );
 }
 
 
@@ -374,12 +371,12 @@ static void init_event_queue(void)
     if (pipe2( event_pipe, O_CLOEXEC | O_NONBLOCK ) == -1)
     {
         ERR( "could not create data\n" );
-        ExitProcess(1);
+        NtTerminateProcess( 0, 1 );
     }
     if (wine_server_fd_to_handle( event_pipe[0], GENERIC_READ | SYNCHRONIZE, 0, &handle ))
     {
         ERR( "Can't allocate handle for event fd\n" );
-        ExitProcess(1);
+        NtTerminateProcess( 0, 1 );
     }
     SERVER_START_REQ( set_queue_fd )
     {
@@ -390,9 +387,9 @@ static void init_event_queue(void)
     if (ret)
     {
         ERR( "Can't store handle for event fd %x\n", ret );
-        ExitProcess(1);
+        NtTerminateProcess( 0, 1 );
     }
-    CloseHandle( handle );
+    NtClose( handle );
     desktop_tid = GetCurrentThreadId();
 }
 
@@ -409,13 +406,13 @@ static void pull_events(void)
 
     for (;;)
     {
-        if (!(event = HeapAlloc( GetProcessHeap(), 0, sizeof(*event) ))) break;
+        if (!(event = malloc( sizeof(*event) ))) break;
 
         res = read( event_pipe[0], &event->data, sizeof(event->data) );
         if (res != sizeof(event->data)) break;
         list_add_tail( &event_queue, &event->entry );
     }
-    HeapFree( GetProcessHeap(), 0, event );
+    free( event );
 }
 
 
@@ -540,7 +537,7 @@ static int process_events( DWORD mask )
         default:
             FIXME( "got event %u\n", event->data.type );
         }
-        HeapFree( GetProcessHeap(), 0, event );
+        free( event );
         count++;
         /* next may have been removed by a recursive call, so reset it to the beginning of the list */
         next = LIST_ENTRY( event_queue.next, struct java_event, entry );
@@ -586,7 +583,7 @@ struct android_window_surface
     BYTE                  alpha;
     COLORREF              color_key;
     void                 *bits;
-    CRITICAL_SECTION      crit;
+    pthread_mutex_t       mutex;
     BITMAPINFO            info;   /* variable size, must be last */
 };
 
@@ -659,7 +656,7 @@ static void android_surface_lock( struct window_surface *window_surface )
 {
     struct android_window_surface *surface = get_android_surface( window_surface );
 
-    EnterCriticalSection( &surface->crit );
+    pthread_mutex_lock( &surface->mutex );
 }
 
 /***********************************************************************
@@ -669,7 +666,7 @@ static void android_surface_unlock( struct window_surface *window_surface )
 {
     struct android_window_surface *surface = get_android_surface( window_surface );
 
-    LeaveCriticalSection( &surface->crit );
+    pthread_mutex_unlock( &surface->mutex );
 }
 
 /***********************************************************************
@@ -809,13 +806,11 @@ static void android_surface_destroy( struct window_surface *window_surface )
 
     TRACE( "freeing %p bits %p\n", surface, surface->bits );
 
-    surface->crit.DebugInfo->Spare[0] = 0;
-    DeleteCriticalSection( &surface->crit );
-    HeapFree( GetProcessHeap(), 0, surface->region_data );
+    free( surface->region_data );
     if (surface->region) NtGdiDeleteObjectApp( surface->region );
     release_ioctl_window( surface->window );
-    HeapFree( GetProcessHeap(), 0, surface->bits );
-    HeapFree( GetProcessHeap(), 0, surface );
+    free( surface->bits );
+    free( surface );
 }
 
 static const struct window_surface_funcs android_surface_funcs =
@@ -884,17 +879,17 @@ static void set_surface_region( struct window_surface *window_surface, HRGN win_
     if (surface->region) NtGdiCombineRgn( region, region, surface->region, RGN_AND );
 
     if (!(size = NtGdiGetRegionData( region, 0, NULL ))) goto done;
-    if (!(data = HeapAlloc( GetProcessHeap(), 0, size ))) goto done;
+    if (!(data = malloc( size ))) goto done;
 
     if (!NtGdiGetRegionData( region, size, data ))
     {
-        HeapFree( GetProcessHeap(), 0, data );
+        free( data );
         data = NULL;
     }
 
 done:
     window_surface->funcs->lock( window_surface );
-    HeapFree( GetProcessHeap(), 0, surface->region_data );
+    free( surface->region_data );
     surface->region_data = data;
     *window_surface->funcs->get_bounds( window_surface ) = surface->header.rect;
     window_surface->funcs->unlock( window_surface );
@@ -909,9 +904,9 @@ static struct window_surface *create_surface( HWND hwnd, const RECT *rect,
 {
     struct android_window_surface *surface;
     int width = rect->right - rect->left, height = rect->bottom - rect->top;
+    pthread_mutexattr_t attr;
 
-    surface = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY,
-                         FIELD_OFFSET( struct android_window_surface, info.bmiColors[3] ));
+    surface = calloc( 1, FIELD_OFFSET( struct android_window_surface, info.bmiColors[3] ));
     if (!surface) return NULL;
     set_color_info( &surface->info, src_alpha );
     surface->info.bmiHeader.biWidth       = width;
@@ -919,8 +914,10 @@ static struct window_surface *create_surface( HWND hwnd, const RECT *rect,
     surface->info.bmiHeader.biPlanes      = 1;
     surface->info.bmiHeader.biSizeImage   = get_dib_image_size( &surface->info );
 
-    InitializeCriticalSection( &surface->crit );
-    surface->crit.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": surface");
+    pthread_mutexattr_init( &attr );
+    pthread_mutexattr_settype( &attr, PTHREAD_MUTEX_RECURSIVE );
+    pthread_mutex_init( &surface->mutex, &attr );
+    pthread_mutexattr_destroy( &attr );
 
     surface->header.funcs = &android_surface_funcs;
     surface->header.rect  = *rect;
@@ -932,7 +929,7 @@ static struct window_surface *create_surface( HWND hwnd, const RECT *rect,
     set_surface_region( &surface->header, (HRGN)1 );
     reset_bounds( &surface->bounds );
 
-    if (!(surface->bits = HeapAlloc( GetProcessHeap(), 0, surface->info.bmiHeader.biSizeImage )))
+    if (!(surface->bits = malloc( surface->info.bmiHeader.biSizeImage )))
         goto failed;
 
     TRACE( "created %p hwnd %p %s bits %p-%p\n", surface, hwnd, wine_dbgstr_rect(rect),
@@ -980,12 +977,12 @@ static unsigned int *get_mono_icon_argb( HDC hdc, HBITMAP bmp, unsigned int *wid
     if (!NtGdiExtGetObjectW( bmp, sizeof(bm), &bm )) return NULL;
     stride = ((bm.bmWidth + 15) >> 3) & ~1;
     mask_size = stride * bm.bmHeight;
-    if (!(mask = HeapAlloc( GetProcessHeap(), 0, mask_size ))) return NULL;
+    if (!(mask = malloc( mask_size ))) return NULL;
     if (!NtGdiGetBitmapBits( bmp, mask_size, mask )) goto done;
 
     bm.bmHeight /= 2;
     bits_size = bm.bmWidth * bm.bmHeight * sizeof(*bits);
-    if (!(bits = HeapAlloc( GetProcessHeap(), 0, bits_size ))) goto done;
+    if (!(bits = malloc( bits_size ))) goto done;
 
     ptr = bits;
     for (i = 0; i < bm.bmHeight; i++)
@@ -1006,7 +1003,7 @@ static unsigned int *get_mono_icon_argb( HDC hdc, HBITMAP bmp, unsigned int *wid
     *height = bm.bmHeight;
 
 done:
-    HeapFree( GetProcessHeap(), 0, mask );
+    free( mask );
     return bits;
 }
 
@@ -1040,7 +1037,7 @@ static unsigned int *get_bitmap_argb( HDC hdc, HBITMAP color, HBITMAP mask, unsi
     info->bmiHeader.biYPelsPerMeter = 0;
     info->bmiHeader.biClrUsed = 0;
     info->bmiHeader.biClrImportant = 0;
-    if (!(bits = HeapAlloc( GetProcessHeap(), 0, bm.bmWidth * bm.bmHeight * sizeof(unsigned int) )))
+    if (!(bits = malloc( bm.bmWidth * bm.bmHeight * sizeof(unsigned int) )))
         goto failed;
     if (!NtGdiGetDIBitsInternal( hdc, color, 0, bm.bmHeight, bits, info, DIB_RGB_COLORS, 0, 0 ))
         goto failed;
@@ -1057,21 +1054,21 @@ static unsigned int *get_bitmap_argb( HDC hdc, HBITMAP color, HBITMAP mask, unsi
         /* generate alpha channel from the mask */
         info->bmiHeader.biBitCount = 1;
         info->bmiHeader.biSizeImage = width_bytes * bm.bmHeight;
-        if (!(mask_bits = HeapAlloc( GetProcessHeap(), 0, info->bmiHeader.biSizeImage ))) goto failed;
+        if (!(mask_bits = malloc( info->bmiHeader.biSizeImage ))) goto failed;
         if (!NtGdiGetDIBitsInternal( hdc, mask, 0, bm.bmHeight, mask_bits, info, DIB_RGB_COLORS, 0, 0 ))
             goto failed;
         ptr = bits;
         for (i = 0; i < bm.bmHeight; i++)
             for (j = 0; j < bm.bmWidth; j++, ptr++)
                 if (!((mask_bits[i * width_bytes + j / 8] << (j % 8)) & 0x80)) *ptr |= 0xff000000;
-        HeapFree( GetProcessHeap(), 0, mask_bits );
+        free( mask_bits );
     }
 
     return bits;
 
 failed:
-    HeapFree( GetProcessHeap(), 0, bits );
-    HeapFree( GetProcessHeap(), 0, mask_bits );
+    free( bits );
+    free( mask_bits );
     *width = *height = 0;
     return NULL;
 }
@@ -1171,14 +1168,15 @@ static const struct
 static int get_cursor_system_id( const ICONINFOEXW *info )
 {
     const struct system_cursors *cursors;
+    const WCHAR *module;
     unsigned int i;
-    HMODULE module;
 
     if (info->szResName[0]) return 0;  /* only integer resources are supported here */
-    if (!(module = GetModuleHandleW( info->szModName ))) return 0;
 
+    if ((module = wcsrchr( info->szModName, '\\' ))) module++;
+    else module = info->szModName;
     for (i = 0; i < ARRAY_SIZE( module_cursors ); i++)
-        if (GetModuleHandleW( module_cursors[i].name ) == module) break;
+        if (!wcsicmp( module, module_cursors[i].name )) break;
     if (i == ARRAY_SIZE( module_cursors )) return 0;
 
     cursors = module_cursors[i].cursors;
@@ -1214,8 +1212,8 @@ NTSTATUS ANDROID_MsgWaitForMultipleObjectsEx( DWORD count, const HANDLE *handles
         if (current_event) mask = 0;
         if (process_events( mask )) return count - 1;
     }
-    return NtWaitForMultipleObjects( count, handles, !(flags & MWMO_WAITALL),
-                                     !!(flags & MWMO_ALERTABLE), timeout );
+    return pNtWaitForMultipleObjects( count, handles, !(flags & MWMO_WAITALL),
+                                      !!(flags & MWMO_ALERTABLE), timeout );
 }
 
 /**********************************************************************
@@ -1457,9 +1455,9 @@ void ANDROID_SetCursor( HCURSOR handle )
     static DWORD last_cursor_change;
 
     if (InterlockedExchangePointer( (void **)&last_cursor, handle ) != handle ||
-        GetTickCount() - last_cursor_change > 100)
+        NtGetTickCount() - last_cursor_change > 100)
     {
-        last_cursor_change = GetTickCount();
+        last_cursor_change = NtGetTickCount();
 
         if (handle)
         {
@@ -1483,7 +1481,7 @@ void ANDROID_SetCursor( HCURSOR handle )
                 }
             }
             ioctl_set_cursor( id, width, height, info.xHotspot, info.yHotspot, bits );
-            HeapFree( GetProcessHeap(), 0, bits );
+            free( bits );
             NtGdiDeleteObjectApp( info.hbmColor );
             NtGdiDeleteObjectApp( info.hbmMask );
         }
@@ -1674,9 +1672,9 @@ LRESULT ANDROID_WindowMessage( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
 
 
 /***********************************************************************
- *           ANDROID_create_desktop
+ *           android_create_desktop
  */
-BOOL CDECL ANDROID_create_desktop( UINT width, UINT height )
+NTSTATUS android_create_desktop( void *arg )
 {
     /* wait until we receive the surface changed event */
     while (!screen_width)
@@ -1688,5 +1686,5 @@ BOOL CDECL ANDROID_create_desktop( UINT width, UINT height )
         }
         process_events( QS_ALLINPUT );
     }
-    return TRUE;
+    return 0;
 }

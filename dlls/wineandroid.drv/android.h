@@ -24,6 +24,7 @@
 #include <limits.h>
 #include <stdarg.h>
 #include <stdlib.h>
+#include <pthread.h>
 #include <jni.h>
 #include <android/log.h>
 #include <android/input.h>
@@ -33,6 +34,7 @@
 #include "winbase.h"
 #include "ntgdi.h"
 #include "wine/gdi_driver.h"
+#include "unixlib.h"
 #include "android_native.h"
 
 
@@ -51,6 +53,7 @@ DECL_FUNCPTR( ANativeWindow_release );
  * OpenGL driver
  */
 
+extern pthread_mutex_t drawable_mutex DECLSPEC_HIDDEN;
 extern void update_gl_drawable( HWND hwnd ) DECLSPEC_HIDDEN;
 extern void destroy_gl_drawable( HWND hwnd ) DECLSPEC_HIDDEN;
 extern struct opengl_funcs *get_wgl_driver( UINT version ) DECLSPEC_HIDDEN;
@@ -79,6 +82,7 @@ extern int ioctl_set_cursor( int id, int width, int height,
  * USER driver
  */
 
+extern pthread_mutex_t win_data_mutex DECLSPEC_HIDDEN;
 extern INT ANDROID_GetKeyNameText( LONG lparam, LPWSTR buffer, INT size ) DECLSPEC_HIDDEN;
 extern UINT ANDROID_MapVirtualKeyEx( UINT code, UINT maptype, HKL hkl ) DECLSPEC_HIDDEN;
 extern SHORT ANDROID_VkKeyScanEx( WCHAR ch, HKL hkl ) DECLSPEC_HIDDEN;
@@ -107,6 +111,17 @@ extern void ANDROID_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_fla
                                       const RECT *window_rect, const RECT *client_rect,
                                       const RECT *visible_rect, const RECT *valid_rects,
                                       struct window_surface *surface ) DECLSPEC_HIDDEN;
+
+/* unixlib interface */
+
+extern NTSTATUS android_create_desktop( void *arg ) DECLSPEC_HIDDEN;
+extern NTSTATUS android_dispatch_ioctl( void *arg ) DECLSPEC_HIDDEN;
+extern NTSTATUS android_java_init( void *arg ) DECLSPEC_HIDDEN;
+extern NTSTATUS android_java_uninit( void *arg ) DECLSPEC_HIDDEN;
+extern NTSTATUS android_register_window( void *arg ) DECLSPEC_HIDDEN;
+extern PNTAPCFUNC register_window_callback;
+extern NTSTATUS (WINAPI *pNtWaitForMultipleObjects)( ULONG,const HANDLE*,BOOLEAN,
+                                                     BOOLEAN,const LARGE_INTEGER* ) DECLSPEC_HIDDEN;
 
 extern unsigned int screen_width DECLSPEC_HIDDEN;
 extern unsigned int screen_height DECLSPEC_HIDDEN;
