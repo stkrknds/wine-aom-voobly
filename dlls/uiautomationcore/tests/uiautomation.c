@@ -53,13 +53,17 @@ static HRESULT (WINAPI *pUiaProviderFromIAccessible)(IAccessible *, long, DWORD,
         expect_ ## func = called_ ## func = FALSE; \
     }while(0)
 
-DEFINE_EXPECT(Accessible_accNavigate);
+#define NAVDIR_INTERNAL_HWND 10
 
-static LONG Accessible_ref = 1;
-static IAccessible Accessible;
-static IOleWindow OleWindow;
-static HWND Accessible_hwnd = NULL;
-static HWND OleWindow_hwnd = NULL;
+DEFINE_EXPECT(winproc_GETOBJECT_CLIENT);
+DEFINE_EXPECT(Accessible_accNavigate);
+DEFINE_EXPECT(Accessible_get_accParent);
+DEFINE_EXPECT(Accessible_get_accRole);
+DEFINE_EXPECT(Accessible_get_accState);
+DEFINE_EXPECT(Accessible_child_accNavigate);
+DEFINE_EXPECT(Accessible_child_get_accParent);
+
+static IAccessible *acc_client;
 
 static BOOL check_variant_i4(VARIANT *v, int val)
 {
@@ -69,14 +73,42 @@ static BOOL check_variant_i4(VARIANT *v, int val)
     return FALSE;
 }
 
+static BOOL check_variant_bool(VARIANT *v, BOOL val)
+{
+    if (V_VT(v) == VT_BOOL && V_BOOL(v) == (val ? VARIANT_TRUE : VARIANT_FALSE))
+        return TRUE;
+
+    return FALSE;
+}
+
+static struct Accessible
+{
+    IAccessible IAccessible_iface;
+    IOleWindow IOleWindow_iface;
+    LONG ref;
+
+    IAccessible *parent;
+    HWND acc_hwnd;
+    HWND ow_hwnd;
+    INT role;
+    INT state;
+} Accessible, Accessible_child;
+
+static inline struct Accessible* impl_from_Accessible(IAccessible *iface)
+{
+    return CONTAINING_RECORD(iface, struct Accessible, IAccessible_iface);
+}
+
 static HRESULT WINAPI Accessible_QueryInterface(IAccessible *iface, REFIID riid, void **obj)
 {
+    struct Accessible *This = impl_from_Accessible(iface);
+
     *obj = NULL;
     if (IsEqualIID(riid, &IID_IUnknown) || IsEqualIID(riid, &IID_IDispatch) ||
             IsEqualIID(riid, &IID_IAccessible))
         *obj = iface;
     else if (IsEqualIID(riid, &IID_IOleWindow))
-        *obj = &OleWindow;
+        *obj = &This->IOleWindow_iface;
     else
         return E_NOINTERFACE;
 
@@ -86,12 +118,14 @@ static HRESULT WINAPI Accessible_QueryInterface(IAccessible *iface, REFIID riid,
 
 static ULONG WINAPI Accessible_AddRef(IAccessible *iface)
 {
-    return InterlockedIncrement(&Accessible_ref);
+    struct Accessible *This = impl_from_Accessible(iface);
+    return InterlockedIncrement(&This->ref);
 }
 
 static ULONG WINAPI Accessible_Release(IAccessible *iface)
 {
-    return InterlockedDecrement(&Accessible_ref);
+    struct Accessible *This = impl_from_Accessible(iface);
+    return InterlockedDecrement(&This->ref);
 }
 
 static HRESULT WINAPI Accessible_GetTypeInfoCount(IAccessible *iface, UINT *pctinfo)
@@ -124,12 +158,23 @@ static HRESULT WINAPI Accessible_Invoke(IAccessible *iface, DISPID disp_id_membe
 
 static HRESULT WINAPI Accessible_get_accParent(IAccessible *iface, IDispatch **out_parent)
 {
-    ok(0, "unexpected call\n");
-    return E_NOTIMPL;
+    struct Accessible *This = impl_from_Accessible(iface);
+
+    if (This == &Accessible_child)
+        CHECK_EXPECT(Accessible_child_get_accParent);
+    else
+        CHECK_EXPECT(Accessible_get_accParent);
+
+    if (This->parent)
+        return IAccessible_QueryInterface(This->parent, &IID_IDispatch, (void **)out_parent);
+
+    *out_parent = NULL;
+    return S_FALSE;
 }
 
 static HRESULT WINAPI Accessible_get_accChildCount(IAccessible *iface, LONG *out_count)
 {
+    ok(0, "unexpected call\n");
     return E_NOTIMPL;
 }
 
@@ -143,6 +188,7 @@ static HRESULT WINAPI Accessible_get_accChild(IAccessible *iface, VARIANT child_
 static HRESULT WINAPI Accessible_get_accName(IAccessible *iface, VARIANT child_id,
         BSTR *out_name)
 {
+    ok(0, "unexpected call\n");
     return E_NOTIMPL;
 }
 
@@ -163,12 +209,36 @@ static HRESULT WINAPI Accessible_get_accDescription(IAccessible *iface, VARIANT 
 static HRESULT WINAPI Accessible_get_accRole(IAccessible *iface, VARIANT child_id,
         VARIANT *out_role)
 {
+    struct Accessible *This = impl_from_Accessible(iface);
+
+    ok(This == &Accessible, "unexpected call\n");
+    CHECK_EXPECT(Accessible_get_accRole);
+
+    if (This->role)
+    {
+        V_VT(out_role) = VT_I4;
+        V_I4(out_role) = This->role;
+        return S_OK;
+    }
+
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI Accessible_get_accState(IAccessible *iface, VARIANT child_id,
         VARIANT *out_state)
 {
+    struct Accessible *This = impl_from_Accessible(iface);
+
+    ok(This == &Accessible, "unexpected call\n");
+    CHECK_EXPECT(Accessible_get_accState);
+
+    if (This->state)
+    {
+        V_VT(out_state) = VT_I4;
+        V_I4(out_state) = This->state;
+        return S_OK;
+    }
+
     return E_NOTIMPL;
 }
 
@@ -222,23 +292,30 @@ static HRESULT WINAPI Accessible_accSelect(IAccessible *iface, LONG select_flags
 static HRESULT WINAPI Accessible_accLocation(IAccessible *iface, LONG *out_left,
         LONG *out_top, LONG *out_width, LONG *out_height, VARIANT child_id)
 {
+    ok(0, "unexpected call\n");
     return E_NOTIMPL;
 }
 
 static HRESULT WINAPI Accessible_accNavigate(IAccessible *iface, LONG nav_direction,
         VARIANT child_id_start, VARIANT *out_var)
 {
-    CHECK_EXPECT(Accessible_accNavigate);
+    struct Accessible *This = impl_from_Accessible(iface);
+
+    if (This == &Accessible_child)
+        CHECK_EXPECT(Accessible_child_accNavigate);
+    else
+        CHECK_EXPECT(Accessible_accNavigate);
     VariantInit(out_var);
 
     /*
      * This is an undocumented way for UI Automation to get an HWND for
      * IAccessible's contained in a Direct Annotation wrapper object.
      */
-    if ((nav_direction == 10) && check_variant_i4(&child_id_start, CHILDID_SELF))
+    if ((nav_direction == NAVDIR_INTERNAL_HWND) && check_variant_i4(&child_id_start, CHILDID_SELF) &&
+            This->acc_hwnd)
     {
         V_VT(out_var) = VT_I4;
-        V_I4(out_var) = HandleToUlong(Accessible_hwnd);
+        V_I4(out_var) = HandleToUlong(This->acc_hwnd);
         return S_OK;
     }
     return S_FALSE;
@@ -302,25 +379,35 @@ static IAccessibleVtbl AccessibleVtbl = {
     Accessible_put_accValue
 };
 
+static inline struct Accessible* impl_from_OleWindow(IOleWindow *iface)
+{
+    return CONTAINING_RECORD(iface, struct Accessible, IOleWindow_iface);
+}
+
 static HRESULT WINAPI OleWindow_QueryInterface(IOleWindow *iface, REFIID riid, void **obj)
 {
-    return IAccessible_QueryInterface(&Accessible, riid, obj);
+    struct Accessible *This = impl_from_OleWindow(iface);
+    return IAccessible_QueryInterface(&This->IAccessible_iface, riid, obj);
 }
 
 static ULONG WINAPI OleWindow_AddRef(IOleWindow *iface)
 {
-    return IAccessible_AddRef(&Accessible);
+    struct Accessible *This = impl_from_OleWindow(iface);
+    return IAccessible_AddRef(&This->IAccessible_iface);
 }
 
 static ULONG WINAPI OleWindow_Release(IOleWindow *iface)
 {
-    return IAccessible_Release(&Accessible);
+    struct Accessible *This = impl_from_OleWindow(iface);
+    return IAccessible_Release(&This->IAccessible_iface);
 }
 
 static HRESULT WINAPI OleWindow_GetWindow(IOleWindow *iface, HWND *hwnd)
 {
-    *hwnd = OleWindow_hwnd;
-    return S_OK;
+    struct Accessible *This = impl_from_OleWindow(iface);
+
+    *hwnd = This->ow_hwnd;
+    return *hwnd ? S_OK : E_FAIL;
 }
 
 static HRESULT WINAPI OleWindow_ContextSensitiveHelp(IOleWindow *iface, BOOL f_enter_mode)
@@ -336,11 +423,45 @@ static const IOleWindowVtbl OleWindowVtbl = {
     OleWindow_ContextSensitiveHelp
 };
 
-static IAccessible Accessible = {&AccessibleVtbl};
-static IOleWindow OleWindow   = {&OleWindowVtbl};
+static struct Accessible Accessible =
+{
+    { &AccessibleVtbl },
+    { &OleWindowVtbl },
+    1,
+    NULL,
+    0, 0,
+    0, 0,
+};
+static struct Accessible Accessible_child =
+{
+    { &AccessibleVtbl },
+    { &OleWindowVtbl },
+    1,
+    &Accessible.IAccessible_iface,
+    0, 0,
+    0, 0,
+};
 
 static LRESULT WINAPI test_wnd_proc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
+    switch (message)
+    {
+    case WM_GETOBJECT:
+        if (lParam == (DWORD)OBJID_CLIENT)
+        {
+            CHECK_EXPECT(winproc_GETOBJECT_CLIENT);
+            if (acc_client)
+                return LresultFromObject(&IID_IAccessible, wParam, (IUnknown *)acc_client);
+
+            break;
+        }
+
+        break;
+
+    default:
+        break;
+    }
+
     return DefWindowProcA(hwnd, message, wParam, lParam);
 }
 
@@ -577,6 +698,189 @@ static void test_uia_reserved_value_ifaces(void)
     CoUninitialize();
 }
 
+struct msaa_role_uia_type {
+    INT acc_role;
+    INT uia_control_type;
+};
+
+static const struct msaa_role_uia_type msaa_role_uia_types[] = {
+    { ROLE_SYSTEM_TITLEBAR,           UIA_TitleBarControlTypeId },
+    { ROLE_SYSTEM_MENUBAR,            UIA_MenuBarControlTypeId },
+    { ROLE_SYSTEM_SCROLLBAR,          UIA_ScrollBarControlTypeId },
+    { ROLE_SYSTEM_GRIP,               UIA_ThumbControlTypeId },
+    { ROLE_SYSTEM_WINDOW,             UIA_WindowControlTypeId },
+    { ROLE_SYSTEM_MENUPOPUP,          UIA_MenuControlTypeId },
+    { ROLE_SYSTEM_MENUITEM,           UIA_MenuItemControlTypeId },
+    { ROLE_SYSTEM_TOOLTIP,            UIA_ToolTipControlTypeId },
+    { ROLE_SYSTEM_APPLICATION,        UIA_WindowControlTypeId },
+    { ROLE_SYSTEM_DOCUMENT,           UIA_DocumentControlTypeId },
+    { ROLE_SYSTEM_PANE,               UIA_PaneControlTypeId },
+    { ROLE_SYSTEM_GROUPING,           UIA_GroupControlTypeId },
+    { ROLE_SYSTEM_SEPARATOR,          UIA_SeparatorControlTypeId },
+    { ROLE_SYSTEM_TOOLBAR,            UIA_ToolBarControlTypeId },
+    { ROLE_SYSTEM_STATUSBAR,          UIA_StatusBarControlTypeId },
+    { ROLE_SYSTEM_TABLE,              UIA_TableControlTypeId },
+    { ROLE_SYSTEM_COLUMNHEADER,       UIA_HeaderControlTypeId },
+    { ROLE_SYSTEM_ROWHEADER,          UIA_HeaderControlTypeId },
+    { ROLE_SYSTEM_CELL,               UIA_DataItemControlTypeId },
+    { ROLE_SYSTEM_LINK,               UIA_HyperlinkControlTypeId },
+    { ROLE_SYSTEM_LIST,               UIA_ListControlTypeId },
+    { ROLE_SYSTEM_LISTITEM,           UIA_ListItemControlTypeId },
+    { ROLE_SYSTEM_OUTLINE,            UIA_TreeControlTypeId },
+    { ROLE_SYSTEM_OUTLINEITEM,        UIA_TreeItemControlTypeId },
+    { ROLE_SYSTEM_PAGETAB,            UIA_TabItemControlTypeId },
+    { ROLE_SYSTEM_INDICATOR,          UIA_ThumbControlTypeId },
+    { ROLE_SYSTEM_GRAPHIC,            UIA_ImageControlTypeId },
+    { ROLE_SYSTEM_STATICTEXT,         UIA_TextControlTypeId },
+    { ROLE_SYSTEM_TEXT,               UIA_EditControlTypeId },
+    { ROLE_SYSTEM_PUSHBUTTON,         UIA_ButtonControlTypeId },
+    { ROLE_SYSTEM_CHECKBUTTON,        UIA_CheckBoxControlTypeId },
+    { ROLE_SYSTEM_RADIOBUTTON,        UIA_RadioButtonControlTypeId },
+    { ROLE_SYSTEM_COMBOBOX,           UIA_ComboBoxControlTypeId },
+    { ROLE_SYSTEM_PROGRESSBAR,        UIA_ProgressBarControlTypeId },
+    { ROLE_SYSTEM_SLIDER,             UIA_SliderControlTypeId },
+    { ROLE_SYSTEM_SPINBUTTON,         UIA_SpinnerControlTypeId },
+    { ROLE_SYSTEM_BUTTONDROPDOWN,     UIA_SplitButtonControlTypeId },
+    { ROLE_SYSTEM_BUTTONMENU,         UIA_MenuItemControlTypeId },
+    { ROLE_SYSTEM_BUTTONDROPDOWNGRID, UIA_ButtonControlTypeId },
+    { ROLE_SYSTEM_PAGETABLIST,        UIA_TabControlTypeId },
+    { ROLE_SYSTEM_SPLITBUTTON,        UIA_SplitButtonControlTypeId },
+    /* These accessible roles have no equivalent in UI Automation. */
+    { ROLE_SYSTEM_SOUND,              0 },
+    { ROLE_SYSTEM_CURSOR,             0 },
+    { ROLE_SYSTEM_CARET,              0 },
+    { ROLE_SYSTEM_ALERT,              0 },
+    { ROLE_SYSTEM_CLIENT,             0 },
+    { ROLE_SYSTEM_CHART,              0 },
+    { ROLE_SYSTEM_DIALOG,             0 },
+    { ROLE_SYSTEM_BORDER,             0 },
+    { ROLE_SYSTEM_COLUMN,             0 },
+    { ROLE_SYSTEM_ROW,                0 },
+    { ROLE_SYSTEM_HELPBALLOON,        0 },
+    { ROLE_SYSTEM_CHARACTER,          0 },
+    { ROLE_SYSTEM_PROPERTYPAGE,       0 },
+    { ROLE_SYSTEM_DROPLIST,           0 },
+    { ROLE_SYSTEM_DIAL,               0 },
+    { ROLE_SYSTEM_HOTKEYFIELD,        0 },
+    { ROLE_SYSTEM_DIAGRAM,            0 },
+    { ROLE_SYSTEM_ANIMATION,          0 },
+    { ROLE_SYSTEM_EQUATION,           0 },
+    { ROLE_SYSTEM_WHITESPACE,         0 },
+    { ROLE_SYSTEM_IPADDRESS,          0 },
+    { ROLE_SYSTEM_OUTLINEBUTTON,      0 },
+};
+
+struct msaa_state_uia_prop {
+    INT acc_state;
+    INT prop_id;
+};
+
+static const struct msaa_state_uia_prop msaa_state_uia_props[] = {
+    { STATE_SYSTEM_FOCUSED,      UIA_HasKeyboardFocusPropertyId },
+    { STATE_SYSTEM_FOCUSABLE,    UIA_IsKeyboardFocusablePropertyId },
+    { ~STATE_SYSTEM_UNAVAILABLE, UIA_IsEnabledPropertyId },
+    { STATE_SYSTEM_PROTECTED,    UIA_IsPasswordPropertyId },
+};
+
+static void test_uia_prov_from_acc_properties(void)
+{
+    IRawElementProviderSimple *elprov;
+    HRESULT hr;
+    VARIANT v;
+    int i, x;
+
+    /* MSAA role to UIA control type test. */
+    for (i = 0; i < ARRAY_SIZE(msaa_role_uia_types); i++)
+    {
+        const struct msaa_role_uia_type *role = &msaa_role_uia_types[i];
+
+        /*
+         * Roles get cached once a valid one is mapped, so create a new
+         * element for each role.
+         */
+        hr = pUiaProviderFromIAccessible(&Accessible.IAccessible_iface, CHILDID_SELF, UIA_PFIA_DEFAULT, &elprov);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        ok(Accessible.ref == 2, "Unexpected refcnt %ld\n", Accessible.ref);
+
+        Accessible.role = role->acc_role;
+        SET_EXPECT(Accessible_get_accRole);
+        VariantClear(&v);
+        hr = IRawElementProviderSimple_GetPropertyValue(elprov, UIA_ControlTypePropertyId, &v);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        if (role->uia_control_type)
+            ok(check_variant_i4(&v, role->uia_control_type), "MSAA role %d: V_I4(&v) = %ld\n", role->acc_role, V_I4(&v));
+        else
+            ok(V_VT(&v) == VT_EMPTY, "MSAA role %d: V_VT(&v) = %d\n", role->acc_role, V_VT(&v));
+        CHECK_CALLED(Accessible_get_accRole);
+
+        if (!role->uia_control_type)
+            SET_EXPECT(Accessible_get_accRole);
+        VariantClear(&v);
+        hr = IRawElementProviderSimple_GetPropertyValue(elprov, UIA_ControlTypePropertyId, &v);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        if (role->uia_control_type)
+            ok(check_variant_i4(&v, role->uia_control_type), "MSAA role %d: V_I4(&v) = %ld\n", role->acc_role, V_I4(&v));
+        else
+            ok(V_VT(&v) == VT_EMPTY, "MSAA role %d: V_VT(&v) = %d\n", role->acc_role, V_VT(&v));
+        if (!role->uia_control_type)
+            CHECK_CALLED(Accessible_get_accRole);
+
+        IRawElementProviderSimple_Release(elprov);
+        ok(Accessible.ref == 1, "Unexpected refcnt %ld\n", Accessible.ref);
+    }
+
+    /* ROLE_SYSTEM_CLOCK has no mapping in Windows < 10 1809. */
+    hr = pUiaProviderFromIAccessible(&Accessible.IAccessible_iface, CHILDID_SELF, UIA_PFIA_DEFAULT, &elprov);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(Accessible.ref == 2, "Unexpected refcnt %ld\n", Accessible.ref);
+
+    Accessible.role = ROLE_SYSTEM_CLOCK;
+    SET_EXPECT(Accessible_get_accRole);
+    VariantClear(&v);
+    hr = IRawElementProviderSimple_GetPropertyValue(elprov, UIA_ControlTypePropertyId, &v);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(check_variant_i4(&v, UIA_ButtonControlTypeId) || broken(V_VT(&v) == VT_EMPTY), /* Windows < 10 1809 */
+            "MSAA role %d: V_I4(&v) = %ld\n", Accessible.role, V_I4(&v));
+    CHECK_CALLED(Accessible_get_accRole);
+
+    if (V_VT(&v) == VT_EMPTY)
+        SET_EXPECT(Accessible_get_accRole);
+    VariantClear(&v);
+    hr = IRawElementProviderSimple_GetPropertyValue(elprov, UIA_ControlTypePropertyId, &v);
+    ok(check_variant_i4(&v, UIA_ButtonControlTypeId) || broken(V_VT(&v) == VT_EMPTY), /* Windows < 10 1809 */
+            "MSAA role %d: V_I4(&v) = %ld\n", Accessible.role, V_I4(&v));
+    if (V_VT(&v) == VT_EMPTY)
+        CHECK_CALLED(Accessible_get_accRole);
+
+    Accessible.role = 0;
+    IRawElementProviderSimple_Release(elprov);
+    ok(Accessible.ref == 1, "Unexpected refcnt %ld\n", Accessible.ref);
+
+    hr = pUiaProviderFromIAccessible(&Accessible.IAccessible_iface, CHILDID_SELF, UIA_PFIA_DEFAULT, &elprov);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(Accessible.ref == 2, "Unexpected refcnt %ld\n", Accessible.ref);
+
+    /* UIA PropertyId's that correspond directly to individual MSAA state flags. */
+    for (i = 0; i < ARRAY_SIZE(msaa_state_uia_props); i++)
+    {
+        const struct msaa_state_uia_prop *state = &msaa_state_uia_props[i];
+
+        for (x = 0; x < 2; x++)
+        {
+            Accessible.state = x ? state->acc_state : ~state->acc_state;
+            SET_EXPECT(Accessible_get_accState);
+            hr = IRawElementProviderSimple_GetPropertyValue(elprov, state->prop_id, &v);
+            ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+            ok(check_variant_bool(&v, x), "V_BOOL(&v) = %#x\n", V_BOOL(&v));
+            CHECK_CALLED(Accessible_get_accState);
+        }
+    }
+    Accessible.state = 0;
+
+    IRawElementProviderSimple_Release(elprov);
+    ok(Accessible.ref == 1, "Unexpected refcnt %ld\n", Accessible.ref);
+}
+
 static void test_UiaProviderFromIAccessible(void)
 {
     IRawElementProviderSimple *elprov;
@@ -607,7 +911,7 @@ static void test_UiaProviderFromIAccessible(void)
     hr = pUiaProviderFromIAccessible(NULL, CHILDID_SELF, UIA_PFIA_DEFAULT, &elprov);
     ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
 
-    hr = pUiaProviderFromIAccessible(&Accessible, CHILDID_SELF, UIA_PFIA_DEFAULT, NULL);
+    hr = pUiaProviderFromIAccessible(&Accessible.IAccessible_iface, CHILDID_SELF, UIA_PFIA_DEFAULT, NULL);
     ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
 
     /*
@@ -625,29 +929,55 @@ static void test_UiaProviderFromIAccessible(void)
 
     /* Don't return an HWND from accNavigate or OleWindow. */
     SET_EXPECT(Accessible_accNavigate);
-    Accessible_hwnd = NULL;
-    OleWindow_hwnd = NULL;
-    hr = pUiaProviderFromIAccessible(&Accessible, CHILDID_SELF, UIA_PFIA_DEFAULT, &elprov);
+    SET_EXPECT(Accessible_get_accParent);
+    Accessible.acc_hwnd = NULL;
+    Accessible.ow_hwnd = NULL;
+    hr = pUiaProviderFromIAccessible(&Accessible.IAccessible_iface, CHILDID_SELF, UIA_PFIA_DEFAULT, &elprov);
     ok(hr == E_FAIL, "Unexpected hr %#lx.\n", hr);
     CHECK_CALLED(Accessible_accNavigate);
+    CHECK_CALLED(Accessible_get_accParent);
 
     /* Return an HWND from accNavigate, not OleWindow. */
     SET_EXPECT(Accessible_accNavigate);
-    Accessible_hwnd = hwnd;
-    OleWindow_hwnd = NULL;
-    hr = pUiaProviderFromIAccessible(&Accessible, CHILDID_SELF, UIA_PFIA_DEFAULT, &elprov);
+    SET_EXPECT(winproc_GETOBJECT_CLIENT);
+    acc_client = &Accessible.IAccessible_iface;
+    Accessible.acc_hwnd = hwnd;
+    Accessible.ow_hwnd = NULL;
+    hr = pUiaProviderFromIAccessible(&Accessible.IAccessible_iface, CHILDID_SELF, UIA_PFIA_DEFAULT, &elprov);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     CHECK_CALLED(Accessible_accNavigate);
-    ok(Accessible_ref == 2, "Unexpected refcnt %ld\n", Accessible_ref);
+    ok(Accessible.ref == 2, "Unexpected refcnt %ld\n", Accessible.ref);
     IRawElementProviderSimple_Release(elprov);
-    ok(Accessible_ref == 1, "Unexpected refcnt %ld\n", Accessible_ref);
+    ok(Accessible.ref == 1, "Unexpected refcnt %ld\n", Accessible.ref);
+    acc_client = NULL;
+
+    /* Skip tests on Win10v1507. */
+    if (called_winproc_GETOBJECT_CLIENT)
+    {
+        win_skip("UiaProviderFromIAccessible behaves inconsistently on Win10 1507, skipping tests.\n");
+        return;
+    }
+    expect_winproc_GETOBJECT_CLIENT = FALSE;
+
+    /* Return an HWND from parent IAccessible's IOleWindow interface. */
+    SET_EXPECT(Accessible_child_accNavigate);
+    SET_EXPECT(Accessible_child_get_accParent);
+    Accessible.acc_hwnd = NULL;
+    Accessible.ow_hwnd = hwnd;
+    hr = pUiaProviderFromIAccessible(&Accessible_child.IAccessible_iface, CHILDID_SELF, UIA_PFIA_DEFAULT, &elprov);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    CHECK_CALLED(Accessible_child_accNavigate);
+    CHECK_CALLED(Accessible_child_get_accParent);
+    ok(Accessible_child.ref == 2, "Unexpected refcnt %ld\n", Accessible_child.ref);
+    IRawElementProviderSimple_Release(elprov);
+    ok(Accessible_child.ref == 1, "Unexpected refcnt %ld\n", Accessible_child.ref);
 
     /* Return an HWND from OleWindow, not accNavigate. */
-    Accessible_hwnd = NULL;
-    OleWindow_hwnd = hwnd;
-    hr = pUiaProviderFromIAccessible(&Accessible, CHILDID_SELF, UIA_PFIA_DEFAULT, &elprov);
+    Accessible.acc_hwnd = NULL;
+    Accessible.ow_hwnd = hwnd;
+    hr = pUiaProviderFromIAccessible(&Accessible.IAccessible_iface, CHILDID_SELF, UIA_PFIA_DEFAULT, &elprov);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-    ok(Accessible_ref == 2, "Unexpected refcnt %ld\n", Accessible_ref);
+    ok(Accessible.ref == 2, "Unexpected refcnt %ld\n", Accessible.ref);
 
     hr = IRawElementProviderSimple_get_ProviderOptions(elprov, &prov_opt);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
@@ -661,19 +991,21 @@ static void test_UiaProviderFromIAccessible(void)
     VariantClear(&v);
 
     IRawElementProviderSimple_Release(elprov);
-    ok(Accessible_ref == 1, "Unexpected refcnt %ld\n", Accessible_ref);
+    ok(Accessible.ref == 1, "Unexpected refcnt %ld\n", Accessible.ref);
 
     /* ChildID other than CHILDID_SELF. */
-    hr = pUiaProviderFromIAccessible(&Accessible, 1, UIA_PFIA_DEFAULT, &elprov);
+    hr = pUiaProviderFromIAccessible(&Accessible.IAccessible_iface, 1, UIA_PFIA_DEFAULT, &elprov);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-    ok(Accessible_ref == 2, "Unexpected refcnt %ld\n", Accessible_ref);
+    ok(Accessible.ref == 2, "Unexpected refcnt %ld\n", Accessible.ref);
     IRawElementProviderSimple_Release(elprov);
-    ok(Accessible_ref == 1, "Unexpected refcnt %ld\n", Accessible_ref);
+    ok(Accessible.ref == 1, "Unexpected refcnt %ld\n", Accessible.ref);
+
+    test_uia_prov_from_acc_properties();
 
     DestroyWindow(hwnd);
     UnregisterClassA("pUiaProviderFromIAccessible class", NULL);
-    Accessible_hwnd = NULL;
-    OleWindow_hwnd = NULL;
+    Accessible.acc_hwnd = NULL;
+    Accessible.ow_hwnd = NULL;
 }
 
 START_TEST(uiautomation)

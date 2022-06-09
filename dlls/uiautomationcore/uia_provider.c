@@ -32,6 +32,104 @@ static void variant_init_i4(VARIANT *v, int val)
     V_I4(v) = val;
 }
 
+static void variant_init_bool(VARIANT *v, BOOL val)
+{
+    V_VT(v) = VT_BOOL;
+    V_BOOL(v) = val ? VARIANT_TRUE : VARIANT_FALSE;
+}
+
+static BOOL msaa_check_acc_state(IAccessible *acc, VARIANT cid, ULONG flag)
+{
+    HRESULT hr;
+    VARIANT v;
+
+    VariantInit(&v);
+    hr = IAccessible_get_accState(acc, cid, &v);
+    if (SUCCEEDED(hr) && V_VT(&v) == VT_I4 && (V_I4(&v) & flag))
+        return TRUE;
+
+    return FALSE;
+}
+
+static LONG msaa_role_to_uia_control_type(LONG role)
+{
+    switch (role)
+    {
+    case ROLE_SYSTEM_TITLEBAR:           return UIA_TitleBarControlTypeId;
+    case ROLE_SYSTEM_MENUBAR:            return UIA_MenuBarControlTypeId;
+    case ROLE_SYSTEM_SCROLLBAR:          return UIA_ScrollBarControlTypeId;
+    case ROLE_SYSTEM_INDICATOR:
+    case ROLE_SYSTEM_GRIP:               return UIA_ThumbControlTypeId;
+    case ROLE_SYSTEM_APPLICATION:
+    case ROLE_SYSTEM_WINDOW:             return UIA_WindowControlTypeId;
+    case ROLE_SYSTEM_MENUPOPUP:          return UIA_MenuControlTypeId;
+    case ROLE_SYSTEM_TOOLTIP:            return UIA_ToolTipControlTypeId;
+    case ROLE_SYSTEM_DOCUMENT:           return UIA_DocumentControlTypeId;
+    case ROLE_SYSTEM_PANE:               return UIA_PaneControlTypeId;
+    case ROLE_SYSTEM_GROUPING:           return UIA_GroupControlTypeId;
+    case ROLE_SYSTEM_SEPARATOR:          return UIA_SeparatorControlTypeId;
+    case ROLE_SYSTEM_TOOLBAR:            return UIA_ToolBarControlTypeId;
+    case ROLE_SYSTEM_STATUSBAR:          return UIA_StatusBarControlTypeId;
+    case ROLE_SYSTEM_TABLE:              return UIA_TableControlTypeId;
+    case ROLE_SYSTEM_COLUMNHEADER:
+    case ROLE_SYSTEM_ROWHEADER:          return UIA_HeaderControlTypeId;
+    case ROLE_SYSTEM_CELL:               return UIA_DataItemControlTypeId;
+    case ROLE_SYSTEM_LINK:               return UIA_HyperlinkControlTypeId;
+    case ROLE_SYSTEM_LIST:               return UIA_ListControlTypeId;
+    case ROLE_SYSTEM_LISTITEM:           return UIA_ListItemControlTypeId;
+    case ROLE_SYSTEM_OUTLINE:            return UIA_TreeControlTypeId;
+    case ROLE_SYSTEM_OUTLINEITEM:        return UIA_TreeItemControlTypeId;
+    case ROLE_SYSTEM_PAGETAB:            return UIA_TabItemControlTypeId;
+    case ROLE_SYSTEM_GRAPHIC:            return UIA_ImageControlTypeId;
+    case ROLE_SYSTEM_STATICTEXT:         return UIA_TextControlTypeId;
+    case ROLE_SYSTEM_TEXT:               return UIA_EditControlTypeId;
+    case ROLE_SYSTEM_CLOCK:
+    case ROLE_SYSTEM_BUTTONDROPDOWNGRID:
+    case ROLE_SYSTEM_PUSHBUTTON:         return UIA_ButtonControlTypeId;
+    case ROLE_SYSTEM_CHECKBUTTON:        return UIA_CheckBoxControlTypeId;
+    case ROLE_SYSTEM_RADIOBUTTON:        return UIA_RadioButtonControlTypeId;
+    case ROLE_SYSTEM_COMBOBOX:           return UIA_ComboBoxControlTypeId;
+    case ROLE_SYSTEM_PROGRESSBAR:        return UIA_ProgressBarControlTypeId;
+    case ROLE_SYSTEM_SLIDER:             return UIA_SliderControlTypeId;
+    case ROLE_SYSTEM_SPINBUTTON:         return UIA_SpinnerControlTypeId;
+    case ROLE_SYSTEM_BUTTONMENU:
+    case ROLE_SYSTEM_MENUITEM:           return UIA_MenuItemControlTypeId;
+    case ROLE_SYSTEM_PAGETABLIST:        return UIA_TabControlTypeId;
+    case ROLE_SYSTEM_BUTTONDROPDOWN:
+    case ROLE_SYSTEM_SPLITBUTTON:        return UIA_SplitButtonControlTypeId;
+    case ROLE_SYSTEM_SOUND:
+    case ROLE_SYSTEM_CURSOR:
+    case ROLE_SYSTEM_CARET:
+    case ROLE_SYSTEM_ALERT:
+    case ROLE_SYSTEM_CLIENT:
+    case ROLE_SYSTEM_CHART:
+    case ROLE_SYSTEM_DIALOG:
+    case ROLE_SYSTEM_BORDER:
+    case ROLE_SYSTEM_COLUMN:
+    case ROLE_SYSTEM_ROW:
+    case ROLE_SYSTEM_HELPBALLOON:
+    case ROLE_SYSTEM_CHARACTER:
+    case ROLE_SYSTEM_PROPERTYPAGE:
+    case ROLE_SYSTEM_DROPLIST:
+    case ROLE_SYSTEM_DIAL:
+    case ROLE_SYSTEM_HOTKEYFIELD:
+    case ROLE_SYSTEM_DIAGRAM:
+    case ROLE_SYSTEM_ANIMATION:
+    case ROLE_SYSTEM_EQUATION:
+    case ROLE_SYSTEM_WHITESPACE:
+    case ROLE_SYSTEM_IPADDRESS:
+    case ROLE_SYSTEM_OUTLINEBUTTON:
+        WARN("No UIA control type mapping for MSAA role %ld\n", role);
+        break;
+
+    default:
+        FIXME("UIA control type mapping unimplemented for MSAA role %ld\n", role);
+        break;
+    }
+
+    return 0;
+}
+
 /*
  * UiaProviderFromIAccessible IRawElementProviderSimple interface.
  */
@@ -42,6 +140,7 @@ struct msaa_provider {
     IAccessible *acc;
     VARIANT cid;
     HWND hwnd;
+    LONG control_type;
 };
 
 static inline struct msaa_provider *impl_from_msaa_provider(IRawElementProviderSimple *iface)
@@ -106,14 +205,52 @@ HRESULT WINAPI msaa_provider_GetPatternProvider(IRawElementProviderSimple *iface
 HRESULT WINAPI msaa_provider_GetPropertyValue(IRawElementProviderSimple *iface,
         PROPERTYID prop_id, VARIANT *ret_val)
 {
+    struct msaa_provider *msaa_prov = impl_from_msaa_provider(iface);
+    HRESULT hr;
+    VARIANT v;
+
     TRACE("%p, %d, %p\n", iface, prop_id, ret_val);
 
     VariantInit(ret_val);
+    VariantInit(&v);
     switch (prop_id)
     {
     case UIA_ProviderDescriptionPropertyId:
         V_VT(ret_val) = VT_BSTR;
         V_BSTR(ret_val) = SysAllocString(L"Wine: MSAA Proxy");
+        break;
+
+    case UIA_ControlTypePropertyId:
+        if (!msaa_prov->control_type)
+        {
+            hr = IAccessible_get_accRole(msaa_prov->acc, msaa_prov->cid, &v);
+            if (SUCCEEDED(hr) && (V_VT(&v) == VT_I4))
+                msaa_prov->control_type = msaa_role_to_uia_control_type(V_I4(&v));
+        }
+
+        if (msaa_prov->control_type)
+            variant_init_i4(ret_val, msaa_prov->control_type);
+
+        break;
+
+    case UIA_HasKeyboardFocusPropertyId:
+        variant_init_bool(ret_val, msaa_check_acc_state(msaa_prov->acc, msaa_prov->cid,
+                    STATE_SYSTEM_FOCUSED));
+        break;
+
+    case UIA_IsKeyboardFocusablePropertyId:
+        variant_init_bool(ret_val, msaa_check_acc_state(msaa_prov->acc, msaa_prov->cid,
+                    STATE_SYSTEM_FOCUSABLE));
+        break;
+
+    case UIA_IsEnabledPropertyId:
+        variant_init_bool(ret_val, !msaa_check_acc_state(msaa_prov->acc, msaa_prov->cid,
+                    STATE_SYSTEM_UNAVAILABLE));
+        break;
+
+    case UIA_IsPasswordPropertyId:
+        variant_init_bool(ret_val, msaa_check_acc_state(msaa_prov->acc, msaa_prov->cid,
+                    STATE_SYSTEM_PROTECTED));
         break;
 
     default:
@@ -151,7 +288,6 @@ HRESULT WINAPI UiaProviderFromIAccessible(IAccessible *acc, long child_id, DWORD
     struct msaa_provider *msaa_prov;
     IServiceProvider *serv_prov;
     HWND hwnd = NULL;
-    IOleWindow *win;
     HRESULT hr;
 
     TRACE("(%p, %ld, %#lx, %p)\n", acc, child_id, flags, elprov);
@@ -187,30 +323,13 @@ HRESULT WINAPI UiaProviderFromIAccessible(IAccessible *acc, long child_id, DWORD
         IServiceProvider_Release(serv_prov);
     }
 
-    hr = IAccessible_QueryInterface(acc, &IID_IOleWindow, (void **)&win);
-    if (SUCCEEDED(hr))
-    {
-        hr = IOleWindow_GetWindow(win, &hwnd);
-        if (FAILED(hr))
-            hwnd = NULL;
-        IOleWindow_Release(win);
-    }
+    hr = WindowFromAccessibleObject(acc, &hwnd);
+    if (FAILED(hr))
+       return hr;
+    if (!hwnd)
+        return E_FAIL;
 
-    if (!IsWindow(hwnd))
-    {
-        VARIANT v, cid;
-
-        VariantInit(&v);
-        variant_init_i4(&cid, CHILDID_SELF);
-        hr = IAccessible_accNavigate(acc, 10, cid, &v);
-        if (SUCCEEDED(hr) && V_VT(&v) == VT_I4)
-            hwnd = ULongToHandle(V_I4(&v));
-
-        if (!IsWindow(hwnd))
-            return E_FAIL;
-    }
-
-    msaa_prov = heap_alloc(sizeof(*msaa_prov));
+    msaa_prov = heap_alloc_zero(sizeof(*msaa_prov));
     if (!msaa_prov)
         return E_OUTOFMEMORY;
 
