@@ -445,7 +445,7 @@
 @ stdcall InsertMenuItemA(long long long ptr)
 @ stdcall InsertMenuItemW(long long long ptr)
 @ stdcall InsertMenuW(long long long long ptr)
-@ stdcall InternalGetWindowIcon(ptr long)
+@ stdcall InternalGetWindowIcon(ptr long) NtUserInternalGetWindowIcon
 @ stdcall InternalGetWindowText(long ptr long) NtUserInternalGetWindowText
 @ stdcall IntersectRect(ptr ptr ptr)
 @ stdcall InvalidateRect(long ptr long)
@@ -630,7 +630,7 @@
 @ stdcall ScrollChildren(long long long long)
 @ stdcall ScrollDC(long long long ptr ptr long ptr) NtUserScrollDC
 @ stdcall ScrollWindow(long long long ptr ptr)
-@ stdcall ScrollWindowEx(long long long ptr ptr long ptr long)
+@ stdcall ScrollWindowEx(long long long ptr ptr long ptr long) NtUserScrollWindowEx
 @ stdcall SendDlgItemMessageA(long long long long long)
 @ stdcall SendDlgItemMessageW(long long long long long)
 @ stdcall SendIMEMessageExA(long long)

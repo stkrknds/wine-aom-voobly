@@ -855,6 +855,12 @@ LRESULT WINAPI NtUserDispatchMessage( const MSG *msg )
     return unix_funcs->pNtUserDispatchMessage( msg );
 }
 
+BOOL WINAPI NtUserDragDetect( HWND hwnd, int x, int y )
+{
+    if (!unix_funcs) return FALSE;
+    return unix_funcs->pNtUserDragDetect( hwnd, x, y );
+}
+
 BOOL WINAPI NtUserDrawIconEx( HDC hdc, INT x0, INT y0, HICON icon, INT width,
                               INT height, UINT istep, HBRUSH hbr, UINT flags )
 {
@@ -1023,10 +1029,17 @@ BOOL WINAPI NtUserGetUpdatedClipboardFormats( UINT *formats, UINT size, UINT *ou
     return unix_funcs->pNtUserGetUpdatedClipboardFormats( formats, size, out_size );
 }
 
+
 BOOL WINAPI NtUserGetWindowPlacement( HWND hwnd, WINDOWPLACEMENT *placement )
 {
     if (!unix_funcs) return FALSE;
     return unix_funcs->pNtUserGetWindowPlacement( hwnd, placement );
+}
+
+HICON WINAPI NtUserInternalGetWindowIcon( HWND hwnd, UINT type )
+{
+    if (!unix_funcs) return 0;
+    return unix_funcs->pNtUserInternalGetWindowIcon( hwnd, type );
 }
 
 BOOL WINAPI NtUserIsClipboardFormatAvailable( UINT format )
@@ -1110,6 +1123,15 @@ BOOL WINAPI NtUserScrollDC( HDC hdc, INT dx, INT dy, const RECT *scroll, const R
 {
     if (!unix_funcs) return FALSE;
     return unix_funcs->pNtUserScrollDC( hdc, dx, dy, scroll, clip, ret_update_rgn, update_rect );
+}
+
+INT WINAPI NtUserScrollWindowEx( HWND hwnd, INT dx, INT dy, const RECT *rect,
+                                 const RECT *clip_rect, HRGN update_rgn,
+                                 RECT *update_rect, UINT flags )
+{
+    if (!unix_funcs) return 0;
+    return unix_funcs->pNtUserScrollWindowEx( hwnd, dx, dy, rect, clip_rect,
+                                              update_rgn, update_rect, flags );
 }
 
 HPALETTE WINAPI NtUserSelectPalette( HDC hdc, HPALETTE hpal, WORD bkg )
@@ -1406,15 +1428,6 @@ BOOL CDECL __wine_send_input( HWND hwnd, const INPUT *input, const RAWINPUT *raw
 {
     if (!unix_funcs) return FALSE;
     return unix_funcs->wine_send_input( hwnd, input, rawinput );
-}
-
-/***********************************************************************
- *           __wine_set_user_driver    (win32u.@)
- */
-void CDECL __wine_set_user_driver( const struct user_driver_funcs *funcs, UINT version )
-{
-    if (!unix_funcs) return;
-    return unix_funcs->set_user_driver( funcs, version );
 }
 
 extern void wrappers_init( unixlib_handle_t handle )

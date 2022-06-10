@@ -845,7 +845,7 @@
 @ stub NtUserDoSoundConnect
 @ stub NtUserDoSoundDisconnect
 @ stub NtUserDownlevelTouchpad
-@ stub NtUserDragDetect
+@ stdcall NtUserDragDetect(long long long)
 @ stub NtUserDragObject
 @ stub NtUserDrawAnimatedRects
 @ stub NtUserDrawCaption
@@ -1044,7 +1044,7 @@
 @ stub NtUserInjectPointerInput
 @ stub NtUserInjectTouchInput
 @ stub NtUserInteractiveControlQueryUsage
-@ stub NtUserInternalGetWindowIcon
+@ stdcall NtUserInternalGetWindowIcon(ptr long)
 @ stdcall -syscall NtUserInternalGetWindowText(long ptr long)
 @ stub NtUserInternalToUnicode
 @ stub NtUserInvalidateRect
@@ -1156,7 +1156,7 @@
 @ stub NtUserRestoreWindowDpiChanges
 @ stub NtUserSBGetParms
 @ stdcall NtUserScrollDC(long long long ptr ptr long ptr)
-@ stub NtUserScrollWindowEx
+@ stdcall NtUserScrollWindowEx(long long long ptr ptr long ptr long)
 @ stdcall NtUserSelectPalette(long long long)
 @ stub NtUserSendEventMessage
 @ stdcall NtUserSendInput(long ptr long)
@@ -1322,7 +1322,6 @@
 
 # Graphics drivers
 @ cdecl __wine_send_input(long ptr ptr)
-@ cdecl __wine_set_user_driver(ptr long)
 
 # OpenGL
 @ cdecl __wine_get_wgl_driver(long long)

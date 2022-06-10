@@ -105,10 +105,11 @@ C_ASSERT( sizeof(struct entry) == 2 * ALIGNMENT );
 
 typedef struct
 {
+    SIZE_T __pad[sizeof(SIZE_T) / sizeof(DWORD)];
     struct list           entry;      /* entry in heap large blocks list */
     SIZE_T                data_size;  /* size of user data */
     SIZE_T                block_size; /* total size of virtual memory block */
-    DWORD                 pad[2];     /* padding to ensure 16-byte alignment of data */
+    void                 *user_value;
     DWORD                 size;       /* fields for compatibility with normal arenas */
     DWORD                 magic;      /* these must remain at the end of the structure */
 } ARENA_LARGE;
@@ -212,6 +213,7 @@ C_ASSERT( offsetof(HEAP, subheap) <= COMMIT_MASK );
 
 /* some undocumented flags (names are made up) */
 #define HEAP_PRIVATE          0x00001000
+#define HEAP_ADD_USER_INFO    0x00000100
 #define HEAP_PAGE_ALLOCS      0x01000000
 #define HEAP_VALIDATE         0x10000000
 #define HEAP_VALIDATE_ALL     0x20000000
@@ -361,6 +363,12 @@ static inline void mark_block_tail( struct block *block, DWORD flags )
         memset( tail, ARENA_TAIL_FILLER, ALIGNMENT );
     }
     valgrind_make_noaccess( tail, ALIGNMENT );
+    if (flags & HEAP_ADD_USER_INFO)
+    {
+        if (flags & HEAP_TAIL_CHECKING_ENABLED || RUNNING_ON_VALGRIND) tail += ALIGNMENT;
+        valgrind_make_writable( tail + sizeof(void *), sizeof(void *) );
+        memset( tail + sizeof(void *), 0, sizeof(void *) );
+    }
 }
 
 /* initialize contents of a newly created block of memory */
@@ -451,7 +459,7 @@ static RTL_CRITICAL_SECTION_DEBUG process_heap_cs_debug =
 static inline ULONG heap_get_flags( const HEAP *heap, ULONG flags )
 {
     if (flags & (HEAP_TAIL_CHECKING_ENABLED | HEAP_FREE_CHECKING_ENABLED)) flags |= HEAP_CHECKING_ENABLED;
-    flags &= HEAP_GENERATE_EXCEPTIONS | HEAP_NO_SERIALIZE | HEAP_ZERO_MEMORY | HEAP_REALLOC_IN_PLACE_ONLY | HEAP_CHECKING_ENABLED;
+    flags &= HEAP_GENERATE_EXCEPTIONS | HEAP_NO_SERIALIZE | HEAP_ZERO_MEMORY | HEAP_REALLOC_IN_PLACE_ONLY | HEAP_CHECKING_ENABLED | HEAP_ADD_USER_INFO;
     return heap->flags | flags;
 }
 
@@ -1476,7 +1484,7 @@ HANDLE WINAPI RtlDestroyHeap( HANDLE heap )
 
 static SIZE_T heap_get_block_size( HEAP *heap, ULONG flags, SIZE_T size )
 {
-    static const ULONG padd_flags = HEAP_VALIDATE | HEAP_VALIDATE_ALL | HEAP_VALIDATE_PARAMS;
+    static const ULONG padd_flags = HEAP_VALIDATE | HEAP_VALIDATE_ALL | HEAP_VALIDATE_PARAMS | HEAP_ADD_USER_INFO;
     static const ULONG check_flags = HEAP_TAIL_CHECKING_ENABLED | HEAP_FREE_CHECKING_ENABLED | HEAP_CHECKING_ENABLED;
     SIZE_T overhead;
 
@@ -2000,10 +2008,31 @@ BOOLEAN WINAPI RtlGetUserInfoHeap( HANDLE heap, ULONG flags, void *ptr, void **u
 /***********************************************************************
  *           RtlSetUserValueHeap    (NTDLL.@)
  */
-BOOLEAN WINAPI RtlSetUserValueHeap( HANDLE heap, ULONG flags, void *ptr, void *user_value )
+BOOLEAN WINAPI RtlSetUserValueHeap( HANDLE handle, ULONG flags, void *ptr, void *user_value )
 {
-    FIXME( "heap %p, flags %#x, ptr %p, user_value %p stub!\n", heap, flags, ptr, user_value );
-    return FALSE;
+    ARENA_LARGE *large = (ARENA_LARGE *)ptr - 1;
+    struct block *block;
+    BOOLEAN ret = TRUE;
+    SUBHEAP *subheap;
+    HEAP *heap;
+    char *tmp;
+
+    TRACE( "handle %p, flags %#x, ptr %p, user_value %p.\n", handle, flags, ptr, user_value );
+
+    if (!(heap = HEAP_GetPtr( handle ))) return TRUE;
+
+    heap_lock( heap, flags );
+    if (!(block = unsafe_block_from_ptr( heap, ptr, &subheap ))) ret = FALSE;
+    else if (!subheap) large->user_value = user_value;
+    else
+    {
+        tmp = (char *)block + block_get_size( block ) - block->tail_size + sizeof(void *);
+        if ((heap_get_flags( heap, flags ) & HEAP_TAIL_CHECKING_ENABLED) || RUNNING_ON_VALGRIND) tmp += ALIGNMENT;
+        *(void **)tmp = user_value;
+    }
+    heap_unlock( heap, flags );
+
+    return ret;
 }
 
 /***********************************************************************

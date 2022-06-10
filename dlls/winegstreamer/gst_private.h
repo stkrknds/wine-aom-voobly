@@ -64,6 +64,12 @@ static inline const char *debugstr_time(REFERENCE_TIME time)
 
 #define MEDIATIME_FROM_BYTES(x) ((LONGLONG)(x) * 10000000)
 
+struct wg_sample_queue;
+
+HRESULT wg_sample_queue_create(struct wg_sample_queue **out);
+void wg_sample_queue_destroy(struct wg_sample_queue *queue);
+void wg_sample_queue_flush(struct wg_sample_queue *queue, bool all);
+
 struct wg_parser *wg_parser_create(enum wg_parser_type type, bool unlimited_buffering);
 void wg_parser_destroy(struct wg_parser *parser);
 
@@ -120,8 +126,13 @@ extern HRESULT mfplat_DllRegisterServer(void);
 IMFMediaType *mf_media_type_from_wg_format(const struct wg_format *format);
 void mf_media_type_to_wg_format(IMFMediaType *type, struct wg_format *format);
 
-HRESULT mf_create_wg_sample(IMFSample *sample, struct wg_sample **out);
-void mf_destroy_wg_sample(struct wg_sample *wg_sample);
+HRESULT wg_sample_create_mf(IMFSample *sample, struct wg_sample **out);
+void wg_sample_release(struct wg_sample *wg_sample);
+
+HRESULT wg_transform_push_mf(struct wg_transform *transform, struct wg_sample *sample,
+        struct wg_sample_queue *queue);
+HRESULT wg_transform_read_mf(struct wg_transform *transform, struct wg_sample *sample,
+        struct wg_format *format);
 
 HRESULT winegstreamer_stream_handler_create(REFIID riid, void **obj);
 

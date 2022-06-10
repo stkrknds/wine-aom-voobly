@@ -121,6 +121,8 @@ enum wg_sample_flag
     WG_SAMPLE_FLAG_HAS_PTS = 2,
     WG_SAMPLE_FLAG_HAS_DURATION = 4,
     WG_SAMPLE_FLAG_SYNC_POINT = 8,
+
+    WG_SAMPLE_FLAG_HAS_REFCOUNT = 0x10000, /* sample is queued on the client side and may be wrapped */
 };
 
 struct wg_sample
@@ -128,6 +130,7 @@ struct wg_sample
     /* timestamp and duration are in 100-nanosecond units. */
     UINT64 pts;
     UINT64 duration;
+    LONG refcount; /* unix refcount */
     UINT32 flags;
     UINT32 max_size;
     UINT32 size;

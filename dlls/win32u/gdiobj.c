@@ -1158,6 +1158,7 @@ static struct unix_funcs unix_funcs =
     NtUserDestroyMenu,
     NtUserDestroyWindow,
     NtUserDispatchMessage,
+    NtUserDragDetect,
     NtUserDrawIconEx,
     NtUserEmptyClipboard,
     NtUserEnableMenuItem,
@@ -1186,6 +1187,7 @@ static struct unix_funcs unix_funcs =
     NtUserGetUpdatedClipboardFormats,
     NtUserGetWindowPlacement,
     NtUserHideCaret,
+    NtUserInternalGetWindowIcon,
     NtUserIsClipboardFormatAvailable,
     NtUserMapVirtualKeyEx,
     NtUserMessageCall,
@@ -1200,6 +1202,7 @@ static struct unix_funcs unix_funcs =
     NtUserRegisterHotKey,
     NtUserReleaseDC,
     NtUserScrollDC,
+    NtUserScrollWindowEx,
     NtUserSelectPalette,
     NtUserSendInput,
     NtUserSetActiveWindow,
@@ -1249,7 +1252,6 @@ static struct unix_funcs unix_funcs =
     __wine_get_vulkan_driver,
     __wine_get_wgl_driver,
     __wine_send_input,
-    __wine_set_user_driver,
 };
 
 NTSTATUS gdi_init(void)

@@ -35,6 +35,7 @@ enum
     NtUserCopyImage,
     NtUserFreeCachedClipboardData,
     NtUserLoadDriver,
+    NtUserLoadImage,
     NtUserRegisterBuiltinClasses,
     NtUserRenderSynthesizedFormat,
     /* win16 hooks */
@@ -147,7 +148,7 @@ struct win_hook_params
     WCHAR module[MAX_PATH];
 };
 
-/* NtUserCopyMessage params */
+/* NtUserCopyImage params */
 struct copy_image_params
 {
     HANDLE hwnd;
@@ -162,6 +163,17 @@ struct free_cached_data_params
 {
     UINT format;
     HANDLE handle;
+};
+
+/* NtUserLoadImage params */
+struct load_image_params
+{
+    HINSTANCE hinst;
+    const WCHAR *name;
+    UINT type;
+    INT dx;
+    INT dy;
+    UINT flags;
 };
 
 /* NtUserRenderSynthesizedFormat params */
@@ -226,6 +238,9 @@ struct send_message_callback_params
 #define NTUSER_OBJ_WINPOS   0x04
 #define NTUSER_OBJ_ACCEL    0x08
 #define NTUSER_OBJ_HOOK     0x0f
+
+/* NtUserScrollWindowEx flag */
+#define SW_NODCCACHE  0x8000
 
 /* NtUserInitializeClientPfnArrays parameter, not compatible with Windows */
 struct user_client_procs
@@ -510,6 +525,7 @@ BOOL    WINAPI NtUserDestroyCursor( HCURSOR cursor, ULONG arg );
 BOOL    WINAPI NtUserDestroyMenu( HMENU menu );
 BOOL    WINAPI NtUserDestroyWindow( HWND hwnd );
 LRESULT WINAPI NtUserDispatchMessage( const MSG *msg );
+BOOL    WINAPI NtUserDragDetect( HWND hwnd, int x, int y );
 BOOL    WINAPI NtUserDrawIconEx( HDC hdc, INT x0, INT y0, HICON icon, INT width,
                                  INT height, UINT istep, HBRUSH hbr, UINT flags );
 BOOL    WINAPI NtUserEmptyClipboard(void);
@@ -585,6 +601,7 @@ BOOL    WINAPI NtUserHideCaret( HWND hwnd );
 NTSTATUS WINAPI NtUserInitializeClientPfnArrays( const struct user_client_procs *client_procsA,
                                                  const struct user_client_procs *client_procsW,
                                                  const void *client_workers, HINSTANCE user_module );
+HICON   WINAPI NtUserInternalGetWindowIcon( HWND hwnd, UINT type );
 INT     WINAPI NtUserInternalGetWindowText( HWND hwnd, WCHAR *text, INT count );
 BOOL    WINAPI NtUserIsClipboardFormatAvailable( UINT format );
 BOOL    WINAPI NtUserKillTimer( HWND hwnd, UINT_PTR id );
@@ -615,6 +632,9 @@ BOOL    WINAPI NtUserRemoveMenu( HMENU menu, UINT id, UINT flags );
 HANDLE  WINAPI NtUserRemoveProp( HWND hwnd, const WCHAR *str );
 BOOL    WINAPI NtUserScrollDC( HDC hdc, INT dx, INT dy, const RECT *scroll, const RECT *clip,
                                HRGN ret_update_rgn, RECT *update_rect );
+INT     WINAPI NtUserScrollWindowEx( HWND hwnd, INT dx, INT dy, const RECT *rect,
+                                     const RECT *clip_rect, HRGN update_rgn,
+                                     RECT *update_rect, UINT flags ) DECLSPEC_HIDDEN;
 HPALETTE WINAPI NtUserSelectPalette( HDC hdc, HPALETTE palette, WORD force_background );
 UINT     WINAPI NtUserSendInput( UINT count, INPUT *inputs, int size );
 HWND     WINAPI NtUserSetActiveWindow( HWND hwnd );
@@ -998,7 +1018,6 @@ enum
     NtUserCallHwndParam_GetClassLongPtrW,
     NtUserCallHwndParam_GetClassWord,
     NtUserCallHwndParam_GetClientRect,
-    NtUserCallHwndParam_GetMinMaxInfo,
     NtUserCallHwndParam_GetWindowInfo,
     NtUserCallHwndParam_GetWindowLongA,
     NtUserCallHwndParam_GetWindowLongW,
@@ -1015,6 +1034,7 @@ enum
     NtUserCallHwndParam_MonitorFromWindow,
     NtUserCallHwndParam_ScreenToClient,
     NtUserCallHwndParam_SetForegroundWindow,
+    NtUserCallHwndParam_SetWindowContextHelpId,
     NtUserCallHwndParam_SetWindowPixelFormat,
     NtUserCallHwndParam_ShowOwnedPopups,
     /* temporary exports */
@@ -1062,13 +1082,6 @@ static inline WORD NtUserGetClassWord( HWND hwnd, INT offset )
 static inline BOOL NtUserGetClientRect( HWND hwnd, RECT *rect )
 {
     return NtUserCallHwndParam( hwnd, (UINT_PTR)rect, NtUserCallHwndParam_GetClientRect );
-}
-
-static inline MINMAXINFO NtUserGetMinMaxInfo( HWND hwnd )
-{
-    MINMAXINFO info;
-    NtUserCallHwndParam( hwnd, (UINT_PTR)&info, NtUserCallHwndParam_GetMinMaxInfo );
-    return info;
 }
 
 static inline BOOL NtUserGetWindowInfo( HWND hwnd, WINDOWINFO *info )
@@ -1163,6 +1176,11 @@ static inline BOOL NtUserScreenToClient( HWND hwnd, POINT *pt )
 static inline BOOL NtUserSetForegroundWindow( HWND hwnd, BOOL mouse )
 {
     return NtUserCallHwndParam( hwnd, mouse, NtUserCallHwndParam_SetForegroundWindow );
+}
+
+static inline BOOL NtUserSetWindowContextHelpId( HWND hwnd, DWORD id )
+{
+    return NtUserCallHwndParam( hwnd, id, NtUserCallHwndParam_SetWindowContextHelpId );
 }
 
 static inline BOOL NtUserSetWindowPixelFormat( HWND hwnd, int format )

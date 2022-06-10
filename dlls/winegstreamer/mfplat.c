@@ -26,6 +26,7 @@
 #include "mfapi.h"
 
 #include "wine/debug.h"
+#include "wine/list.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(mfplat);
 
@@ -958,19 +959,24 @@ void mf_media_type_to_wg_format(IMFMediaType *type, struct wg_format *format)
         FIXME("Unrecognized major type %s.\n", debugstr_guid(&major_type));
 }
 
+struct wg_sample_queue
+{
+    CRITICAL_SECTION cs;
+    struct list samples;
+};
+
 struct mf_sample
 {
     IMFSample *sample;
     IMFMediaBuffer *media_buffer;
     struct wg_sample wg_sample;
+    struct list entry;
 };
 
-HRESULT mf_create_wg_sample(IMFSample *sample, struct wg_sample **out)
+HRESULT wg_sample_create_mf(IMFSample *sample, struct wg_sample **out)
 {
     DWORD current_length, max_length;
     struct mf_sample *mf_sample;
-    LONGLONG time, duration;
-    UINT32 value;
     BYTE *buffer;
     HRESULT hr;
 
@@ -980,19 +986,6 @@ HRESULT mf_create_wg_sample(IMFSample *sample, struct wg_sample **out)
         goto out;
     if (FAILED(hr = IMFMediaBuffer_Lock(mf_sample->media_buffer, &buffer, &max_length, &current_length)))
         goto out;
-
-    if (SUCCEEDED(IMFSample_GetSampleTime(sample, &time)))
-    {
-        mf_sample->wg_sample.flags |= WG_SAMPLE_FLAG_HAS_PTS;
-        mf_sample->wg_sample.pts = time;
-    }
-    if (SUCCEEDED(IMFSample_GetSampleDuration(sample, &duration)))
-    {
-        mf_sample->wg_sample.flags |= WG_SAMPLE_FLAG_HAS_DURATION;
-        mf_sample->wg_sample.duration = duration;
-    }
-    if (SUCCEEDED(IMFSample_GetUINT32(sample, &MFSampleExtension_CleanPoint, &value)) && value)
-        mf_sample->wg_sample.flags |= WG_SAMPLE_FLAG_SYNC_POINT;
 
     IMFSample_AddRef((mf_sample->sample = sample));
     mf_sample->wg_sample.data = buffer;
@@ -1010,13 +1003,127 @@ out:
     return hr;
 }
 
-void mf_destroy_wg_sample(struct wg_sample *wg_sample)
+void wg_sample_release(struct wg_sample *wg_sample)
 {
     struct mf_sample *mf_sample = CONTAINING_RECORD(wg_sample, struct mf_sample, wg_sample);
 
+    if (InterlockedOr(&wg_sample->refcount, 0))
+    {
+        ERR("Sample %p is still in use, trouble ahead!\n", wg_sample);
+        return;
+    }
+
     IMFMediaBuffer_Unlock(mf_sample->media_buffer);
-    IMFMediaBuffer_SetCurrentLength(mf_sample->media_buffer, wg_sample->size);
     IMFMediaBuffer_Release(mf_sample->media_buffer);
+    IMFSample_Release(mf_sample->sample);
+
+    free(mf_sample);
+}
+
+static void wg_sample_queue_begin_append(struct wg_sample_queue *queue, struct wg_sample *wg_sample)
+{
+    struct mf_sample *mf_sample = CONTAINING_RECORD(wg_sample, struct mf_sample, wg_sample);
+
+    /* make sure a concurrent wg_sample_queue_flush call won't release the sample until we're done */
+    InterlockedIncrement(&wg_sample->refcount);
+    mf_sample->wg_sample.flags |= WG_SAMPLE_FLAG_HAS_REFCOUNT;
+
+    EnterCriticalSection(&queue->cs);
+    list_add_tail(&queue->samples, &mf_sample->entry);
+    LeaveCriticalSection(&queue->cs);
+}
+
+static void wg_sample_queue_end_append(struct wg_sample_queue *queue, struct wg_sample *wg_sample)
+{
+    /* release temporary ref taken in wg_sample_queue_begin_append */
+    InterlockedDecrement(&wg_sample->refcount);
+
+    wg_sample_queue_flush(queue, false);
+}
+
+void wg_sample_queue_flush(struct wg_sample_queue *queue, bool all)
+{
+    struct mf_sample *mf_sample, *next;
+
+    EnterCriticalSection(&queue->cs);
+
+    LIST_FOR_EACH_ENTRY_SAFE(mf_sample, next, &queue->samples, struct mf_sample, entry)
+    {
+        if (!InterlockedOr(&mf_sample->wg_sample.refcount, 0) || all)
+        {
+            list_remove(&mf_sample->entry);
+            wg_sample_release(&mf_sample->wg_sample);
+        }
+    }
+
+    LeaveCriticalSection(&queue->cs);
+}
+
+HRESULT wg_sample_queue_create(struct wg_sample_queue **out)
+{
+    struct wg_sample_queue *queue;
+
+    if (!(queue = calloc(1, sizeof(*queue))))
+        return E_OUTOFMEMORY;
+
+    InitializeCriticalSection(&queue->cs);
+    queue->cs.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": cs");
+    list_init(&queue->samples);
+
+    TRACE("Created sample queue %p\n", queue);
+    *out = queue;
+
+    return S_OK;
+}
+
+void wg_sample_queue_destroy(struct wg_sample_queue *queue)
+{
+    wg_sample_queue_flush(queue, true);
+
+    queue->cs.DebugInfo->Spare[0] = 0;
+    InitializeCriticalSection(&queue->cs);
+
+    free(queue);
+}
+
+HRESULT wg_transform_push_mf(struct wg_transform *transform, struct wg_sample *wg_sample,
+        struct wg_sample_queue *queue)
+{
+    struct mf_sample *mf_sample = CONTAINING_RECORD(wg_sample, struct mf_sample, wg_sample);
+    LONGLONG time, duration;
+    UINT32 value;
+    HRESULT hr;
+
+    if (SUCCEEDED(IMFSample_GetSampleTime(mf_sample->sample, &time)))
+    {
+        mf_sample->wg_sample.flags |= WG_SAMPLE_FLAG_HAS_PTS;
+        mf_sample->wg_sample.pts = time;
+    }
+    if (SUCCEEDED(IMFSample_GetSampleDuration(mf_sample->sample, &duration)))
+    {
+        mf_sample->wg_sample.flags |= WG_SAMPLE_FLAG_HAS_DURATION;
+        mf_sample->wg_sample.duration = duration;
+    }
+    if (SUCCEEDED(IMFSample_GetUINT32(mf_sample->sample, &MFSampleExtension_CleanPoint, &value)) && value)
+        mf_sample->wg_sample.flags |= WG_SAMPLE_FLAG_SYNC_POINT;
+
+    wg_sample_queue_begin_append(queue, wg_sample);
+    hr = wg_transform_push_data(transform, wg_sample);
+    wg_sample_queue_end_append(queue, wg_sample);
+
+    return hr;
+}
+
+HRESULT wg_transform_read_mf(struct wg_transform *transform, struct wg_sample *wg_sample,
+        struct wg_format *format)
+{
+    struct mf_sample *mf_sample = CONTAINING_RECORD(wg_sample, struct mf_sample, wg_sample);
+    HRESULT hr;
+
+    if (FAILED(hr = wg_transform_read_data(transform, wg_sample, format)))
+        return hr;
+
+    IMFMediaBuffer_SetCurrentLength(mf_sample->media_buffer, wg_sample->size);
 
     if (wg_sample->flags & WG_SAMPLE_FLAG_HAS_PTS)
         IMFSample_SetSampleTime(mf_sample->sample, wg_sample->pts);
@@ -1025,6 +1132,5 @@ void mf_destroy_wg_sample(struct wg_sample *wg_sample)
     if (wg_sample->flags & WG_SAMPLE_FLAG_SYNC_POINT)
         IMFSample_SetUINT32(mf_sample->sample, &MFSampleExtension_CleanPoint, 1);
 
-    IMFSample_Release(mf_sample->sample);
-    free(mf_sample);
+    return S_OK;
 }

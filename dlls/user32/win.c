@@ -1475,63 +1475,16 @@ DWORD WINAPI GetWindowContextHelpId( HWND hwnd )
  */
 BOOL WINAPI SetWindowContextHelpId( HWND hwnd, DWORD id )
 {
-    WND *wnd = WIN_GetPtr( hwnd );
-    if (!wnd || wnd == WND_DESKTOP) return FALSE;
-    if (wnd == WND_OTHER_PROCESS)
-    {
-        if (IsWindow( hwnd )) FIXME( "not supported on other process window %p\n", hwnd );
-        return FALSE;
-    }
-    wnd->helpContext = id;
-    WIN_ReleasePtr( wnd );
-    return TRUE;
+    return NtUserSetWindowContextHelpId( hwnd, id );
 }
 
 
 /*******************************************************************
  *		DragDetect (USER32.@)
  */
-BOOL WINAPI DragDetect( HWND hWnd, POINT pt )
+BOOL WINAPI DragDetect( HWND hwnd, POINT pt )
 {
-    MSG msg;
-    RECT rect;
-    WORD wDragWidth, wDragHeight;
-
-    TRACE( "%p,%s\n", hWnd, wine_dbgstr_point( &pt ) );
-
-    if (!(NtUserGetKeyState( VK_LBUTTON ) & 0x8000))
-        return FALSE;
-
-    wDragWidth = GetSystemMetrics(SM_CXDRAG);
-    wDragHeight= GetSystemMetrics(SM_CYDRAG);
-    SetRect(&rect, pt.x - wDragWidth, pt.y - wDragHeight, pt.x + wDragWidth, pt.y + wDragHeight);
-
-    NtUserSetCapture( hWnd );
-
-    while(1)
-    {
-        while (PeekMessageW( &msg, 0, WM_MOUSEFIRST, WM_MOUSELAST, PM_REMOVE ))
-        {
-            if( msg.message == WM_LBUTTONUP )
-            {
-                ReleaseCapture();
-                return FALSE;
-            }
-            if( msg.message == WM_MOUSEMOVE )
-            {
-                POINT tmp;
-                tmp.x = (short)LOWORD(msg.lParam);
-                tmp.y = (short)HIWORD(msg.lParam);
-                if( !PtInRect( &rect, tmp ))
-                {
-                    ReleaseCapture();
-                    return TRUE;
-                }
-            }
-        }
-        WaitMessage();
-    }
-    return FALSE;
+    return NtUserDragDetect( hwnd, pt.x, pt.y );
 }
 
 /******************************************************************************
@@ -1840,51 +1793,4 @@ BOOL WINAPI SetWindowCompositionAttribute(HWND hwnd, void *data)
     FIXME("(%p, %p): stub\n", hwnd, data);
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return FALSE;
-}
-
-/***********************************************************************
- *              InternalGetWindowIcon   (USER32.@)
- */
-HICON WINAPI InternalGetWindowIcon( HWND hwnd, UINT type )
-{
-    WND *win = WIN_GetPtr( hwnd );
-    HICON ret;
-
-    TRACE( "hwnd %p, type %#x\n", hwnd, type );
-
-    if (!win)
-    {
-        SetLastError( ERROR_INVALID_WINDOW_HANDLE );
-        return 0;
-    }
-    if (win == WND_OTHER_PROCESS || win == WND_DESKTOP)
-    {
-        if (IsWindow( hwnd )) FIXME( "not supported on other process window %p\n", hwnd );
-        return 0;
-    }
-
-    switch (type)
-    {
-        case ICON_BIG:
-            ret = win->hIcon;
-            if (!ret) ret = (HICON)GetClassLongPtrW( hwnd, GCLP_HICON );
-            break;
-
-        case ICON_SMALL:
-        case ICON_SMALL2:
-            ret = win->hIconSmall ? win->hIconSmall : win->hIconSmall2;
-            if (!ret) ret = (HICON)GetClassLongPtrW( hwnd, GCLP_HICONSM );
-            if (!ret) ret = (HICON)GetClassLongPtrW( hwnd, GCLP_HICON );
-            break;
-
-        default:
-            SetLastError( ERROR_INVALID_PARAMETER );
-            WIN_ReleasePtr( win );
-            return 0;
-    }
-
-    if (!ret) ret = LoadIconW( 0, (const WCHAR *)IDI_APPLICATION );
-
-    WIN_ReleasePtr( win );
-    return CopyIcon( ret );
 }

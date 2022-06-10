@@ -737,7 +737,7 @@ BOOL is_child( HWND parent, HWND child )
 }
 
 /* see IsWindowVisible */
-static BOOL is_window_visible( HWND hwnd )
+BOOL is_window_visible( HWND hwnd )
 {
     HWND *list;
     BOOL retval = TRUE;
@@ -762,7 +762,7 @@ static BOOL is_window_visible( HWND hwnd )
  * minimized, and it is itself not minimized unless we are
  * trying to draw its default class icon.
  */
-static BOOL is_window_drawable( HWND hwnd, BOOL icon )
+BOOL is_window_drawable( HWND hwnd, BOOL icon )
 {
     HWND *list;
     BOOL retval = TRUE;
@@ -965,7 +965,7 @@ BOOL is_iconic( HWND hwnd )
     return (get_window_long( hwnd, GWL_STYLE ) & WS_MINIMIZE) != 0;
 }
 
-static BOOL is_zoomed( HWND hwnd )
+BOOL is_zoomed( HWND hwnd )
 {
     return (get_window_long( hwnd, GWL_STYLE ) & WS_MAXIMIZE) != 0;
 }
@@ -4539,6 +4539,69 @@ static DWORD get_window_context_help_id( HWND hwnd )
     return retval;
 }
 
+/* see SetWindowContextHelpId */
+static BOOL set_window_context_help_id( HWND hwnd, DWORD id )
+{
+    WND *win = get_win_ptr( hwnd );
+    if (!win || win == WND_DESKTOP) return FALSE;
+    if (win == WND_OTHER_PROCESS)
+    {
+        if (is_window( hwnd )) FIXME( "not supported on other process window %p\n", hwnd );
+        return FALSE;
+    }
+    win->helpContext = id;
+    release_win_ptr( win );
+    return TRUE;
+}
+
+/***********************************************************************
+ *           NtUserInternalGetWindowIcon   (win32u.@)
+ */
+HICON WINAPI NtUserInternalGetWindowIcon( HWND hwnd, UINT type )
+{
+    WND *win = get_win_ptr( hwnd );
+    HICON ret;
+
+    TRACE( "hwnd %p, type %#x\n", hwnd, type );
+
+    if (!win)
+    {
+        SetLastError( ERROR_INVALID_WINDOW_HANDLE );
+        return 0;
+    }
+    if (win == WND_OTHER_PROCESS || win == WND_DESKTOP)
+    {
+        if (is_window( hwnd )) FIXME( "not supported on other process window %p\n", hwnd );
+        return 0;
+    }
+
+    switch (type)
+    {
+        case ICON_BIG:
+            ret = win->hIcon;
+            if (!ret) ret = (HICON)get_class_long_ptr( hwnd, GCLP_HICON, FALSE );
+            break;
+
+        case ICON_SMALL:
+        case ICON_SMALL2:
+            ret = win->hIconSmall ? win->hIconSmall : win->hIconSmall2;
+            if (!ret) ret = (HICON)get_class_long_ptr( hwnd, GCLP_HICONSM, FALSE );
+            if (!ret) ret = (HICON)get_class_long_ptr( hwnd, GCLP_HICON, FALSE );
+            break;
+
+        default:
+            SetLastError( ERROR_INVALID_PARAMETER );
+            release_win_ptr( win );
+            return 0;
+    }
+    release_win_ptr( win );
+
+    if (!ret) ret = LoadImageW( 0, (const WCHAR *)IDI_APPLICATION, IMAGE_ICON,
+                                0, 0, LR_SHARED | LR_DEFAULTSIZE );
+
+    return CopyImage( ret, IMAGE_ICON, 0, 0, 0 );
+}
+
 /***********************************************************************
  *           send_destroy_message
  */
@@ -5376,10 +5439,6 @@ ULONG_PTR WINAPI NtUserCallHwndParam( HWND hwnd, DWORD_PTR param, DWORD code )
     case NtUserCallHwndParam_GetClientRect:
         return get_client_rect( hwnd, (RECT *)param );
 
-    case NtUserCallHwndParam_GetMinMaxInfo:
-        *(MINMAXINFO *)param = get_min_max_info( hwnd );
-        return 0;
-
     case NtUserCallHwndParam_GetWindowInfo:
         return get_window_info( hwnd, (WINDOWINFO *)param );
 
@@ -5431,6 +5490,9 @@ ULONG_PTR WINAPI NtUserCallHwndParam( HWND hwnd, DWORD_PTR param, DWORD code )
 
     case NtUserCallHwndParam_SetForegroundWindow:
         return set_foreground_window( hwnd, param );
+
+    case NtUserCallHwndParam_SetWindowContextHelpId:
+        return set_window_context_help_id( hwnd, param );
 
     case NtUserCallHwndParam_SetWindowPixelFormat:
         return set_window_pixel_format( hwnd, param );
