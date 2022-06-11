@@ -1400,29 +1400,23 @@ static void test_GlobalAlloc(void)
         ret = HeapValidate( GetProcessHeap(), 0, entry );
         ok( !ret, "HeapValidate succeeded\n" );
         ret = HeapValidate( GetProcessHeap(), 0, entry->ptr );
-        todo_wine
         ok( ret, "HeapValidate failed, error %lu\n", GetLastError() );
         size = HeapSize( GetProcessHeap(), 0, entry->ptr );
-        todo_wine
         ok( size == alloc_size, "HeapSize returned %Iu\n", size );
 
         tmp_mem = invalid_mem;
         tmp_flags = 0xdeadbeef;
         ret = pRtlGetUserInfoHeap( GetProcessHeap(), 0, entry->ptr, (void **)&tmp_mem, &tmp_flags );
         ok( ret, "RtlGetUserInfoHeap failed, error %lu\n", GetLastError() );
-        todo_wine
         ok( tmp_mem == mem, "got user ptr %p\n", tmp_mem );
         todo_wine
         ok( tmp_flags == 0x200, "got user flags %#lx\n", tmp_flags );
 
         ret = pRtlSetUserValueHeap( GetProcessHeap(), 0, entry->ptr, invalid_mem );
-        todo_wine
         ok( ret, "RtlSetUserValueHeap failed, error %lu\n", GetLastError() );
         tmp_mem = GlobalHandle( entry->ptr );
-        todo_wine
         ok( tmp_mem == invalid_mem, "GlobalHandle returned unexpected handle\n" );
         ret = pRtlSetUserValueHeap( GetProcessHeap(), 0, entry->ptr, mem );
-        todo_wine
         ok( ret, "RtlSetUserValueHeap failed, error %lu\n", GetLastError() );
 
         ptr = GlobalLock( mem );
@@ -1494,6 +1488,8 @@ static void test_GlobalAlloc(void)
     ptr = GlobalLock( mem );
     ok( !!ptr, "GlobalLock failed, error %lu\n", GetLastError() );
     ok( ptr != mem, "got unexpected ptr %p\n", ptr );
+    tmp_mem = GlobalHandle( ptr );
+    ok( tmp_mem == mem, "GlobalHandle returned unexpected handle\n" );
     flags = GlobalFlags( mem );
     ok( flags == 1, "GlobalFlags returned %#x, error %lu\n", flags, GetLastError() );
     tmp_ptr = GlobalLock( mem );
@@ -1633,9 +1629,7 @@ static void test_GlobalAlloc(void)
     mem = GlobalAlloc( GMEM_FIXED, 10 );
     ok( !!mem, "GlobalAlloc failed, error %lu\n", GetLastError() );
     tmp_mem = GlobalReAlloc( mem, 9, GMEM_MODIFY );
-    todo_wine
     ok( !!tmp_mem, "GlobalAlloc failed, error %lu\n", GetLastError() );
-    todo_wine
     ok( tmp_mem == mem, "got ptr %p, expected %p\n", tmp_mem, mem );
     size = GlobalSize( mem );
     ok( size == 10, "GlobalSize returned %Iu\n", size );
@@ -1649,9 +1643,7 @@ static void test_GlobalAlloc(void)
         "got error %lu\n", GetLastError() );
     if (tmp_mem) mem = tmp_mem;
     tmp_mem = GlobalReAlloc( mem, 1024 * 1024, GMEM_MODIFY );
-    todo_wine
     ok( !!tmp_mem, "GlobalAlloc failed, error %lu\n", GetLastError() );
-    todo_wine
     ok( tmp_mem == mem, "got ptr %p, expected %p\n", tmp_mem, mem );
     size = GlobalSize( mem );
     ok( size == 10, "GlobalSize returned %Iu\n", size );
@@ -1698,6 +1690,8 @@ static void test_GlobalAlloc(void)
     ok( !!mem, "GlobalAlloc failed, error %lu\n", GetLastError() );
     ret = GlobalUnlock( mem );
     ok( ret, "GlobalUnlock failed, error %lu\n", GetLastError() );
+    tmp_mem = GlobalHandle( mem );
+    ok( tmp_mem == mem, "GlobalHandle returned unexpected handle\n" );
     mem = GlobalFree( mem );
     ok( !mem, "GlobalFree failed, error %lu\n", GetLastError() );
 
@@ -1867,6 +1861,8 @@ static void test_LocalAlloc(void)
     ptr = LocalLock( mem );
     ok( !!ptr, "LocalLock failed, error %lu\n", GetLastError() );
     ok( ptr != mem, "got unexpected ptr %p\n", ptr );
+    tmp_mem = LocalHandle( ptr );
+    ok( tmp_mem == mem, "LocalHandle returned unexpected handle\n" );
     flags = LocalFlags( mem );
     ok( flags == 1, "LocalFlags returned %#x, error %lu\n", flags, GetLastError() );
     tmp_ptr = LocalLock( mem );
@@ -1986,9 +1982,7 @@ static void test_LocalAlloc(void)
     mem = LocalAlloc( LMEM_FIXED, 10 );
     ok( !!mem, "LocalAlloc failed, error %lu\n", GetLastError() );
     tmp_mem = LocalReAlloc( mem, 9, LMEM_MODIFY );
-    todo_wine
     ok( !!tmp_mem, "LocalAlloc failed, error %lu\n", GetLastError() );
-    todo_wine
     ok( tmp_mem == mem, "got ptr %p, expected %p\n", tmp_mem, mem );
     size = LocalSize( mem );
     ok( size == 10, "LocalSize returned %Iu\n", size );
@@ -2002,9 +1996,7 @@ static void test_LocalAlloc(void)
         "got error %lu\n", GetLastError() );
     if (tmp_mem) mem = tmp_mem;
     tmp_mem = LocalReAlloc( mem, 1024 * 1024, LMEM_MODIFY );
-    todo_wine
     ok( !!tmp_mem, "LocalAlloc failed, error %lu\n", GetLastError() );
-    todo_wine
     ok( tmp_mem == mem, "got ptr %p, expected %p\n", tmp_mem, mem );
     size = LocalSize( mem );
     ok( size == 10, "LocalSize returned %Iu\n", size );
@@ -2030,6 +2022,8 @@ static void test_LocalAlloc(void)
     ret = LocalUnlock( mem );
     ok( !ret, "LocalUnlock succeeded\n" );
     ok( GetLastError() == ERROR_NOT_LOCKED, "got error %lu\n", GetLastError() );
+    tmp_mem = LocalHandle( mem );
+    ok( tmp_mem == mem, "LocalHandle returned unexpected handle\n" );
     mem = LocalFree( mem );
     ok( !mem, "LocalFree failed, error %lu\n", GetLastError() );
 
@@ -2070,18 +2064,15 @@ static void test_LocalAlloc(void)
     /* Check that we cannot change LMEM_FIXED to LMEM_MOVEABLE */
     mem = LocalReAlloc( mem, 0, LMEM_MODIFY | LMEM_MOVEABLE );
     ok( !!mem, "LocalReAlloc failed, error %lu\n", GetLastError() );
-    todo_wine
     ok( mem == ptr, "LocalReAlloc returned unexpected handle\n" );
     size = LocalSize( mem );
     ok( size == buffer_size, "LocalSize returned %Iu, error %lu\n", size, GetLastError() );
 
     ptr = LocalLock( mem );
     ok( !!ptr, "LocalLock failed, error %lu\n", GetLastError() );
-    todo_wine
     ok( ptr == mem, "got unexpected ptr %p\n", ptr );
     ret = LocalUnlock( mem );
     ok( !ret, "LocalUnlock succeeded, error %lu\n", GetLastError() );
-    todo_wine
     ok( GetLastError() == ERROR_NOT_LOCKED, "got error %lu\n", GetLastError() );
 
     tmp_mem = LocalReAlloc( mem, 2 * buffer_size, LMEM_MOVEABLE | LMEM_ZEROINIT );
@@ -2094,7 +2085,6 @@ static void test_LocalAlloc(void)
     ok( size >= 2 * buffer_size, "LocalSize returned %Iu, error %lu\n", size, GetLastError() );
     ptr = LocalLock( mem );
     ok( !!ptr, "LocalLock failed, error %lu\n", GetLastError() );
-    todo_wine
     ok( ptr == mem, "got unexpected ptr %p\n", ptr );
     ok( !memcmp( ptr, zero_buffer, buffer_size ), "LocalReAlloc didn't clear memory\n" );
     ok( !memcmp( ptr + buffer_size, zero_buffer, buffer_size ),
@@ -2103,13 +2093,10 @@ static void test_LocalAlloc(void)
     tmp_mem = LocalHandle( ptr );
     ok( tmp_mem == mem, "LocalHandle returned unexpected handle\n" );
     tmp_mem = LocalDiscard( mem );
-    todo_wine
     ok( !!tmp_mem, "LocalDiscard failed, error %lu\n", GetLastError() );
-    todo_wine
     ok( tmp_mem == mem, "LocalDiscard returned unexpected handle\n" );
     ret = LocalUnlock( mem );
     ok( !ret, "LocalUnlock succeeded, error %lu\n", GetLastError() );
-    todo_wine
     ok( GetLastError() == ERROR_NOT_LOCKED, "got error %lu\n", GetLastError() );
 
     tmp_mem = LocalDiscard( mem );
@@ -2320,7 +2307,6 @@ static void test_block_layout( HANDLE heap, DWORD global_flags, DWORD heap_flags
         tmp_flags = 0;
         ret = pRtlGetUserInfoHeap( heap, 0, ptr0, (void **)&tmp_ptr, &tmp_flags );
         ok( ret, "RtlGetUserInfoHeap failed, error %lu\n", GetLastError() );
-        todo_wine
         ok( tmp_ptr == (void *)0xdeadbeef, "got ptr %p\n", tmp_ptr );
         todo_wine
         ok( tmp_flags == 0xa00 || broken(tmp_flags == 0xc00) /* w1064v1507 */,
@@ -2335,7 +2321,6 @@ static void test_block_layout( HANDLE heap, DWORD global_flags, DWORD heap_flags
         tmp_flags = 0;
         ret = pRtlGetUserInfoHeap( heap, 0, ptr0, (void **)&tmp_ptr, &tmp_flags );
         ok( ret, "RtlGetUserInfoHeap failed, error %lu\n", GetLastError() );
-        todo_wine
         ok( tmp_ptr == (void *)0xdeadbee0, "got ptr %p\n", tmp_ptr );
         todo_wine
         ok( tmp_flags == 0xa00 || broken(tmp_flags == 0xc00) /* w1064v1507 */,
