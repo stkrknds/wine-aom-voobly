@@ -23,12 +23,19 @@
 #include "ksmedia.h"
 #include "wmcodecdsp.h"
 #include "initguid.h"
+#include "d3d9types.h"
 #include "mfapi.h"
 
 #include "wine/debug.h"
 #include "wine/list.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(mfplat);
+
+DEFINE_GUID(DMOVideoFormat_RGB32,D3DFMT_X8R8G8B8,0x524f,0x11ce,0x9f,0x53,0x00,0x20,0xaf,0x0b,0xa7,0x70);
+DEFINE_GUID(DMOVideoFormat_RGB24,D3DFMT_R8G8B8,0x524f,0x11ce,0x9f,0x53,0x00,0x20,0xaf,0x0b,0xa7,0x70);
+DEFINE_GUID(DMOVideoFormat_RGB565,D3DFMT_R5G6B5,0x524f,0x11ce,0x9f,0x53,0x00,0x20,0xaf,0x0b,0xa7,0x70);
+DEFINE_GUID(DMOVideoFormat_RGB555,D3DFMT_X1R5G5B5,0x524f,0x11ce,0x9f,0x53,0x00,0x20,0xaf,0x0b,0xa7,0x70);
+DEFINE_GUID(DMOVideoFormat_RGB8,D3DFMT_P8,0x524f,0x11ce,0x9f,0x53,0x00,0x20,0xaf,0x0b,0xa7,0x70);
 
 struct video_processor
 {
@@ -397,8 +404,6 @@ failed:
 
 static const GUID CLSID_GStreamerByteStreamHandler = {0x317df618, 0x5e5a, 0x468a, {0x9f, 0x15, 0xd8, 0x27, 0xa9, 0xa0, 0x81, 0x62}};
 
-static const GUID CLSID_WINEAudioConverter = {0x6a170414,0xaad9,0x4693,{0xb8,0x06,0x3a,0x0c,0x47,0xc5,0x70,0xd6}};
-
 static const struct class_object
 {
     const GUID *clsid;
@@ -408,7 +413,6 @@ class_objects[] =
 {
     { &CLSID_VideoProcessorMFT, &video_processor_create },
     { &CLSID_GStreamerByteStreamHandler, &winegstreamer_stream_handler_create },
-    { &CLSID_WINEAudioConverter, &audio_converter_create },
     { &CLSID_MSH264DecoderMFT, &h264_decoder_create },
 };
 
@@ -440,7 +444,7 @@ HRESULT mfplat_get_class_object(REFCLSID rclsid, REFIID riid, void **obj)
 
 HRESULT mfplat_DllRegisterServer(void)
 {
-    MFT_REGISTER_TYPE_INFO audio_converter_supported_types[] =
+    MFT_REGISTER_TYPE_INFO resampler_types[] =
     {
         {MFMediaType_Audio, MFAudioFormat_PCM},
         {MFMediaType_Audio, MFAudioFormat_Float},
@@ -523,6 +527,49 @@ HRESULT mfplat_DllRegisterServer(void)
         {MFMediaType_Video, MFVideoFormat_YVYU},
     };
 
+    MFT_REGISTER_TYPE_INFO color_convert_input_types[] =
+    {
+        {MFMediaType_Video, MFVideoFormat_YV12},
+        {MFMediaType_Video, MFVideoFormat_YUY2},
+        {MFMediaType_Video, MFVideoFormat_UYVY},
+        {MFMediaType_Video, MFVideoFormat_AYUV},
+        {MFMediaType_Video, MFVideoFormat_NV12},
+        {MFMediaType_Video, DMOVideoFormat_RGB32},
+        {MFMediaType_Video, DMOVideoFormat_RGB565},
+        {MFMediaType_Video, MFVideoFormat_I420},
+        {MFMediaType_Video, MFVideoFormat_IYUV},
+        {MFMediaType_Video, MFVideoFormat_YVYU},
+        {MFMediaType_Video, DMOVideoFormat_RGB24},
+        {MFMediaType_Video, DMOVideoFormat_RGB555},
+        {MFMediaType_Video, DMOVideoFormat_RGB8},
+        {MFMediaType_Video, MEDIASUBTYPE_V216},
+        {MFMediaType_Video, MEDIASUBTYPE_V410},
+        {MFMediaType_Video, MFVideoFormat_NV11},
+        {MFMediaType_Video, MFVideoFormat_Y41P},
+        {MFMediaType_Video, MFVideoFormat_Y41T},
+        {MFMediaType_Video, MFVideoFormat_Y42T},
+        {MFMediaType_Video, MFVideoFormat_YVU9},
+    };
+    MFT_REGISTER_TYPE_INFO color_convert_output_types[] =
+    {
+        {MFMediaType_Video, MFVideoFormat_YV12},
+        {MFMediaType_Video, MFVideoFormat_YUY2},
+        {MFMediaType_Video, MFVideoFormat_UYVY},
+        {MFMediaType_Video, MFVideoFormat_AYUV},
+        {MFMediaType_Video, MFVideoFormat_NV12},
+        {MFMediaType_Video, DMOVideoFormat_RGB32},
+        {MFMediaType_Video, DMOVideoFormat_RGB565},
+        {MFMediaType_Video, MFVideoFormat_I420},
+        {MFMediaType_Video, MFVideoFormat_IYUV},
+        {MFMediaType_Video, MFVideoFormat_YVYU},
+        {MFMediaType_Video, DMOVideoFormat_RGB24},
+        {MFMediaType_Video, DMOVideoFormat_RGB555},
+        {MFMediaType_Video, DMOVideoFormat_RGB8},
+        {MFMediaType_Video, MEDIASUBTYPE_V216},
+        {MFMediaType_Video, MEDIASUBTYPE_V410},
+        {MFMediaType_Video, MFVideoFormat_NV11},
+    };
+
     struct mft
     {
         GUID clsid;
@@ -536,16 +583,6 @@ HRESULT mfplat_DllRegisterServer(void)
     }
     mfts[] =
     {
-        {
-            CLSID_WINEAudioConverter,
-            MFT_CATEGORY_AUDIO_EFFECT,
-            L"Audio Converter",
-            MFT_ENUM_FLAG_SYNCMFT,
-            ARRAY_SIZE(audio_converter_supported_types),
-            audio_converter_supported_types,
-            ARRAY_SIZE(audio_converter_supported_types),
-            audio_converter_supported_types,
-        },
         {
             CLSID_WMADecMediaObject,
             MFT_CATEGORY_AUDIO_DECODER,
@@ -575,6 +612,26 @@ HRESULT mfplat_DllRegisterServer(void)
             video_processor_input_types,
             ARRAY_SIZE(video_processor_output_types),
             video_processor_output_types,
+        },
+        {
+            CLSID_CResamplerMediaObject,
+            MFT_CATEGORY_AUDIO_EFFECT,
+            L"Resampler MFT",
+            MFT_ENUM_FLAG_SYNCMFT,
+            ARRAY_SIZE(resampler_types),
+            resampler_types,
+            ARRAY_SIZE(resampler_types),
+            resampler_types,
+        },
+        {
+            CLSID_CColorConvertDMO,
+            MFT_CATEGORY_VIDEO_EFFECT,
+            L"Color Converter MFT",
+            MFT_ENUM_FLAG_SYNCMFT,
+            ARRAY_SIZE(color_convert_input_types),
+            color_convert_input_types,
+            ARRAY_SIZE(color_convert_output_types),
+            color_convert_output_types,
         },
     };
 
@@ -957,180 +1014,4 @@ void mf_media_type_to_wg_format(IMFMediaType *type, struct wg_format *format)
     }
     else
         FIXME("Unrecognized major type %s.\n", debugstr_guid(&major_type));
-}
-
-struct wg_sample_queue
-{
-    CRITICAL_SECTION cs;
-    struct list samples;
-};
-
-struct mf_sample
-{
-    IMFSample *sample;
-    IMFMediaBuffer *media_buffer;
-    struct wg_sample wg_sample;
-    struct list entry;
-};
-
-HRESULT wg_sample_create_mf(IMFSample *sample, struct wg_sample **out)
-{
-    DWORD current_length, max_length;
-    struct mf_sample *mf_sample;
-    BYTE *buffer;
-    HRESULT hr;
-
-    if (!(mf_sample = calloc(1, sizeof(*mf_sample))))
-        return E_OUTOFMEMORY;
-    if (FAILED(hr = IMFSample_ConvertToContiguousBuffer(sample, &mf_sample->media_buffer)))
-        goto out;
-    if (FAILED(hr = IMFMediaBuffer_Lock(mf_sample->media_buffer, &buffer, &max_length, &current_length)))
-        goto out;
-
-    IMFSample_AddRef((mf_sample->sample = sample));
-    mf_sample->wg_sample.data = buffer;
-    mf_sample->wg_sample.size = current_length;
-    mf_sample->wg_sample.max_size = max_length;
-
-    TRACE("Created mf_sample %p for sample %p.\n", mf_sample, sample);
-    *out = &mf_sample->wg_sample;
-    return S_OK;
-
-out:
-    if (mf_sample->media_buffer)
-        IMFMediaBuffer_Release(mf_sample->media_buffer);
-    free(mf_sample);
-    return hr;
-}
-
-void wg_sample_release(struct wg_sample *wg_sample)
-{
-    struct mf_sample *mf_sample = CONTAINING_RECORD(wg_sample, struct mf_sample, wg_sample);
-
-    if (InterlockedOr(&wg_sample->refcount, 0))
-    {
-        ERR("Sample %p is still in use, trouble ahead!\n", wg_sample);
-        return;
-    }
-
-    IMFMediaBuffer_Unlock(mf_sample->media_buffer);
-    IMFMediaBuffer_Release(mf_sample->media_buffer);
-    IMFSample_Release(mf_sample->sample);
-
-    free(mf_sample);
-}
-
-static void wg_sample_queue_begin_append(struct wg_sample_queue *queue, struct wg_sample *wg_sample)
-{
-    struct mf_sample *mf_sample = CONTAINING_RECORD(wg_sample, struct mf_sample, wg_sample);
-
-    /* make sure a concurrent wg_sample_queue_flush call won't release the sample until we're done */
-    InterlockedIncrement(&wg_sample->refcount);
-    mf_sample->wg_sample.flags |= WG_SAMPLE_FLAG_HAS_REFCOUNT;
-
-    EnterCriticalSection(&queue->cs);
-    list_add_tail(&queue->samples, &mf_sample->entry);
-    LeaveCriticalSection(&queue->cs);
-}
-
-static void wg_sample_queue_end_append(struct wg_sample_queue *queue, struct wg_sample *wg_sample)
-{
-    /* release temporary ref taken in wg_sample_queue_begin_append */
-    InterlockedDecrement(&wg_sample->refcount);
-
-    wg_sample_queue_flush(queue, false);
-}
-
-void wg_sample_queue_flush(struct wg_sample_queue *queue, bool all)
-{
-    struct mf_sample *mf_sample, *next;
-
-    EnterCriticalSection(&queue->cs);
-
-    LIST_FOR_EACH_ENTRY_SAFE(mf_sample, next, &queue->samples, struct mf_sample, entry)
-    {
-        if (!InterlockedOr(&mf_sample->wg_sample.refcount, 0) || all)
-        {
-            list_remove(&mf_sample->entry);
-            wg_sample_release(&mf_sample->wg_sample);
-        }
-    }
-
-    LeaveCriticalSection(&queue->cs);
-}
-
-HRESULT wg_sample_queue_create(struct wg_sample_queue **out)
-{
-    struct wg_sample_queue *queue;
-
-    if (!(queue = calloc(1, sizeof(*queue))))
-        return E_OUTOFMEMORY;
-
-    InitializeCriticalSection(&queue->cs);
-    queue->cs.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": cs");
-    list_init(&queue->samples);
-
-    TRACE("Created sample queue %p\n", queue);
-    *out = queue;
-
-    return S_OK;
-}
-
-void wg_sample_queue_destroy(struct wg_sample_queue *queue)
-{
-    wg_sample_queue_flush(queue, true);
-
-    queue->cs.DebugInfo->Spare[0] = 0;
-    InitializeCriticalSection(&queue->cs);
-
-    free(queue);
-}
-
-HRESULT wg_transform_push_mf(struct wg_transform *transform, struct wg_sample *wg_sample,
-        struct wg_sample_queue *queue)
-{
-    struct mf_sample *mf_sample = CONTAINING_RECORD(wg_sample, struct mf_sample, wg_sample);
-    LONGLONG time, duration;
-    UINT32 value;
-    HRESULT hr;
-
-    if (SUCCEEDED(IMFSample_GetSampleTime(mf_sample->sample, &time)))
-    {
-        mf_sample->wg_sample.flags |= WG_SAMPLE_FLAG_HAS_PTS;
-        mf_sample->wg_sample.pts = time;
-    }
-    if (SUCCEEDED(IMFSample_GetSampleDuration(mf_sample->sample, &duration)))
-    {
-        mf_sample->wg_sample.flags |= WG_SAMPLE_FLAG_HAS_DURATION;
-        mf_sample->wg_sample.duration = duration;
-    }
-    if (SUCCEEDED(IMFSample_GetUINT32(mf_sample->sample, &MFSampleExtension_CleanPoint, &value)) && value)
-        mf_sample->wg_sample.flags |= WG_SAMPLE_FLAG_SYNC_POINT;
-
-    wg_sample_queue_begin_append(queue, wg_sample);
-    hr = wg_transform_push_data(transform, wg_sample);
-    wg_sample_queue_end_append(queue, wg_sample);
-
-    return hr;
-}
-
-HRESULT wg_transform_read_mf(struct wg_transform *transform, struct wg_sample *wg_sample,
-        struct wg_format *format)
-{
-    struct mf_sample *mf_sample = CONTAINING_RECORD(wg_sample, struct mf_sample, wg_sample);
-    HRESULT hr;
-
-    if (FAILED(hr = wg_transform_read_data(transform, wg_sample, format)))
-        return hr;
-
-    IMFMediaBuffer_SetCurrentLength(mf_sample->media_buffer, wg_sample->size);
-
-    if (wg_sample->flags & WG_SAMPLE_FLAG_HAS_PTS)
-        IMFSample_SetSampleTime(mf_sample->sample, wg_sample->pts);
-    if (wg_sample->flags & WG_SAMPLE_FLAG_HAS_DURATION)
-        IMFSample_SetSampleDuration(mf_sample->sample, wg_sample->duration);
-    if (wg_sample->flags & WG_SAMPLE_FLAG_SYNC_POINT)
-        IMFSample_SetUINT32(mf_sample->sample, &MFSampleExtension_CleanPoint, 1);
-
-    return S_OK;
 }

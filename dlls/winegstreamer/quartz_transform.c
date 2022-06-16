@@ -290,9 +290,7 @@ static HRESULT transform_sink_query_interface(struct strmbase_pin *pin, REFIID i
 static HRESULT WINAPI transform_sink_receive(struct strmbase_sink *pin, IMediaSample *sample)
 {
     struct transform *filter = impl_from_strmbase_filter(pin->pin.filter);
-    struct wg_sample input_wg_sample = {0};
-    REFERENCE_TIME start_time;
-    REFERENCE_TIME end_time;
+    struct wg_sample *wg_sample;
     HRESULT hr;
 
     /* We do not expect pin connection state to change while the filter is
@@ -311,48 +309,32 @@ static HRESULT WINAPI transform_sink_receive(struct strmbase_sink *pin, IMediaSa
     if (filter->sink.flushing)
         return S_FALSE;
 
-    input_wg_sample.max_size = IMediaSample_GetSize(sample);
-    input_wg_sample.size = IMediaSample_GetActualDataLength(sample);
-
-    hr = IMediaSample_GetPointer(sample, &input_wg_sample.data);
+    hr = wg_sample_create_quartz(sample, &wg_sample);
     if (FAILED(hr))
         return hr;
 
-    hr = IMediaSample_GetTime(sample, &start_time, &end_time);
-    if (SUCCEEDED(hr))
-    {
-        input_wg_sample.pts = start_time;
-        input_wg_sample.flags |= WG_SAMPLE_FLAG_HAS_PTS;
-    }
-    if (hr == S_OK)
-    {
-        input_wg_sample.duration = end_time - start_time;
-        input_wg_sample.flags |= WG_SAMPLE_FLAG_HAS_DURATION;
-    }
-
-    hr = wg_transform_push_data(filter->transform, &input_wg_sample);
+    hr = wg_transform_push_quartz(filter->transform, wg_sample, filter->sample_queue);
     if (FAILED(hr))
         return hr;
 
     for (;;)
     {
-        struct wg_sample output_wg_sample = {0};
         IMediaSample *output_sample;
 
         hr = IMemAllocator_GetBuffer(filter->source.pAllocator, &output_sample, NULL, NULL, 0);
         if (FAILED(hr))
             return hr;
 
-        output_wg_sample.max_size = IMediaSample_GetSize(output_sample);
-
-        hr = IMediaSample_GetPointer(output_sample, &output_wg_sample.data);
+        hr = wg_sample_create_quartz(output_sample, &wg_sample);
         if (FAILED(hr))
         {
             IMediaSample_Release(output_sample);
             return hr;
         }
 
-        hr = wg_transform_read_data(filter->transform, &output_wg_sample, NULL);
+        hr = wg_transform_read_quartz(filter->transform, wg_sample);
+        wg_sample_release(wg_sample);
+
         if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT)
         {
             IMediaSample_Release(output_sample);
@@ -366,26 +348,7 @@ static HRESULT WINAPI transform_sink_receive(struct strmbase_sink *pin, IMediaSa
             return hr;
         }
 
-        hr = IMediaSample_SetActualDataLength(output_sample, output_wg_sample.size);
-        if (FAILED(hr))
-        {
-            IMediaSample_Release(output_sample);
-            return hr;
-        }
-
-        if (output_wg_sample.flags & WG_SAMPLE_FLAG_HAS_PTS)
-        {
-            start_time = output_wg_sample.pts;
-            if (output_wg_sample.flags & WG_SAMPLE_FLAG_HAS_DURATION)
-            {
-                end_time = start_time + output_wg_sample.duration;
-                IMediaSample_SetTime(output_sample, &start_time, &end_time);
-            }
-            else
-            {
-                IMediaSample_SetTime(output_sample, &start_time, NULL);
-            }
-        }
+        wg_sample_queue_flush(filter->sample_queue, false);
 
         hr = IMemInputPin_Receive(filter->source.pMemInputPin, output_sample);
         if (FAILED(hr))

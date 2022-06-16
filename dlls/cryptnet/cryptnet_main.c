@@ -1690,6 +1690,15 @@ static DWORD verify_cert_revocation_from_dist_points_ext(const CRYPT_DATA_BLOB *
     const CRL_CONTEXT *crl;
     DWORD timeout = 0;
 
+    if (!params || !params->pIssuerCert)
+    {
+        TRACE("no issuer certificate\n");
+        return CRYPT_E_REVOCATION_OFFLINE;
+    }
+
+    if (find_cached_revocation_status(&cert->pCertInfo->SerialNumber, time, status))
+        return status->dwError;
+
     if (!CRYPT_GetUrlFromCRLDistPointsExt(value, NULL, &url_array_size, NULL, NULL))
         return GetLastError();
 
@@ -2137,18 +2146,19 @@ static DWORD verify_cert_revocation(const CERT_CONTEXT *cert, FILETIME *pTime,
     DWORD error = ERROR_SUCCESS;
     PCERT_EXTENSION ext;
 
-    if (find_cached_revocation_status(&cert->pCertInfo->SerialNumber, pTime, pRevStatus))
-        return pRevStatus->dwError;
-
     if ((ext = CertFindExtension(szOID_AUTHORITY_INFO_ACCESS, cert->pCertInfo->cExtension, cert->pCertInfo->rgExtension)))
     {
         error = verify_cert_revocation_from_aia_ext(&ext->Value, cert, pTime, dwFlags, pRevPara, pRevStatus);
+        TRACE("verify_cert_revocation_from_aia_ext() returned %08lx\n", error);
+        if (error == ERROR_SUCCESS || error == CRYPT_E_REVOKED) return error;
     }
-    else if ((ext = CertFindExtension(szOID_CRL_DIST_POINTS, cert->pCertInfo->cExtension, cert->pCertInfo->rgExtension)))
+    if ((ext = CertFindExtension(szOID_CRL_DIST_POINTS, cert->pCertInfo->cExtension, cert->pCertInfo->rgExtension)))
     {
         error = verify_cert_revocation_from_dist_points_ext(&ext->Value, cert, pTime, dwFlags, pRevPara, pRevStatus);
+        TRACE("verify_cert_revocation_from_dist_points_ext() returned %08lx\n", error);
+        if (error == ERROR_SUCCESS || error == CRYPT_E_REVOKED) return error;
     }
-    else
+    if (!ext)
     {
         if (pRevPara && pRevPara->hCrlStore && pRevPara->pIssuerCert)
         {

@@ -851,7 +851,7 @@
 @ stub NtUserDrawCaption
 @ stub NtUserDrawCaptionTemp
 @ stdcall NtUserDrawIconEx(long long long long long long long long long)
-@ stub NtUserDrawMenuBarTemp
+@ stdcall NtUserDrawMenuBarTemp(long long ptr long long)
 @ stub NtUserDwmGetRemoteSessionOcclusionEvent
 @ stub NtUserDwmGetRemoteSessionOcclusionState
 @ stub NtUserDwmKernelShutdown
@@ -873,7 +873,7 @@
 @ stub NtUserEnableWindowGroupPolicy
 @ stub NtUserEnableWindowResizeOptimization
 @ stdcall NtUserEndDeferWindowPosEx(long long)
-@ stub NtUserEndMenu
+@ stdcall -syscall NtUserEndMenu()
 @ stdcall NtUserEndPaint(long ptr)
 @ stdcall NtUserEnumDisplayDevices(ptr long ptr long)
 @ stdcall NtUserEnumDisplayMonitors(long ptr ptr long)
@@ -952,7 +952,7 @@
 @ stdcall -syscall NtUserGetKeyboardState(ptr)
 @ stdcall -syscall NtUserGetLayeredWindowAttributes(long ptr ptr ptr)
 @ stub NtUserGetListBoxInfo
-@ stub NtUserGetMenuBarInfo
+@ stdcall NtUserGetMenuBarInfo(long long long ptr)
 @ stub NtUserGetMenuIndex
 @ stdcall -syscall NtUserGetMenuItemRect(long long long ptr)
 @ stdcall NtUserGetMessage(ptr long long long)
@@ -1022,7 +1022,7 @@
 @ stub NtUserHardErrorControl
 @ stdcall NtUserHideCaret(long)
 @ stub NtUserHidePointerContactVisualization
-@ stub NtUserHiliteMenuItem
+@ stdcall NtUserHiliteMenuItem(long long long long)
 @ stub NtUserHungWindowFromGhostWindow
 @ stub NtUserHwndQueryRedirectionInfo
 @ stub NtUserHwndSetRedirectionInfo
@@ -1047,8 +1047,8 @@
 @ stdcall NtUserInternalGetWindowIcon(ptr long)
 @ stdcall -syscall NtUserInternalGetWindowText(long ptr long)
 @ stub NtUserInternalToUnicode
-@ stub NtUserInvalidateRect
-@ stub NtUserInvalidateRgn
+@ stdcall NtUserInvalidateRect(long ptr long)
+@ stdcall NtUserInvalidateRgn(long long long)
 @ stub NtUserIsChildWindowDpiMessageEnabled
 @ stdcall NtUserIsClipboardFormatAvailable(long)
 @ stub NtUserIsMouseInPointerEnabled
@@ -1078,7 +1078,7 @@
 @ stub NtUserMapPointsByVisualIdentifier
 @ stdcall NtUserMapVirtualKeyEx(long long long)
 @ stub NtUserMarkWindowForRawMouse
-@ stub NtUserMenuItemFromPoint
+@ stdcall -syscall NtUserMenuItemFromPoint(long long long long)
 @ stdcall NtUserMessageCall(long long long long long long long)
 @ stub NtUserMinInitialize
 @ stub NtUserMinMaximize
@@ -1278,7 +1278,7 @@
 @ stdcall -syscall NtUserThunkedMenuItemInfo(long long long long ptr ptr)
 @ stdcall NtUserToUnicodeEx(long long ptr ptr long long long)
 @ stdcall NtUserTrackMouseEvent(ptr)
-@ stub NtUserTrackPopupMenuEx
+@ stdcall NtUserTrackPopupMenuEx(long long long long long ptr)
 @ stub NtUserTransformPoint
 @ stub NtUserTransformRect
 @ stdcall NtUserTranslateAccelerator(long long ptr)

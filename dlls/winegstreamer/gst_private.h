@@ -102,9 +102,6 @@ void wg_parser_stream_seek(struct wg_parser_stream *stream, double rate,
 struct wg_transform *wg_transform_create(const struct wg_format *input_format,
         const struct wg_format *output_format);
 void wg_transform_destroy(struct wg_transform *transform);
-HRESULT wg_transform_push_data(struct wg_transform *transform, struct wg_sample *sample);
-HRESULT wg_transform_read_data(struct wg_transform *transform, struct wg_sample *sample,
-        struct wg_format *format);
 
 unsigned int wg_format_get_max_size(const struct wg_format *format);
 
@@ -114,6 +111,8 @@ HRESULT mpeg_audio_codec_create(IUnknown *outer, IUnknown **out);
 HRESULT mpeg_splitter_create(IUnknown *outer, IUnknown **out);
 HRESULT wave_parser_create(IUnknown *outer, IUnknown **out);
 HRESULT wma_decoder_create(IUnknown *outer, IUnknown **out);
+HRESULT resampler_create(IUnknown *outer, IUnknown **out);
+HRESULT color_convert_create(IUnknown *outer, IUnknown **out);
 
 bool amt_from_wg_format(AM_MEDIA_TYPE *mt, const struct wg_format *format, bool wm);
 bool amt_to_wg_format(const AM_MEDIA_TYPE *mt, struct wg_format *format);
@@ -127,17 +126,20 @@ IMFMediaType *mf_media_type_from_wg_format(const struct wg_format *format);
 void mf_media_type_to_wg_format(IMFMediaType *type, struct wg_format *format);
 
 HRESULT wg_sample_create_mf(IMFSample *sample, struct wg_sample **out);
+HRESULT wg_sample_create_quartz(IMediaSample *sample, struct wg_sample **out);
 void wg_sample_release(struct wg_sample *wg_sample);
 
 HRESULT wg_transform_push_mf(struct wg_transform *transform, struct wg_sample *sample,
         struct wg_sample_queue *queue);
+HRESULT wg_transform_push_quartz(struct wg_transform *transform, struct wg_sample *sample,
+        struct wg_sample_queue *queue);
 HRESULT wg_transform_read_mf(struct wg_transform *transform, struct wg_sample *sample,
         struct wg_format *format);
+HRESULT wg_transform_read_quartz(struct wg_transform *transform, struct wg_sample *sample);
 
 HRESULT winegstreamer_stream_handler_create(REFIID riid, void **obj);
 
 HRESULT h264_decoder_create(REFIID riid, void **ret);
-HRESULT audio_converter_create(REFIID riid, void **ret);
 
 struct wm_stream
 {

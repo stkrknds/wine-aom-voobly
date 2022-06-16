@@ -1097,7 +1097,7 @@ DWORD get_window_long( HWND hwnd, INT offset )
 }
 
 /* see GetWindowLongPtr */
-static ULONG_PTR get_window_long_ptr( HWND hwnd, INT offset, BOOL ansi )
+ULONG_PTR get_window_long_ptr( HWND hwnd, INT offset, BOOL ansi )
 {
     return get_window_long_size( hwnd, offset, sizeof(LONG_PTR), ansi );
 }
@@ -4524,7 +4524,7 @@ BOOL WINAPI NtUserFlashWindowEx( FLASHWINFO *info )
 }
 
 /* see GetWindowContextHelpId */
-static DWORD get_window_context_help_id( HWND hwnd )
+DWORD get_window_context_help_id( HWND hwnd )
 {
     DWORD retval;
     WND *win = get_win_ptr( hwnd );
@@ -4759,8 +4759,7 @@ BOOL WINAPI NtUserDestroyWindow( HWND hwnd )
 
     if (call_hooks( WH_CBT, HCBT_DESTROYWND, (WPARAM)hwnd, 0, TRUE )) return FALSE;
 
-    if (user_callbacks && user_callbacks->is_menu_active() == hwnd)
-        user_callbacks->pEndMenu();
+    if (is_menu_active() == hwnd) NtUserEndMenu();
 
     is_child = (get_window_long( hwnd, GWL_STYLE ) & WS_CHILD) != 0;
 
@@ -5126,6 +5125,7 @@ HWND WINAPI NtUserCreateWindowEx( DWORD ex_style, UNICODE_STRING *class_name,
             (class_name->Length != sizeof(messageW) ||
              wcsnicmp( class_name->Buffer, messageW, ARRAYSIZE(messageW) )))
         {
+            if (process_layout & LAYOUT_RTL) cs.dwExStyle |= WS_EX_LAYOUTRTL;
             parent = get_desktop_window();
         }
     }
@@ -5402,6 +5402,9 @@ ULONG_PTR WINAPI NtUserCallHwnd( HWND hwnd, DWORD code )
     case NtUserCallHwnd_IsWindowVisible:
         return is_window_visible( hwnd );
 
+    case NtUserCallHwnd_SetForegroundWindow:
+        return set_foreground_window( hwnd, FALSE );
+
     default:
         FIXME( "invalid code %u\n", code );
         return 0;
@@ -5488,9 +5491,6 @@ ULONG_PTR WINAPI NtUserCallHwndParam( HWND hwnd, DWORD_PTR param, DWORD code )
     case NtUserCallHwndParam_ScreenToClient:
         return screen_to_client( hwnd, (POINT *)param );
 
-    case NtUserCallHwndParam_SetForegroundWindow:
-        return set_foreground_window( hwnd, param );
-
     case NtUserCallHwndParam_SetWindowContextHelpId:
         return set_window_context_help_id( hwnd, param );
 
@@ -5503,9 +5503,6 @@ ULONG_PTR WINAPI NtUserCallHwndParam( HWND hwnd, DWORD_PTR param, DWORD code )
     /* temporary exports */
     case NtUserIsWindowDrawable:
         return is_window_drawable( hwnd, param );
-
-    case NtUserSetCaptureWindow:
-        return set_capture_window( hwnd, param, NULL );
 
     case NtUserSetWindowStyle:
         {

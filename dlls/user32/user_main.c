@@ -32,6 +32,7 @@
 #include "user_private.h"
 #include "win.h"
 #include "wine/debug.h"
+#include "wine/exception.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(graphics);
 WINE_DECLARE_DEBUG_CHANNEL(message);
@@ -139,15 +140,26 @@ static void CDECL free_win_ptr( WND *win )
     HeapFree( GetProcessHeap(), 0, win->pScroll );
 }
 
+static NTSTATUS try_finally( NTSTATUS (CDECL *func)( void *), void *arg,
+                             void (CALLBACK *finally_func)( BOOL ))
+{
+    NTSTATUS status;
+    __TRY
+    {
+        status = func( arg );
+    }
+    __FINALLY( finally_func );
+    return status;
+}
+
 static const struct user_callbacks user_funcs =
 {
-    EndMenu,
     ImmProcessKey,
     ImmTranslateMessage,
     NtWaitForMultipleObjects,
+    SCROLL_DrawNCScrollBar,
     free_win_ptr,
     MENU_GetSysMenu,
-    MENU_IsMenuActive,
     notify_ime,
     post_dde_message,
     process_rawinput_message,
@@ -156,12 +168,19 @@ static const struct user_callbacks user_funcs =
     unpack_dde_message,
     register_imm,
     unregister_imm,
+    try_finally,
 };
 
 static NTSTATUS WINAPI User32CopyImage( const struct copy_image_params *params, ULONG size )
 {
     HANDLE ret = CopyImage( params->hwnd, params->type, params->dx, params->dy, params->flags );
     return HandleToUlong( ret );
+}
+
+static NTSTATUS WINAPI User32DrawText( const struct draw_text_params *params, ULONG size )
+{
+    size -= FIELD_OFFSET( struct draw_text_params, str );
+    return DrawTextW( params->hdc, params->str, size / sizeof(WCHAR), params->rect, params->flags );
 }
 
 static NTSTATUS WINAPI User32LoadImage( const struct load_image_params *params, ULONG size )
@@ -198,6 +217,7 @@ static const void *kernel_callback_table[NtUserCallCount] =
     User32CallWindowProc,
     User32CallWindowsHook,
     User32CopyImage,
+    User32DrawText,
     User32FreeCachedClipboardData,
     User32LoadDriver,
     User32LoadImage,

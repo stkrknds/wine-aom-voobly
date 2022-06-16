@@ -159,26 +159,11 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
 {
     switch(msg)
     {
-    case WM_NCPAINT:
-        return NC_HandleNCPaint( hwnd, (HRGN)wParam );
-
     case WM_NCMOUSEMOVE:
         return NC_HandleNCMouseMove( hwnd, wParam, lParam );
 
     case WM_NCMOUSELEAVE:
         return NC_HandleNCMouseLeave( hwnd );
-
-    case WM_NCHITTEST:
-        {
-            POINT pt;
-            pt.x = (short)LOWORD(lParam);
-            pt.y = (short)HIWORD(lParam);
-            return NC_HandleNCHitTest( hwnd, pt );
-        }
-
-    case WM_NCCALCSIZE:
-        NC_HandleNCCalcSize( hwnd, wParam, (RECT *)lParam );
-        break;
 
     case WM_WINDOWPOSCHANGED:
         DEFWND_HandleWindowPosChanged( hwnd, (const WINDOWPOS *)lParam );
@@ -190,17 +175,11 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         iF10Key = iMenuSysKey = 0;
         break;
 
-    case WM_NCLBUTTONDOWN:
-        return NC_HandleNCLButtonDown( hwnd, wParam, lParam );
-
     case WM_LBUTTONDBLCLK:
         return NC_HandleNCLButtonDblClk( hwnd, HTCLIENT, lParam );
 
     case WM_NCLBUTTONDBLCLK:
         return NC_HandleNCLButtonDblClk( hwnd, wParam, lParam );
-
-    case WM_NCRBUTTONDOWN:
-        return NC_HandleNCRButtonDown( hwnd, wParam, lParam );
 
     case WM_RBUTTONUP:
         {
@@ -229,35 +208,6 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
                          MAKELPARAM(LOWORD(wParam), FAPPCOMMAND_MOUSE | HIWORD(wParam)));
         }
         break;
-
-    case WM_CONTEXTMENU:
-        if (GetWindowLongW( hwnd, GWL_STYLE ) & WS_CHILD)
-            SendMessageW( GetParent(hwnd), msg, (WPARAM)hwnd, lParam );
-        else
-        {
-            LONG hitcode;
-            POINT pt;
-            pt.x = (short)LOWORD(lParam);
-            pt.y = (short)HIWORD(lParam);
-            hitcode = NC_HandleNCHitTest(hwnd, pt);
-
-            /* Track system popup if click was in the caption area. */
-            if (hitcode==HTCAPTION || hitcode==HTSYSMENU)
-               TrackPopupMenu( NtUserGetSystemMenu(hwnd, FALSE),
-                               TPM_LEFTBUTTON | TPM_RIGHTBUTTON,
-                               pt.x, pt.y, 0, hwnd, NULL );
-        }
-        break;
-
-    case WM_POPUPSYSTEMMENU:
-        /* This is an undocumented message used by the windows taskbar to
-           display the system menu of windows that belong to other processes. */
-        TrackPopupMenu( NtUserGetSystemMenu(hwnd, FALSE), TPM_LEFTBUTTON|TPM_RIGHTBUTTON,
-                        (short)LOWORD(lParam), (short)HIWORD(lParam), 0, hwnd, NULL );
-        return 0;
-
-    case WM_NCACTIVATE:
-        return NC_HandleNCActivate( hwnd, wParam, lParam );
 
     case WM_PRINT:
         DEFWND_Print(hwnd, (HDC)wParam, lParam);
@@ -383,8 +333,7 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
 
     case WM_CANCELMODE:
         iMenuSysKey = 0;
-        MENU_EndMenu( hwnd );
-        if (GetCapture() == hwnd) ReleaseCapture();
+        NtUserMessageCall( hwnd, msg, wParam, lParam, 0, NtUserDefWindowProc, FALSE );
         break;
 
     case WM_VKEYTOITEM:
@@ -422,15 +371,6 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
     case WM_QUERYENDSESSION:
         return 1;
 
-    case WM_SETICON:
-        {
-            LRESULT res =  NtUserMessageCall( hwnd, msg, wParam, lParam,
-                                              0, NtUserDefWindowProc, FALSE );
-            if( (GetWindowLongW( hwnd, GWL_STYLE ) & WS_CAPTION) == WS_CAPTION )
-                NC_HandleNCPaint( hwnd , (HRGN)1 );  /* Repaint caption */
-            return res;
-        }
-
     case WM_HELP:
         SendMessageW( GetParent(hwnd), msg, wParam, lParam );
         break;
@@ -452,29 +392,6 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
                 HOOK_CallHooks(WH_SHELL, HSHELL_APPCOMMAND, wParam, lParam, TRUE);
             else
                 SendMessageW( parent, msg, wParam, lParam );
-            break;
-        }
-    case WM_KEYF1:
-        {
-            HELPINFO hi;
-
-            hi.cbSize = sizeof(HELPINFO);
-            GetCursorPos( &hi.MousePos );
-            if (MENU_IsMenuActive())
-            {
-                hi.iContextType = HELPINFO_MENUITEM;
-                hi.hItemHandle = MENU_IsMenuActive();
-                hi.iCtrlId = MenuItemFromPoint( hwnd, hi.hItemHandle, hi.MousePos );
-                hi.dwContextId = GetMenuContextHelpId( hi.hItemHandle );
-            }
-            else
-            {
-                hi.iContextType = HELPINFO_WINDOW;
-                hi.hItemHandle = hwnd;
-                hi.iCtrlId = GetWindowLongPtrA( hwnd, GWLP_ID );
-                hi.dwContextId = GetWindowContextHelpId( hwnd );
-            }
-            SendMessageW( hwnd, WM_HELP, 0, (LPARAM)&hi );
             break;
         }
 
@@ -590,8 +507,6 @@ LRESULT WINAPI DefWindowProcA( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
 
     case WM_SETTEXT:
         result = NtUserMessageCall( hwnd, msg, wParam, lParam, 0, NtUserDefWindowProc, TRUE );
-        if (result && (GetWindowLongW( hwnd, GWL_STYLE ) & WS_CAPTION) == WS_CAPTION)
-            NC_HandleNCPaint( hwnd , (HRGN)1 );  /* Repaint caption */
         break;
 
     case WM_IME_CHAR:
@@ -765,12 +680,6 @@ LRESULT WINAPI DefWindowProcW(
             result = DEFWND_GetTextW( wndPtr, dest, wParam );
             WIN_ReleasePtr( wndPtr );
         }
-        break;
-
-    case WM_SETTEXT:
-        result = NtUserMessageCall( hwnd, msg, wParam, lParam, 0, NtUserDefWindowProc, FALSE );
-        if (result && (GetWindowLongW( hwnd, GWL_STYLE ) & WS_CAPTION) == WS_CAPTION)
-            NC_HandleNCPaint( hwnd , (HRGN)1 );  /* Repaint caption */
         break;
 
     case WM_IME_CHAR:

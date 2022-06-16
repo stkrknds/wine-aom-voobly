@@ -966,6 +966,11 @@ BOOL WINAPI NtGdiGetAndSetDCDword( HDC hdc, UINT method, DWORD value, DWORD *pre
         dc->attr->rop_mode = value;
         break;
 
+    case NtGdiSetTextAlign:
+        prev = dc->attr->text_align;
+        dc->attr->text_align = value;
+        break;
+
     default:
         WARN( "unknown method %u\n", method );
         ret = FALSE;
@@ -1095,6 +1100,19 @@ BOOL WINAPI NtGdiSetBrushOrg( HDC hdc, INT x, INT y, POINT *oldorg )
     dc->attr->brush_org.y = y;
     release_dc_ptr( dc );
     return TRUE;
+}
+
+
+BOOL set_viewport_org( HDC hdc, INT x, INT y, POINT *point )
+{
+    DC *dc;
+
+    if (!(dc = get_dc_ptr( hdc ))) return FALSE;
+    if (point) *point = dc->attr->vport_org;
+    dc->attr->vport_org.x = x;
+    dc->attr->vport_org.y = y;
+    release_dc_ptr( dc );
+    return NtGdiComputeXformCoefficients( hdc );
 }
 
 

@@ -1346,7 +1346,7 @@ static BOOL process_keyboard_message( MSG *msg, UINT hw_id, HWND hwnd_filter,
         else if (msg->message == WM_KEYUP)
         {
             /* Handle VK_APPS key by posting a WM_CONTEXTMENU message */
-            if (msg->wParam == VK_APPS && user_callbacks && !user_callbacks->is_menu_active())
+            if (msg->wParam == VK_APPS && !is_menu_active())
                 NtUserPostMessage( msg->hwnd, WM_CONTEXTMENU, (WPARAM)msg->hwnd, -1 );
         }
     }
@@ -2890,6 +2890,8 @@ LRESULT WINAPI NtUserMessageCall( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
 {
     switch (type)
     {
+    case NtUserPopupMenuWndProc:
+        return popup_menu_window_proc( hwnd, msg, wparam, lparam );
     case NtUserDesktopWindowProc:
         return desktop_window_proc( hwnd, msg, wparam, lparam );
     case NtUserDefWindowProc:
