@@ -175,12 +175,6 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         iF10Key = iMenuSysKey = 0;
         break;
 
-    case WM_LBUTTONDBLCLK:
-        return NC_HandleNCLButtonDblClk( hwnd, HTCLIENT, lParam );
-
-    case WM_NCLBUTTONDBLCLK:
-        return NC_HandleNCLButtonDblClk( hwnd, wParam, lParam );
-
     case WM_RBUTTONUP:
         {
             POINT pt;
@@ -224,21 +218,6 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
 
     case WM_CTLCOLOR:
         return (LRESULT)DEFWND_ControlColor( (HDC)wParam, HIWORD(lParam) );
-
-    case WM_SETCURSOR:
-        if (GetWindowLongW( hwnd, GWL_STYLE ) & WS_CHILD)
-        {
-            /* with the exception of the border around a resizable wnd,
-             * give the parent first chance to set the cursor */
-            if ((LOWORD(lParam) < HTSIZEFIRST) || (LOWORD(lParam) > HTSIZELAST))
-            {
-                HWND parent = GetParent( hwnd );
-                if (parent != GetDesktopWindow() &&
-                    SendMessageW( parent, WM_SETCURSOR, wParam, lParam )) return TRUE;
-            }
-        }
-        NC_HandleSetCursor( hwnd, wParam, lParam );
-        break;
 
     case WM_SYSCOMMAND:
         return NC_HandleSysCommand( hwnd, wParam, lParam );

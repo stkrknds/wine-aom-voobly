@@ -186,7 +186,7 @@
 @ stdcall DrawAnimatedRects(long long ptr ptr)
 @ stdcall DrawCaption(long long ptr long)
 @ stdcall DrawCaptionTempA(long long ptr long long str long)
-@ stdcall DrawCaptionTempW(long long ptr long long wstr long)
+@ stdcall DrawCaptionTempW(long long ptr long long wstr long) NtUserDrawCaptionTemp
 @ stdcall DrawEdge(long ptr long long)
 @ stdcall DrawFocusRect(long ptr)
 @ stub DrawFrame
@@ -366,8 +366,8 @@
 @ stdcall GetPropA(long str)
 @ stdcall GetPropW(long wstr)
 @ stdcall GetQueueStatus(long) NtUserGetQueueStatus
-@ stdcall GetRawInputBuffer(ptr ptr long)
-@ stdcall GetRawInputData(ptr long ptr ptr long)
+@ stdcall GetRawInputBuffer(ptr ptr long) NtUserGetRawInputBuffer
+@ stdcall GetRawInputData(ptr long ptr ptr long) NtUserGetRawInputData
 @ stdcall GetRawInputDeviceInfoA(ptr long ptr ptr)
 @ stdcall GetRawInputDeviceInfoW(ptr long ptr ptr)
 @ stdcall GetRawInputDeviceList(ptr ptr long)
@@ -389,7 +389,7 @@
 @ stdcall GetTaskmanWindow ()
 @ stdcall GetThreadDesktop(long) NtUserGetThreadDesktop
 @ stdcall GetThreadDpiAwarenessContext()
-@ stdcall GetTitleBarInfo(long ptr)
+@ stdcall GetTitleBarInfo(long ptr) NtUserGetTitleBarInfo
 @ stdcall GetTopWindow(long)
 @ stdcall GetTouchInputInfo(long long ptr long)
 @ stdcall GetUpdateRect(long ptr long) NtUserGetUpdateRect

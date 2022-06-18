@@ -322,6 +322,24 @@ static BOOL set_window_text( HWND hwnd, const void *text, BOOL ansi )
     return TRUE;
 }
 
+static int get_window_text( HWND hwnd, WCHAR *str, int count )
+{
+    int ret;
+
+    if (is_current_process_window( hwnd ))
+    {
+        /* FIXME: use packed send message */
+        ret = send_message( hwnd, WM_GETTEXT, count, (LPARAM)str );
+    }
+    else
+    {
+        /* when window belongs to other process, don't send a message */
+        ret = NtUserInternalGetWindowText( hwnd, str, count );
+    }
+
+    return ret;
+}
+
 static HICON get_window_icon( HWND hwnd, WPARAM type )
 {
     HICON ret;
@@ -394,6 +412,55 @@ static HICON set_window_icon( HWND hwnd, WPARAM type, HICON icon )
 
     user_driver->pSetWindowIcon( hwnd, type, icon );
     return ret;
+}
+
+static LRESULT handle_set_cursor( HWND hwnd, WPARAM wparam, LPARAM lparam )
+{
+    UINT cursor_id = IDC_ARROW;
+    HCURSOR cursor;
+
+    hwnd = get_full_window_handle( (HWND)wparam );
+
+    switch((short)LOWORD( lparam ))
+    {
+    case HTERROR:
+        {
+            WORD msg = HIWORD( lparam );
+            if (msg == WM_LBUTTONDOWN || msg == WM_MBUTTONDOWN ||
+                msg == WM_RBUTTONDOWN || msg == WM_XBUTTONDOWN)
+                message_beep( 0 );
+        }
+        break;
+
+    case HTCLIENT:
+        cursor = (HCURSOR)get_class_long_ptr( hwnd, GCLP_HCURSOR, FALSE );
+        if (!cursor) return FALSE;
+        NtUserSetCursor( cursor );
+        return TRUE;
+
+    case HTLEFT:
+    case HTRIGHT:
+        cursor_id = IDC_SIZEWE;
+        break;
+
+    case HTTOP:
+    case HTBOTTOM:
+        cursor_id = IDC_SIZENS;
+        break;
+
+    case HTTOPLEFT:
+    case HTBOTTOMRIGHT:
+        cursor_id = IDC_SIZENWSE;
+        break;
+
+    case HTTOPRIGHT:
+    case HTBOTTOMLEFT:
+        cursor_id = IDC_SIZENESW;
+    }
+
+    cursor = LoadImageW( 0, MAKEINTRESOURCEW( cursor_id ), IMAGE_CURSOR,
+                         0, 0, LR_SHARED | LR_DEFAULTSIZE );
+    return (LRESULT)NtUserSetCursor( cursor );
 }
 
 static LONG handle_window_pos_changing( HWND hwnd, WINDOWPOS *winpos )
@@ -825,6 +892,8 @@ static void sys_command_size_move( HWND hwnd, WPARAM wparam )
 
 static LRESULT handle_sys_command( HWND hwnd, WPARAM wparam, LPARAM lparam )
 {
+    TRACE( "hwnd %p WM_SYSCOMMAND %lx %lx\n", hwnd, wparam, lparam );
+
     if (!is_window_enabled( hwnd )) return 0;
 
     if (call_hooks( WH_CBT, HCBT_SYSCOMMAND, wparam, lparam, TRUE ))
@@ -850,6 +919,13 @@ static LRESULT handle_sys_command( HWND hwnd, WPARAM wparam, LPARAM lparam )
         NtUserShowWindow( hwnd, SW_MAXIMIZE );
         break;
 
+    case SC_CLOSE:
+        return send_message( hwnd, WM_CLOSE, 0, 0 );
+
+    case SC_VSCROLL:
+    case SC_HSCROLL:
+        return 1; /* FIXME: handle on client side */
+
     case SC_MOUSEMENU:
         track_mouse_menu_bar( hwnd, wparam & 0x000F, (short)LOWORD(lparam), (short)HIWORD(lparam) );
         break;
@@ -861,6 +937,17 @@ static LRESULT handle_sys_command( HWND hwnd, WPARAM wparam, LPARAM lparam )
     case SC_RESTORE:
         if (is_iconic( hwnd )) show_owned_popups( hwnd, TRUE );
         NtUserShowWindow( hwnd, SW_RESTORE );
+        break;
+
+    case SC_TASKLIST:
+    case SC_SCREENSAVE:
+        return 1; /* FIXME: handle on client side */
+
+    case SC_HOTKEY:
+    case SC_ARRANGE:
+    case SC_NEXTWINDOW:
+    case SC_PREVWINDOW:
+        FIXME( "unimplemented WM_SYSCOMMAND %04lx\n", wparam );
         break;
 
     default:
@@ -1411,8 +1498,7 @@ static void draw_nc_caption( HDC hdc, RECT *rect, HWND hwnd, DWORD  style,
         }
     }
 
-    /* FIXME: use packed send message */
-    len = send_message( hwnd, WM_GETTEXT, ARRAY_SIZE( buffer ), (LPARAM)buffer );
+    len = get_window_text( hwnd, buffer, ARRAY_SIZE( buffer ));
     if (len)
     {
         NONCLIENTMETRICSW nclm;
@@ -1434,6 +1520,97 @@ static void draw_nc_caption( HDC hdc, RECT *rect, HWND hwnd, DWORD  style,
                      DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_LEFT );
         NtGdiDeleteObjectApp( NtGdiSelectFont( hdc, hOldFont ));
     }
+}
+
+/***********************************************************************
+ *           NtUserDrawCaptionTemp   (win32u.@)
+ */
+BOOL WINAPI NtUserDrawCaptionTemp( HWND hwnd, HDC hdc, const RECT *rect, HFONT font,
+                                   HICON icon, const WCHAR *str, UINT flags )
+{
+    RECT rc = *rect;
+
+    TRACE( "(%p,%p,%p,%p,%p,%s,%08x)\n", hwnd, hdc, rect, font, icon, debugstr_w(str), flags );
+
+    /* drawing background */
+    if (flags & DC_INBUTTON)
+    {
+        fill_rect( hdc, &rc, get_sys_color_brush( COLOR_3DFACE ));
+
+        if (flags & DC_ACTIVE)
+        {
+            HBRUSH hbr = NtGdiSelectBrush( hdc, get_55aa_brush() );
+            NtGdiPatBlt( hdc, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, 0xfa0089 );
+            NtGdiSelectBrush( hdc, hbr );
+        }
+    }
+    else
+    {
+        DWORD style = get_window_long( hwnd, GWL_STYLE );
+        draw_caption_bar( hdc, &rc, style, flags & DC_ACTIVE, flags & DC_GRADIENT );
+    }
+
+    /* drawing icon */
+    if ((flags & DC_ICON) && !(flags & DC_SMALLCAP))
+    {
+        POINT pt;
+
+        pt.x = rc.left + 2;
+        pt.y = (rc.bottom + rc.top - get_system_metrics( SM_CYSMICON )) / 2;
+
+        if (!icon) icon = get_nc_icon_for_window( hwnd );
+        NtUserDrawIconEx( hdc, pt.x, pt.y, icon, get_system_metrics( SM_CXSMICON ),
+                          get_system_metrics( SM_CYSMICON ), 0, 0, DI_NORMAL );
+        rc.left = pt.x + get_system_metrics( SM_CXSMICON );
+    }
+
+    /* drawing text */
+    if (flags & DC_TEXT)
+    {
+        HFONT prev_font;
+        WCHAR text[128];
+        DWORD color;
+
+        if (flags & DC_INBUTTON)
+            color = COLOR_BTNTEXT;
+        else if (flags & DC_ACTIVE)
+            color = COLOR_CAPTIONTEXT;
+        else
+            color = COLOR_INACTIVECAPTIONTEXT;
+        NtGdiGetAndSetDCDword( hdc, NtGdiSetTextColor, get_sys_color( color ), NULL );
+        NtGdiGetAndSetDCDword( hdc, NtGdiSetBkMode, TRANSPARENT, NULL );
+
+        if (font)
+            prev_font = NtGdiSelectFont( hdc, font );
+        else
+        {
+            NONCLIENTMETRICSW nclm;
+            HFONT new_font;
+            LOGFONTW *lf;
+            nclm.cbSize = sizeof(NONCLIENTMETRICSW);
+            NtUserSystemParametersInfo( SPI_GETNONCLIENTMETRICS, 0, &nclm, 0 );
+            lf = (flags & DC_SMALLCAP) ? &nclm.lfSmCaptionFont : &nclm.lfCaptionFont;
+            new_font = NtGdiHfontCreate( &lf, sizeof(lf), 0, 0, NULL );
+            prev_font = NtGdiSelectFont( hdc, new_font );
+        }
+
+        if (!str)
+        {
+            if (!get_window_text( hwnd, text, ARRAY_SIZE( text ))) text[0] = 0;
+            str = text;
+        }
+        rc.left += 2;
+        DrawTextW( hdc, str, -1, &rc, ((flags & 0x4000) ? DT_CENTER : DT_LEFT) |
+                   DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_END_ELLIPSIS );
+
+        if (font)
+            NtGdiSelectFont( hdc, prev_font );
+        else
+            NtGdiDeleteObjectApp( NtGdiSelectFont( hdc, prev_font ));
+    }
+
+    if (flags & 0x2000) FIXME( "undocumented flag (0x2000)!\n" );
+    return FALSE;
 }
 
 /* Paint the non-client area for windows */
@@ -2012,6 +2189,48 @@ static LRESULT handle_nc_rbutton_down( HWND hwnd, WPARAM wparam, LPARAM lparam )
     return 0;
 }
 
+static LRESULT handle_nc_button_dbl_click( HWND hwnd, WPARAM wparam, LPARAM lparam )
+{
+    /* if this is an icon, send a restore since we are handling a double click */
+    if (is_iconic(hwnd))
+    {
+        send_message( hwnd, WM_SYSCOMMAND, SC_RESTORE, lparam );
+        return 0;
+    }
+
+    switch (wparam)  /* Hit test */
+    {
+    case HTCAPTION:
+        /* stop processing if WS_MAXIMIZEBOX is missing */
+        if (get_window_long( hwnd, GWL_STYLE ) & WS_MAXIMIZEBOX)
+            send_message( hwnd, WM_SYSCOMMAND,
+                          is_zoomed( hwnd ) ? SC_RESTORE : SC_MAXIMIZE, lparam );
+        break;
+
+    case HTSYSMENU:
+        {
+            HMENU hSysMenu = NtUserGetSystemMenu( hwnd, FALSE );
+            UINT state = get_menu_state( hSysMenu, SC_CLOSE, MF_BYCOMMAND );
+
+            /* If the close item of the sysmenu is disabled or not present do nothing */
+            if ((state & (MF_DISABLED | MF_GRAYED)) || state == 0xffffffff)
+                break;
+
+            send_message( hwnd, WM_SYSCOMMAND, SC_CLOSE, lparam );
+            break;
+        }
+
+    case HTHSCROLL:
+        send_message( hwnd, WM_SYSCOMMAND, SC_HSCROLL + HTHSCROLL, lparam );
+        break;
+
+    case HTVSCROLL:
+        send_message( hwnd, WM_SYSCOMMAND, SC_VSCROLL + HTVSCROLL, lparam );
+        break;
+    }
+    return 0;
+}
+
 LRESULT default_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, BOOL ansi )
 {
     LRESULT result = 0;
@@ -2062,6 +2281,12 @@ LRESULT default_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, 
 
     case WM_NCRBUTTONDOWN:
         return handle_nc_rbutton_down( hwnd, wparam, lparam );
+
+    case WM_LBUTTONDBLCLK:
+        return handle_nc_button_dbl_click( hwnd, HTCLIENT, lparam );
+
+    case WM_NCLBUTTONDBLCLK:
+        return handle_nc_button_dbl_click( hwnd, wparam, lparam );
 
     case WM_CONTEXTMENU:
         if (get_window_long( hwnd, GWL_STYLE ) & WS_CHILD)
@@ -2199,6 +2424,21 @@ LRESULT default_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, 
         result = (LRESULT)get_window_icon( hwnd, wparam );
         break;
 
+    case WM_SETCURSOR:
+        if (get_window_long( hwnd, GWL_STYLE ) & WS_CHILD)
+        {
+            /* with the exception of the border around a resizable window,
+             * give the parent first chance to set the cursor */
+            if ((LOWORD( lparam ) < HTSIZEFIRST) || (LOWORD( lparam ) > HTSIZELAST))
+            {
+                HWND parent = get_parent( hwnd );
+                if (parent != get_desktop_window() &&
+                    send_message( parent, WM_SETCURSOR, wparam, lparam )) return TRUE;
+            }
+        }
+        handle_set_cursor( hwnd, wparam, lparam );
+        break;
+
     case WM_SYSCOMMAND:
         result = handle_sys_command( hwnd, wparam, lparam );
         break;
@@ -2273,4 +2513,77 @@ LRESULT desktop_window_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam )
     }
 
     return default_window_proc( hwnd, msg, wparam, lparam, FALSE );
+}
+
+/***********************************************************************
+ *           NtUserGetTitleBarInfo   (win32u.@)
+ */
+BOOL WINAPI NtUserGetTitleBarInfo( HWND hwnd, TITLEBARINFO *info )
+{
+    DWORD style, ex_style;
+
+    TRACE( "(%p %p)\n", hwnd, info );
+
+    if (!info)
+    {
+        SetLastError( ERROR_NOACCESS );
+        return FALSE;
+    }
+
+    if (info->cbSize != sizeof(TITLEBARINFO))
+    {
+        TRACE( "Invalid TITLEBARINFO size: %d\n", info->cbSize );
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+
+    style = get_window_long( hwnd, GWL_STYLE );
+    ex_style = get_window_long( hwnd, GWL_EXSTYLE );
+    get_inside_rect( hwnd, COORDS_SCREEN, &info->rcTitleBar, style, ex_style );
+
+    info->rcTitleBar.bottom = info->rcTitleBar.top;
+    if (ex_style & WS_EX_TOOLWINDOW)
+        info->rcTitleBar.bottom += get_system_metrics( SM_CYSMCAPTION );
+    else
+    {
+        info->rcTitleBar.bottom += get_system_metrics( SM_CYCAPTION );
+        info->rcTitleBar.left += get_system_metrics( SM_CXSIZE );
+    }
+
+    memset( info->rgstate, 0, sizeof(info->rgstate) );
+    info->rgstate[0] = STATE_SYSTEM_FOCUSABLE;
+
+    if (style & WS_CAPTION)
+    {
+        info->rgstate[1] = STATE_SYSTEM_INVISIBLE;
+        if (style & WS_SYSMENU)
+        {
+            if (!(style & (WS_MINIMIZEBOX|WS_MAXIMIZEBOX)))
+            {
+                info->rgstate[2] = STATE_SYSTEM_INVISIBLE;
+                info->rgstate[3] = STATE_SYSTEM_INVISIBLE;
+            }
+            else
+            {
+                if (!(style & WS_MINIMIZEBOX))
+                    info->rgstate[2] = STATE_SYSTEM_UNAVAILABLE;
+                if (!(style & WS_MAXIMIZEBOX))
+                    info->rgstate[3] = STATE_SYSTEM_UNAVAILABLE;
+            }
+            if (!(ex_style & WS_EX_CONTEXTHELP))
+                info->rgstate[4] = STATE_SYSTEM_INVISIBLE;
+            if (get_class_long( hwnd, GCL_STYLE, FALSE ) & CS_NOCLOSE )
+                info->rgstate[5] = STATE_SYSTEM_UNAVAILABLE;
+        }
+        else
+        {
+            info->rgstate[2] = STATE_SYSTEM_INVISIBLE;
+            info->rgstate[3] = STATE_SYSTEM_INVISIBLE;
+            info->rgstate[4] = STATE_SYSTEM_INVISIBLE;
+            info->rgstate[5] = STATE_SYSTEM_INVISIBLE;
+        }
+    }
+    else
+        info->rgstate[0] |= STATE_SYSTEM_INVISIBLE;
+    return TRUE;
 }

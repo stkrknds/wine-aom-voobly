@@ -631,17 +631,33 @@ HRESULT WINAPI D3DX10CreateTextureFromFileW(ID3D10Device *device, const WCHAR *s
     if (!src_file)
         return E_FAIL;
 
-    if (FAILED((hr = load_file(src_file, &buffer, &size))))
+    if (pump)
     {
-        if (hresult)
-            *hresult = hr;
+        ID3DX10DataProcessor *processor;
+        ID3DX10DataLoader *loader;
+
+        if (FAILED((hr = D3DX10CreateAsyncFileLoaderW(src_file, &loader))))
+            return hr;
+        if (FAILED((hr = D3DX10CreateAsyncTextureProcessor(device, load_info, &processor))))
+        {
+            ID3DX10DataLoader_Destroy(loader);
+            return hr;
+        }
+        if (FAILED((hr = ID3DX10ThreadPump_AddWorkItem(pump, loader, processor, hresult, (void **)texture))))
+        {
+            ID3DX10DataLoader_Destroy(loader);
+            ID3DX10DataProcessor_Destroy(processor);
+        }
         return hr;
     }
 
-    hr = D3DX10CreateTextureFromMemory(device, buffer, size, load_info, pump, texture, hresult);
-
-    free(buffer);
-
+    if (SUCCEEDED((hr = load_file(src_file, &buffer, &size))))
+    {
+        hr = create_texture(device, buffer, size, load_info, texture);
+        free(buffer);
+    }
+    if (hresult)
+        *hresult = hr;
     return hr;
 }
 
@@ -658,11 +674,32 @@ HRESULT WINAPI D3DX10CreateTextureFromResourceA(ID3D10Device *device, HMODULE mo
     if (!device)
         return E_INVALIDARG;
 
-    hr = load_resourceA(module, resource, &buffer, &size);
-    if (FAILED(hr))
-        return hr;
+    if (pump)
+    {
+        ID3DX10DataProcessor *processor;
+        ID3DX10DataLoader *loader;
 
-    return D3DX10CreateTextureFromMemory(device, buffer, size, load_info, pump, texture, hresult);
+        if (FAILED((hr = D3DX10CreateAsyncResourceLoaderA(module, resource, &loader))))
+            return hr;
+        if (FAILED((hr = D3DX10CreateAsyncTextureProcessor(device, load_info, &processor))))
+        {
+            ID3DX10DataLoader_Destroy(loader);
+            return hr;
+        }
+        if (FAILED((hr = ID3DX10ThreadPump_AddWorkItem(pump, loader, processor, hresult, (void **)texture))))
+        {
+            ID3DX10DataLoader_Destroy(loader);
+            ID3DX10DataProcessor_Destroy(processor);
+        }
+        return hr;
+    }
+
+    if (FAILED((hr = load_resourceA(module, resource, &buffer, &size))))
+        return hr;
+    hr = create_texture(device, buffer, size, load_info, texture);
+    if (hresult)
+        *hresult = hr;
+    return hr;
 }
 
 HRESULT WINAPI D3DX10CreateTextureFromResourceW(ID3D10Device *device, HMODULE module, const WCHAR *resource,
@@ -678,11 +715,32 @@ HRESULT WINAPI D3DX10CreateTextureFromResourceW(ID3D10Device *device, HMODULE mo
     if (!device)
         return E_INVALIDARG;
 
-    hr = load_resourceW(module, resource, &buffer, &size);
-    if (FAILED(hr))
-        return hr;
+    if (pump)
+    {
+        ID3DX10DataProcessor *processor;
+        ID3DX10DataLoader *loader;
 
-    return D3DX10CreateTextureFromMemory(device, buffer, size, load_info, pump, texture, hresult);
+        if (FAILED((hr = D3DX10CreateAsyncResourceLoaderW(module, resource, &loader))))
+            return hr;
+        if (FAILED((hr = D3DX10CreateAsyncTextureProcessor(device, load_info, &processor))))
+        {
+            ID3DX10DataLoader_Destroy(loader);
+            return hr;
+        }
+        if (FAILED((hr = ID3DX10ThreadPump_AddWorkItem(pump, loader, processor, hresult, (void **)texture))))
+        {
+            ID3DX10DataLoader_Destroy(loader);
+            ID3DX10DataProcessor_Destroy(processor);
+        }
+        return hr;
+    }
+
+    if (FAILED((hr = load_resourceW(module, resource, &buffer, &size))))
+        return hr;
+    hr = create_texture(device, buffer, size, load_info, texture);
+    if (hresult)
+        *hresult = hr;
+    return hr;
 }
 
 void init_load_info(const D3DX10_IMAGE_LOAD_INFO *load_info, D3DX10_IMAGE_LOAD_INFO *out)
@@ -908,8 +966,26 @@ HRESULT WINAPI D3DX10CreateTextureFromMemory(ID3D10Device *device, const void *s
         return E_INVALIDARG;
     if (!src_data)
         return E_FAIL;
+
     if (pump)
-        FIXME("Thread pump is not supported yet.\n");
+    {
+        ID3DX10DataProcessor *processor;
+        ID3DX10DataLoader *loader;
+
+        if (FAILED((hr = D3DX10CreateAsyncMemoryLoader(src_data, src_data_size, &loader))))
+            return hr;
+        if (FAILED((hr = D3DX10CreateAsyncTextureProcessor(device, load_info, &processor))))
+        {
+            ID3DX10DataLoader_Destroy(loader);
+            return hr;
+        }
+        if (FAILED((hr = ID3DX10ThreadPump_AddWorkItem(pump, loader, processor, hresult, (void **)texture))))
+        {
+            ID3DX10DataLoader_Destroy(loader);
+            ID3DX10DataProcessor_Destroy(processor);
+        }
+        return hr;
+    }
 
     hr = create_texture(device, src_data, src_data_size, load_info, texture);
     if (hresult)

@@ -538,6 +538,8 @@ BOOL    WINAPI NtUserDestroyMenu( HMENU menu );
 BOOL    WINAPI NtUserDestroyWindow( HWND hwnd );
 LRESULT WINAPI NtUserDispatchMessage( const MSG *msg );
 BOOL    WINAPI NtUserDragDetect( HWND hwnd, int x, int y );
+BOOL    WINAPI NtUserDrawCaptionTemp( HWND hwnd, HDC hdc, const RECT *rect, HFONT font,
+                                      HICON icon, const WCHAR *str, UINT flags );
 BOOL    WINAPI NtUserDrawIconEx( HDC hdc, INT x0, INT y0, HICON icon, INT width,
                                  INT height, UINT istep, HBRUSH hbr, UINT flags );
 DWORD   WINAPI NtUserDrawMenuBarTemp( HWND hwnd, HDC hdc, RECT *rect, HMENU handle, HFONT font );
@@ -604,9 +606,12 @@ HWINSTA WINAPI NtUserGetProcessWindowStation(void);
 HANDLE  WINAPI NtUserGetProp( HWND hwnd, const WCHAR *str );
 ULONG   WINAPI NtUserGetProcessDpiAwarenessContext( HANDLE process );
 DWORD   WINAPI NtUserGetQueueStatus( UINT flags );
+UINT    WINAPI NtUserGetRawInputBuffer( RAWINPUT *data, UINT *data_size, UINT header_size );
+UINT    WINAPI NtUserGetRawInputData( HRAWINPUT rawinput, UINT command, void *data, UINT *data_size, UINT header_size );
 ULONG   WINAPI NtUserGetSystemDpiForProcess( HANDLE process );
 HMENU   WINAPI NtUserGetSystemMenu( HWND hwnd, BOOL revert );
 HDESK   WINAPI NtUserGetThreadDesktop( DWORD thread );
+BOOL    WINAPI NtUserGetTitleBarInfo( HWND hwnd, TITLEBARINFO *info );
 INT     WINAPI NtUserGetUpdateRgn( HWND hwnd, HRGN hrgn, BOOL erase );
 BOOL    WINAPI NtUserGetUpdatedClipboardFormats( UINT *formats, UINT size, UINT *out_size );
 BOOL    WINAPI NtUserGetUpdateRect( HWND hwnd, RECT *rect, BOOL erase );

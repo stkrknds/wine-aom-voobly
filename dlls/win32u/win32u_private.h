@@ -215,6 +215,8 @@ struct unix_funcs
     BOOL     (WINAPI *pNtUserDestroyWindow)( HWND hwnd );
     LRESULT  (WINAPI *pNtUserDispatchMessage)( const MSG *msg );
     BOOL     (WINAPI *pNtUserDragDetect)( HWND hwnd, int x, int y );
+    BOOL     (WINAPI *pNtUserDrawCaptionTemp)( HWND hwnd, HDC hdc, const RECT *rect, HFONT font,
+                                               HICON icon, const WCHAR *str, UINT flags );
     BOOL     (WINAPI *pNtUserDrawIconEx)( HDC hdc, INT x0, INT y0, HICON icon, INT width,
                                           INT height, UINT istep, HBRUSH hbr, UINT flags );
     DWORD    (WINAPI *pNtUserDrawMenuBarTemp)( HWND hwnd, HDC hdc, RECT *rect, HMENU handle, HFONT font );
@@ -245,6 +247,9 @@ struct unix_funcs
     BOOL     (WINAPI *pNtUserGetMessage)( MSG *msg, HWND hwnd, UINT first, UINT last );
     INT      (WINAPI *pNtUserGetPriorityClipboardFormat)( UINT *list, INT count );
     DWORD    (WINAPI *pNtUserGetQueueStatus)( UINT flags );
+    UINT     (WINAPI *pNtUserGetRawInputBuffer)( RAWINPUT *data, UINT *data_size, UINT header_size );
+    UINT     (WINAPI *pNtUserGetRawInputData)( HRAWINPUT rawinput, UINT command,
+                                               void *data, UINT *data_size, UINT header_size );
     HMENU    (WINAPI *pNtUserGetSystemMenu)( HWND hwnd, BOOL revert );
     BOOL     (WINAPI *pNtUserGetUpdateRect)( HWND hwnd, RECT *rect, BOOL erase );
     INT      (WINAPI *pNtUserGetUpdateRgn)( HWND hwnd, HRGN hrgn, BOOL erase );

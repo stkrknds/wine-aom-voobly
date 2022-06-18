@@ -849,7 +849,7 @@
 @ stub NtUserDragObject
 @ stub NtUserDrawAnimatedRects
 @ stub NtUserDrawCaption
-@ stub NtUserDrawCaptionTemp
+@ stdcall NtUserDrawCaptionTemp(long long ptr long long wstr long)
 @ stdcall NtUserDrawIconEx(long long long long long long long long long)
 @ stdcall NtUserDrawMenuBarTemp(long long ptr long long)
 @ stub NtUserDwmGetRemoteSessionOcclusionEvent
@@ -983,8 +983,8 @@
 @ stdcall -syscall NtUserGetProp(long wstr)
 @ stdcall NtUserGetQueueStatus(long)
 @ stub NtUserGetQueueStatusReadonly
-@ stub NtUserGetRawInputBuffer
-@ stub NtUserGetRawInputData
+@ stdcall NtUserGetRawInputBuffer(ptr ptr long)
+@ stdcall NtUserGetRawInputData(ptr long ptr ptr long)
 @ stub NtUserGetRawInputDeviceInfo
 @ stub NtUserGetRawInputDeviceList
 @ stub NtUserGetRawPointerDeviceData
@@ -997,7 +997,7 @@
 @ stdcall NtUserGetSystemMenu(long long)
 @ stdcall -syscall NtUserGetThreadDesktop(long)
 @ stub NtUserGetThreadState
-@ stub NtUserGetTitleBarInfo
+@ stdcall -syscall NtUserGetTitleBarInfo(long ptr)
 @ stub NtUserGetTopLevelWindow
 @ stub NtUserGetTouchInputInfo
 @ stub NtUserGetTouchValidationStatus

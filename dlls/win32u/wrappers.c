@@ -861,6 +861,13 @@ BOOL WINAPI NtUserDragDetect( HWND hwnd, int x, int y )
     return unix_funcs->pNtUserDragDetect( hwnd, x, y );
 }
 
+BOOL WINAPI NtUserDrawCaptionTemp( HWND hwnd, HDC hdc, const RECT *rect, HFONT font,
+                                   HICON icon, const WCHAR *str, UINT flags )
+{
+    if (!unix_funcs) return FALSE;
+    return unix_funcs->pNtUserDrawCaptionTemp( hwnd, hdc, rect, font, icon, str, flags );
+}
+
 BOOL WINAPI NtUserDrawIconEx( HDC hdc, INT x0, INT y0, HICON icon, INT width,
                               INT height, UINT istep, HBRUSH hbr, UINT flags )
 {
@@ -1039,6 +1046,18 @@ DWORD WINAPI NtUserGetQueueStatus( UINT flags )
 {
     if (!unix_funcs) return 0;
     return unix_funcs->pNtUserGetQueueStatus( flags );
+}
+
+UINT WINAPI DECLSPEC_HOTPATCH NtUserGetRawInputBuffer( RAWINPUT *data, UINT *data_size, UINT header_size )
+{
+    if (!unix_funcs) return ~0u;
+    return unix_funcs->pNtUserGetRawInputBuffer( data, data_size, header_size );
+}
+
+UINT WINAPI NtUserGetRawInputData( HRAWINPUT rawinput, UINT command, void *data, UINT *data_size, UINT header_size )
+{
+    if (!unix_funcs) return ~0u;
+    return unix_funcs->pNtUserGetRawInputData( rawinput, command, data, data_size, header_size );
 }
 
 BOOL WINAPI NtUserGetUpdatedClipboardFormats( UINT *formats, UINT size, UINT *out_size )
