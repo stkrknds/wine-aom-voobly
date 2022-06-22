@@ -2331,6 +2331,9 @@ err:
 static int ipnetrow_cmp( const void *a, const void *b )
 {
     const MIB_IPNETROW *rowA = a, *rowB = b;
+
+    if (rowA->dwIndex != rowB->dwIndex) return DWORD_cmp( rowA->dwIndex, rowB->dwIndex );
+
     return DWORD_cmp(RtlUlongByteSwap( rowA->dwAddr ), RtlUlongByteSwap( rowB->dwAddr ));
 }
 
@@ -2393,7 +2396,8 @@ DWORD WINAPI GetIpNetTable( MIB_IPNETTABLE *table, ULONG *size, BOOL sort )
         memset( row->bPhysAddr + row->dwPhysAddrLen, 0,
                 sizeof(row->bPhysAddr) - row->dwPhysAddrLen );
         row->dwAddr = keys[i].addr.s_addr;
-        switch (dyn->state)
+
+        switch (dyn[i].state)
         {
         case NlnsUnreachable:
         case NlnsIncomplete:

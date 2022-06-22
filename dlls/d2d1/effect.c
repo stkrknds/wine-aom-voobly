@@ -41,7 +41,7 @@ static void d2d_effect_context_cleanup(struct d2d_effect_context *effect_context
 
     for (i = 0; i < effect_context->shader_count; ++i)
         IUnknown_Release(effect_context->shaders[i].shader);
-    heap_free(effect_context->shaders);
+    free(effect_context->shaders);
 
     ID2D1DeviceContext1_Release(&effect_context->device_context->ID2D1DeviceContext1_iface);
 }
@@ -104,7 +104,7 @@ static ULONG STDMETHODCALLTYPE d2d_effect_context_Release(ID2D1EffectContext *if
     if (!refcount)
     {
         d2d_effect_context_cleanup(effect_context);
-        heap_free(effect_context);
+        free(effect_context);
     }
 
     return refcount;
@@ -123,25 +123,11 @@ static HRESULT STDMETHODCALLTYPE d2d_effect_context_CreateEffect(ID2D1EffectCont
         REFCLSID clsid, ID2D1Effect **effect)
 {
     struct d2d_effect_context *effect_context = impl_from_ID2D1EffectContext(iface);
-    struct d2d_effect *object;
-    HRESULT hr;
 
     TRACE("iface %p, clsid %s, effect %p.\n", iface, debugstr_guid(clsid), effect);
 
-    if (!(object = heap_alloc_zero(sizeof(*object))))
-        return E_OUTOFMEMORY;
-
-    if (FAILED(hr = d2d_effect_init(object, effect_context, clsid)))
-    {
-        WARN("Failed to initialise effect, hr %#lx.\n", hr);
-        heap_free(object);
-        return hr;
-    }
-
-    TRACE("Created effect %p.\n", object);
-    *effect = &object->ID2D1Effect_iface;
-
-    return S_OK;
+    return ID2D1DeviceContext1_CreateEffect(&effect_context->device_context->ID2D1DeviceContext1_iface,
+            clsid, effect);
 }
 
 static HRESULT STDMETHODCALLTYPE d2d_effect_context_GetMaximumSupportedFeatureLevel(ID2D1EffectContext *iface,
@@ -195,10 +181,27 @@ static HRESULT STDMETHODCALLTYPE d2d_effect_context_CreateBoundsAdjustmentTransf
 static HRESULT STDMETHODCALLTYPE d2d_effect_context_LoadPixelShader(ID2D1EffectContext *iface,
         REFGUID shader_id, const BYTE *buffer, UINT32 buffer_size)
 {
-    FIXME("iface %p, shader_id %s, buffer %p, buffer_size %u stub!\n",
+    struct d2d_effect_context *effect_context = impl_from_ID2D1EffectContext(iface);
+    ID3D11PixelShader *shader;
+    HRESULT hr;
+
+    TRACE("iface %p, shader_id %s, buffer %p, buffer_size %u.\n",
             iface, debugstr_guid(shader_id), buffer, buffer_size);
 
-    return E_NOTIMPL;
+    if (ID2D1EffectContext_IsShaderLoaded(iface, shader_id))
+        return S_OK;
+
+    if (FAILED(hr = ID3D11Device1_CreatePixelShader(effect_context->device_context->d3d_device,
+            buffer, buffer_size, NULL, &shader)))
+    {
+        WARN("Failed to create a pixel shader, hr %#lx.\n", hr);
+        return hr;
+    }
+
+    hr = d2d_effect_context_add_shader(effect_context, shader_id, shader);
+    ID3D11PixelShader_Release(shader);
+
+    return hr;
 }
 
 static HRESULT STDMETHODCALLTYPE d2d_effect_context_LoadVertexShader(ID2D1EffectContext *iface,
@@ -230,10 +233,27 @@ static HRESULT STDMETHODCALLTYPE d2d_effect_context_LoadVertexShader(ID2D1Effect
 static HRESULT STDMETHODCALLTYPE d2d_effect_context_LoadComputeShader(ID2D1EffectContext *iface,
         REFGUID shader_id, const BYTE *buffer, UINT32 buffer_size)
 {
-    FIXME("iface %p, shader_id %s, buffer %p, buffer_size %u stub!\n",
+    struct d2d_effect_context *effect_context = impl_from_ID2D1EffectContext(iface);
+    ID3D11ComputeShader *shader;
+    HRESULT hr;
+
+    TRACE("iface %p, shader_id %s, buffer %p, buffer_size %u.\n",
             iface, debugstr_guid(shader_id), buffer, buffer_size);
 
-    return E_NOTIMPL;
+    if (ID2D1EffectContext_IsShaderLoaded(iface, shader_id))
+        return S_OK;
+
+    if (FAILED(hr = ID3D11Device1_CreateComputeShader(effect_context->device_context->d3d_device,
+            buffer, buffer_size, NULL, &shader)))
+    {
+        WARN("Failed to create a compute shader, hr %#lx.\n", hr);
+        return hr;
+    }
+
+    hr = d2d_effect_context_add_shader(effect_context, shader_id, shader);
+    ID3D11ComputeShader_Release(shader);
+
+    return hr;
 }
 
 static BOOL STDMETHODCALLTYPE d2d_effect_context_IsShaderLoaded(ID2D1EffectContext *iface, REFGUID shader_id)
@@ -291,34 +311,57 @@ static HRESULT STDMETHODCALLTYPE d2d_effect_context_FindVertexBuffer(ID2D1Effect
 static HRESULT STDMETHODCALLTYPE d2d_effect_context_CreateColorContext(ID2D1EffectContext *iface,
         D2D1_COLOR_SPACE space, const BYTE *profile, UINT32 profile_size, ID2D1ColorContext **color_context)
 {
-    FIXME("iface %p, space %#x, profile %p, profile_size %u, color_context %p stub!\n",
+    struct d2d_effect_context *effect_context = impl_from_ID2D1EffectContext(iface);
+
+    TRACE("iface %p, space %#x, profile %p, profile_size %u, color_context %p.\n",
             iface, space, profile, profile_size, color_context);
 
-    return E_NOTIMPL;
+    return ID2D1DeviceContext1_CreateColorContext(&effect_context->device_context->ID2D1DeviceContext1_iface,
+            space, profile, profile_size, color_context);
 }
 
 static HRESULT STDMETHODCALLTYPE d2d_effect_context_CreateColorContextFromFilename(ID2D1EffectContext *iface,
         const WCHAR *filename, ID2D1ColorContext **color_context)
 {
-    FIXME("iface %p, filename %s, color_context %p stub!\n", iface, debugstr_w(filename), color_context);
+    struct d2d_effect_context *effect_context = impl_from_ID2D1EffectContext(iface);
 
-    return E_NOTIMPL;
+    TRACE("iface %p, filename %s, color_context %p.\n", iface, debugstr_w(filename), color_context);
+
+    return ID2D1DeviceContext1_CreateColorContextFromFilename(&effect_context->device_context->ID2D1DeviceContext1_iface,
+            filename, color_context);
 }
 
 static HRESULT STDMETHODCALLTYPE d2d_effect_context_CreateColorContextFromWicColorContext(ID2D1EffectContext *iface,
         IWICColorContext *wic_color_context, ID2D1ColorContext **color_context)
 {
-    FIXME("iface %p, wic_color_context %p, color_context %p stub!\n", iface, wic_color_context, color_context);
+    struct d2d_effect_context *effect_context = impl_from_ID2D1EffectContext(iface);
 
-    return E_NOTIMPL;
+    TRACE("iface %p, wic_color_context %p, color_context %p.\n", iface, wic_color_context, color_context);
+
+    return ID2D1DeviceContext1_CreateColorContextFromWicColorContext(&effect_context->device_context->ID2D1DeviceContext1_iface,
+            wic_color_context, color_context);
 }
 
 static HRESULT STDMETHODCALLTYPE d2d_effect_context_CheckFeatureSupport(ID2D1EffectContext *iface,
         D2D1_FEATURE feature, void *data, UINT32 data_size)
 {
-    FIXME("iface %p, feature %#x, data %p, data_size %u stub!\n", iface, feature, data, data_size);
+    struct d2d_effect_context *effect_context = impl_from_ID2D1EffectContext(iface);
+    D3D11_FEATURE d3d11_feature;
 
-    return E_NOTIMPL;
+    TRACE("iface %p, feature %#x, data %p, data_size %u.\n", iface, feature, data, data_size);
+
+    /* Data structures are compatible. */
+    switch (feature)
+    {
+        case D2D1_FEATURE_DOUBLES: d3d11_feature = D3D11_FEATURE_DOUBLES; break;
+        case D2D1_FEATURE_D3D10_X_HARDWARE_OPTIONS: d3d11_feature = D3D11_FEATURE_D3D10_X_HARDWARE_OPTIONS; break;
+        default:
+            WARN("Unexpected feature index %d.\n", feature);
+            return E_INVALIDARG;
+    }
+
+    return ID3D11Device1_CheckFeatureSupport(effect_context->device_context->d3d_device,
+            d3d11_feature, data, data_size);
 }
 
 static BOOL STDMETHODCALLTYPE d2d_effect_context_IsBufferPrecisionSupported(ID2D1EffectContext *iface,
@@ -379,7 +422,7 @@ static void d2d_effect_cleanup(struct d2d_effect *effect)
         if (effect->inputs[i])
             ID2D1Image_Release(effect->inputs[i]);
     }
-    heap_free(effect->inputs);
+    free(effect->inputs);
     ID2D1EffectContext_Release(&effect->effect_context->ID2D1EffectContext_iface);
 }
 
@@ -431,7 +474,7 @@ static ULONG STDMETHODCALLTYPE d2d_effect_Release(ID2D1Effect *iface)
     if (!refcount)
     {
         d2d_effect_cleanup(effect);
-        heap_free(effect);
+        free(effect);
     }
 
     return refcount;

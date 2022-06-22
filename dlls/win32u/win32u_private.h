@@ -473,6 +473,7 @@ extern void user_check_not_lock(void) DECLSPEC_HIDDEN;
 /* window.c */
 struct tagWND;
 extern HDWP begin_defer_window_pos( INT count ) DECLSPEC_HIDDEN;
+extern BOOL client_to_screen( HWND hwnd, POINT *pt ) DECLSPEC_HIDDEN;
 extern void destroy_thread_windows(void) DECLSPEC_HIDDEN;
 extern LRESULT destroy_window( HWND hwnd ) DECLSPEC_HIDDEN;
 extern BOOL get_client_rect( HWND hwnd, RECT *rect ) DECLSPEC_HIDDEN;
@@ -574,6 +575,7 @@ DWORD win32u_mbtowc( CPTABLEINFO *info, WCHAR *dst, DWORD dstlen, const char *sr
                      DWORD srclen ) DECLSPEC_HIDDEN;
 DWORD win32u_wctomb( CPTABLEINFO *info, char *dst, DWORD dstlen, const WCHAR *src,
                      DWORD srclen ) DECLSPEC_HIDDEN;
+DWORD win32u_wctomb_size( CPTABLEINFO *info, const WCHAR *src, DWORD srclen ) DECLSPEC_HIDDEN;
 
 static inline WCHAR *win32u_wcsdup( const WCHAR *str )
 {

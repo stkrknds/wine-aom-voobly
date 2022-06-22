@@ -224,6 +224,9 @@ enum
     NtUserSetMenuItemInfo,
     NtUserInsertMenuItem,
     /* Wine extensions */
+    NtUserGetMenuItemID,
+    NtUserGetMenuItemInfoA,
+    NtUserGetMenuItemInfoW,
     NtUserGetMenuState,
 };
 
@@ -797,7 +800,6 @@ enum
     NtUserCallOneParam_SetCaretBlinkTime,
     NtUserCallOneParam_SetProcessDefaultLayout,
     /* temporary exports */
-    NtUserCallHooks,
     NtUserGetDeskPattern,
     NtUserGetWinProcPtr,
     NtUserLock,
