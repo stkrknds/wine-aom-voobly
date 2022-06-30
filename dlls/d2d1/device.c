@@ -1946,36 +1946,10 @@ static HRESULT STDMETHODCALLTYPE d2d_device_context_CreateEffect(ID2D1DeviceCont
         REFCLSID effect_id, ID2D1Effect **effect)
 {
     struct d2d_device_context *context = impl_from_ID2D1DeviceContext(iface);
-    struct d2d_effect_context *effect_context;
-    struct d2d_effect *object;
-    HRESULT hr;
 
     TRACE("iface %p, effect_id %s, effect %p.\n", iface, debugstr_guid(effect_id), effect);
 
-    if (!(effect_context = calloc(1, sizeof(*effect_context))))
-        return E_OUTOFMEMORY;
-    d2d_effect_context_init(effect_context, context);
-
-    if (!(object = calloc(1, sizeof(*object))))
-    {
-        ID2D1EffectContext_Release(&effect_context->ID2D1EffectContext_iface);
-        return E_OUTOFMEMORY;
-    }
-
-    hr = d2d_effect_init(object, effect_context, effect_id);
-    ID2D1EffectContext_Release(&effect_context->ID2D1EffectContext_iface);
-    if (FAILED(hr))
-    {
-        WARN("Failed to initialise effect, hr %#lx.\n", hr);
-        free(object);
-        return hr;
-    }
-
-    *effect = &object->ID2D1Effect_iface;
-
-    TRACE("Created effect %p.\n", *effect);
-
-    return S_OK;
+    return d2d_effect_create(context, effect_id, effect);
 }
 
 static HRESULT STDMETHODCALLTYPE d2d_device_context_ID2D1DeviceContext_CreateGradientStopCollection(
@@ -2045,9 +2019,31 @@ static BOOL STDMETHODCALLTYPE d2d_device_context_IsDxgiFormatSupported(ID2D1Devi
 static BOOL STDMETHODCALLTYPE d2d_device_context_IsBufferPrecisionSupported(ID2D1DeviceContext1 *iface,
         D2D1_BUFFER_PRECISION buffer_precision)
 {
-    FIXME("iface %p, buffer_precision %#x stub!\n", iface, buffer_precision);
+    struct d2d_device_context *context = impl_from_ID2D1DeviceContext(iface);
+    DXGI_FORMAT format;
+    UINT support = 0;
+    HRESULT hr;
 
-    return FALSE;
+    TRACE("iface %p, buffer_precision %u.\n", iface, buffer_precision);
+
+    switch (buffer_precision)
+    {
+        case D2D1_BUFFER_PRECISION_8BPC_UNORM: format = DXGI_FORMAT_R8G8B8A8_UNORM; break;
+        case D2D1_BUFFER_PRECISION_8BPC_UNORM_SRGB: format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB; break;
+        case D2D1_BUFFER_PRECISION_16BPC_UNORM: format = DXGI_FORMAT_R16G16B16A16_UNORM; break;
+        case D2D1_BUFFER_PRECISION_16BPC_FLOAT: format = DXGI_FORMAT_R16G16B16A16_FLOAT; break;
+        case D2D1_BUFFER_PRECISION_32BPC_FLOAT: format = DXGI_FORMAT_R32G32B32A32_FLOAT; break;
+        default:
+            WARN("Unexpected precision %u.\n", buffer_precision);
+            return FALSE;
+    }
+
+    if (FAILED(hr = ID3D11Device1_CheckFormatSupport(context->d3d_device, format, &support)))
+    {
+        WARN("Format support check failed, hr %#lx.\n", hr);
+    }
+
+    return !!(support & D3D11_FORMAT_SUPPORT_BUFFER);
 }
 
 static void STDMETHODCALLTYPE d2d_device_context_GetImageLocalBounds(ID2D1DeviceContext1 *iface,

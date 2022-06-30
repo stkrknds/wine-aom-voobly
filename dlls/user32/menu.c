@@ -42,30 +42,16 @@
 #include <stdarg.h>
 #include <string.h>
 
-#define OEMRESOURCE
-
 #include "windef.h"
 #include "winbase.h"
 #include "wingdi.h"
 #include "winnls.h"
-#include "wine/server.h"
-#include "wine/exception.h"
-#include "win.h"
 #include "controls.h"
 #include "user_private.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(menu);
 
-
-  /* Space between 2 columns */
-#define MENU_COL_SPACE 4
-
-  /* Margins for popup menus */
-#define MENU_MARGIN 3
-
-  /* (other menu->FocusedItem values give the position of the focused item) */
-#define NO_SELECTED_ITEM  0xffff
 
 #define MENU_ITEM_TYPE(flags) \
   ((flags) & (MF_STRING | MF_BITMAP | MF_OWNERDRAW | MF_SEPARATOR))
@@ -94,202 +80,6 @@ const struct builtin_class_descr MENU_builtin_class =
     IDC_ARROW,                     /* cursor */
     (HBRUSH)(COLOR_MENU+1)         /* brush */
 };
-
-
-/***********************************************************************
- *           MENU_GetMenu
- *
- * Validate the given menu handle and returns the menu structure pointer.
- */
-static POPUPMENU *MENU_GetMenu(HMENU hMenu)
-{
-    POPUPMENU *menu = get_user_handle_ptr( hMenu, NTUSER_OBJ_MENU );
-
-    if (menu == OBJ_OTHER_PROCESS)
-    {
-        WARN( "other process menu %p?\n", hMenu);
-        return NULL;
-    }
-    if (menu) release_user_handle_ptr( menu );  /* FIXME! */
-    else WARN("invalid menu handle=%p\n", hMenu);
-    return menu;
-}
-
-static POPUPMENU *grab_menu_ptr(HMENU hMenu)
-{
-    POPUPMENU *menu = get_user_handle_ptr( hMenu, NTUSER_OBJ_MENU );
-
-    if (menu == OBJ_OTHER_PROCESS)
-    {
-        WARN("other process menu %p?\n", hMenu);
-        return NULL;
-    }
-
-    if (menu)
-        menu->refcount++;
-    else
-        WARN("invalid menu handle=%p\n", hMenu);
-    return menu;
-}
-
-static void release_menu_ptr(POPUPMENU *menu)
-{
-    if (menu)
-    {
-        menu->refcount--;
-        release_user_handle_ptr(menu);
-    }
-}
-
-/***********************************************************************
- *           MENU_CopySysPopup
- *
- * Return the default system menu.
- */
-static HMENU MENU_CopySysPopup(BOOL mdi)
-{
-    HMENU hMenu = LoadMenuW(user32_module, mdi ? L"SYSMENUMDI" : L"SYSMENU");
-
-    if( hMenu ) {
-        MENUINFO minfo;
-        MENUITEMINFOW miteminfo;
-        POPUPMENU* menu = MENU_GetMenu(hMenu);
-        menu->wFlags |= MF_SYSMENU | MF_POPUP;
-        /* decorate the menu with bitmaps */
-        minfo.cbSize = sizeof( MENUINFO);
-        minfo.dwStyle = MNS_CHECKORBMP;
-        minfo.fMask = MIM_STYLE;
-        SetMenuInfo( hMenu, &minfo);
-        miteminfo.cbSize = sizeof( MENUITEMINFOW);
-        miteminfo.fMask = MIIM_BITMAP;
-        miteminfo.hbmpItem = HBMMENU_POPUP_CLOSE;
-        SetMenuItemInfoW( hMenu, SC_CLOSE, FALSE, &miteminfo);
-        miteminfo.hbmpItem = HBMMENU_POPUP_RESTORE;
-        SetMenuItemInfoW( hMenu, SC_RESTORE, FALSE, &miteminfo);
-        miteminfo.hbmpItem = HBMMENU_POPUP_MAXIMIZE;
-        SetMenuItemInfoW( hMenu, SC_MAXIMIZE, FALSE, &miteminfo);
-        miteminfo.hbmpItem = HBMMENU_POPUP_MINIMIZE;
-        SetMenuItemInfoW( hMenu, SC_MINIMIZE, FALSE, &miteminfo);
-        NtUserSetMenuDefaultItem( hMenu, SC_CLOSE, FALSE );
-    }
-    else
-	ERR("Unable to load default system menu\n" );
-
-    TRACE("returning %p (mdi=%d).\n", hMenu, mdi );
-
-    return hMenu;
-}
-
-
-/**********************************************************************
- *           MENU_GetSysMenu
- *
- * Create a copy of the system menu. System menu in Windows is
- * a special menu bar with the single entry - system menu popup.
- * This popup is presented to the outside world as a "system menu".
- * However, the real system menu handle is sometimes seen in the
- * WM_MENUSELECT parameters (and Word 6 likes it this way).
- */
-HMENU MENU_GetSysMenu( HWND hWnd, HMENU hPopupMenu )
-{
-    HMENU hMenu;
-
-    TRACE("loading system menu, hWnd %p, hPopupMenu %p\n", hWnd, hPopupMenu);
-    if ((hMenu = CreateMenu()))
-    {
-	POPUPMENU *menu = MENU_GetMenu(hMenu);
-	menu->wFlags = MF_SYSMENU;
-	menu->hWnd = WIN_GetFullHandle( hWnd );
-	TRACE("hWnd %p (hMenu %p)\n", menu->hWnd, hMenu);
-
-	if (!hPopupMenu)
-        {
-            if (GetWindowLongW(hWnd, GWL_EXSTYLE) & WS_EX_MDICHILD)
-	        hPopupMenu = MENU_CopySysPopup(TRUE);
-            else
-	        hPopupMenu = MENU_CopySysPopup(FALSE);
-        }
-
-	if (hPopupMenu)
-	{
-            if (GetClassLongW(hWnd, GCL_STYLE) & CS_NOCLOSE)
-                NtUserDeleteMenu( hPopupMenu, SC_CLOSE, MF_BYCOMMAND );
-
-	    InsertMenuW( hMenu, -1, MF_SYSMENU | MF_POPUP | MF_BYPOSITION,
-                         (UINT_PTR)hPopupMenu, NULL );
-
-            menu->items[0].fType = MF_SYSMENU | MF_POPUP;
-            menu->items[0].fState = 0;
-            if ((menu = MENU_GetMenu(hPopupMenu))) menu->wFlags |= MF_SYSMENU;
-
-	    TRACE("hMenu=%p (hPopup %p)\n", hMenu, hPopupMenu );
-	    return hMenu;
-	}
-	NtUserDestroyMenu( hMenu );
-    }
-    ERR("failed to load system menu!\n");
-    return 0;
-}
-
-
-static POPUPMENU *find_menu_item(HMENU hmenu, UINT id, UINT flags, UINT *pos)
-{
-    UINT fallback_pos = ~0u, i;
-    POPUPMENU *menu;
-
-    menu = grab_menu_ptr(hmenu);
-    if (!menu)
-        return NULL;
-
-    if (flags & MF_BYPOSITION)
-    {
-        if (id >= menu->nItems)
-        {
-            release_menu_ptr(menu);
-            return NULL;
-        }
-
-        if (pos) *pos = id;
-        return menu;
-    }
-    else
-    {
-        MENUITEM *item = menu->items;
-	for (i = 0; i < menu->nItems; i++, item++)
-	{
-	    if (item->fType & MF_POPUP)
-	    {
-                POPUPMENU *submenu = find_menu_item(item->hSubMenu, id, flags, pos);
-
-                if (submenu)
-                {
-                    release_menu_ptr(menu);
-                    return submenu;
-                }
-                else if (item->wID == id)
-		{
-		    /* fallback to this item if nothing else found */
-		    fallback_pos = i;
-		}
-	    }
-	    else if (item->wID == id)
-	    {
-                if (pos) *pos = i;
-                return menu;
-	    }
-	}
-    }
-
-    if (fallback_pos != ~0u)
-        *pos = fallback_pos;
-    else
-    {
-        release_menu_ptr(menu);
-        menu = NULL;
-    }
-
-    return menu;
-}
 
 
 /**********************************************************************
@@ -575,7 +365,8 @@ static void MENU_mnu2mnuii( UINT flags, UINT_PTR id, LPCWSTR str,
         pmii->fMask |= MIIM_DATA;
         pmii->dwItemData = (ULONG_PTR) str;
     }
-    if( flags & MF_POPUP && MENU_GetMenu((HMENU)id)) {
+    if ((flags & MF_POPUP) && IsMenu( UlongToHandle( id )))
+    {
         pmii->fMask |= MIIM_SUBMENU;
         pmii->hSubMenu = (HMENU)id;
     }
@@ -714,30 +505,21 @@ DWORD WINAPI GetMenuCheckMarkDimensions(void)
 /**********************************************************************
  *         SetMenuItemBitmaps    (USER32.@)
  */
-BOOL WINAPI SetMenuItemBitmaps( HMENU hMenu, UINT nPos, UINT wFlags,
-                                    HBITMAP hNewUnCheck, HBITMAP hNewCheck)
+BOOL WINAPI SetMenuItemBitmaps( HMENU menu, UINT pos, UINT flags, HBITMAP uncheck, HBITMAP check )
 {
-    POPUPMENU *menu;
-    MENUITEM *item;
-    UINT pos;
+    MENUITEMINFOW info;
 
-    if (!(menu = find_menu_item(hMenu, nPos, wFlags, &pos)))
+    info.cbSize = sizeof(info);
+    info.fMask = MIIM_STATE;
+    if (!NtUserThunkedMenuItemInfo( menu, pos, flags, NtUserGetMenuItemInfoW, &info, NULL ))
         return FALSE;
 
-    item = &menu->items[pos];
-    if (!hNewCheck && !hNewUnCheck)
-    {
-        item->fState &= ~MF_USECHECKBITMAPS;
-    }
-    else  /* Install new bitmaps */
-    {
-        item->hCheckBit = hNewCheck;
-        item->hUnCheckBit = hNewUnCheck;
-        item->fState |= MF_USECHECKBITMAPS;
-    }
-    release_menu_ptr(menu);
-
-    return TRUE;
+    info.fMask = MIIM_STATE | MIIM_CHECKMARKS;
+    info.hbmpChecked = check;
+    info.hbmpUnchecked = uncheck;
+    if (check || uncheck) info.fState |= MF_USECHECKBITMAPS;
+    else info.fState &= ~MF_USECHECKBITMAPS;
+    return NtUserThunkedMenuItemInfo( menu, pos, flags, NtUserSetMenuItemInfo, &info, NULL );
 }
 
 
@@ -764,22 +546,10 @@ HMENU WINAPI GetMenu( HWND hWnd )
 /**********************************************************************
  *         GetSubMenu    (USER32.@)
  */
-HMENU WINAPI GetSubMenu( HMENU hMenu, INT nPos )
+HMENU WINAPI GetSubMenu( HMENU menu, INT pos )
 {
-    POPUPMENU *menu;
-    HMENU submenu;
-    UINT pos;
-
-    if (!(menu = find_menu_item(hMenu, nPos, MF_BYPOSITION, &pos)))
-        return 0;
-
-    if (menu->items[pos].fType & MF_POPUP)
-        submenu = menu->items[pos].hSubMenu;
-    else
-        submenu = 0;
-
-    release_menu_ptr(menu);
-    return submenu;
+    UINT ret = NtUserThunkedMenuItemInfo( menu, pos, MF_BYPOSITION, NtUserGetSubMenu, NULL, NULL );
+    return UlongToHandle( ret );
 }
 
 
@@ -1018,42 +788,9 @@ BOOL WINAPI SetMenuItemInfoW(HMENU hmenu, UINT item, BOOL bypos,
 /**********************************************************************
  *		GetMenuDefaultItem    (USER32.@)
  */
-UINT WINAPI GetMenuDefaultItem(HMENU hmenu, UINT bypos, UINT flags)
+UINT WINAPI GetMenuDefaultItem( HMENU menu, UINT bypos, UINT flags )
 {
-	POPUPMENU *menu;
-	MENUITEM * item;
-	UINT i = 0;
-
-	TRACE("(%p,%d,%d)\n", hmenu, bypos, flags);
-
-	if (!(menu = MENU_GetMenu(hmenu))) return -1;
-
-	/* find default item */
-	item = menu->items;
-
-	/* empty menu */
-	if (! item) return -1;
-
-	while ( !( item->fState & MFS_DEFAULT ) )
-	{
-	    i++; item++;
-	    if  (i >= menu->nItems ) return -1;
-	}
-
-	/* default: don't return disabled items */
-	if ( (!(GMDI_USEDISABLED & flags)) && (item->fState & MFS_DISABLED )) return -1;
-
-	/* search rekursiv when needed */
-	if ( (item->fType & MF_POPUP) &&  (flags & GMDI_GOINTOPOPUPS) )
-	{
-	    UINT ret;
-	    ret = GetMenuDefaultItem( item->hSubMenu, bypos, flags );
-	    if ( -1 != ret ) return ret;
-
-	    /* when item not found in submenu, return the popup item */
-	}
-	return ( bypos ) ? i : item->wID;
-
+    return NtUserThunkedMenuItemInfo( menu, bypos, flags, NtUserGetMenuDefaultItem, NULL, NULL );
 }
 
 
@@ -1107,51 +844,12 @@ BOOL WINAPI InsertMenuItemW(HMENU hMenu, UINT uItem, BOOL bypos,
 /**********************************************************************
  *		CheckMenuRadioItem    (USER32.@)
  */
-
-BOOL WINAPI CheckMenuRadioItem(HMENU hMenu, UINT first, UINT last,
-    UINT check, UINT flags)
+BOOL WINAPI CheckMenuRadioItem( HMENU menu, UINT first, UINT last, UINT check, UINT flags )
 {
-    POPUPMENU *first_menu = NULL, *check_menu;
-    UINT i, check_pos;
-    BOOL done = FALSE;
-
-    for (i = first; i <= last; i++)
-    {
-        MENUITEM *item;
-
-        if (!(check_menu = find_menu_item(hMenu, i, flags, &check_pos)))
-            continue;
-
-        if (!first_menu)
-            first_menu = grab_menu_ptr(check_menu->obj.handle);
-
-        if (first_menu != check_menu)
-        {
-            release_menu_ptr(check_menu);
-            continue;
-        }
-
-        item = &check_menu->items[check_pos];
-        if (item->fType != MFT_SEPARATOR)
-        {
-            if (i == check)
-            {
-                item->fType |= MFT_RADIOCHECK;
-                item->fState |= MFS_CHECKED;
-                done = TRUE;
-            }
-            else
-            {
-                /* MSDN is wrong, Windows does not remove MFT_RADIOCHECK */
-                item->fState &= ~MFS_CHECKED;
-            }
-        }
-
-        release_menu_ptr(check_menu);
-    }
-    release_menu_ptr(first_menu);
-
-    return done;
+    MENUITEMINFOW info; /* abuse to pass last and check */
+    info.cch = last;
+    info.fMask = check;
+    return NtUserThunkedMenuItemInfo( menu, first, flags, NtUserCheckMenuRadioItem, &info, NULL );
 }
 
 

@@ -100,8 +100,7 @@ static void copy_image_imc1(BYTE *dest, LONG dest_stride, const BYTE *src, LONG 
 
 static void copy_image_imc2(BYTE *dest, LONG dest_stride, const BYTE *src, LONG src_stride, DWORD width, DWORD lines)
 {
-    MFCopyImage(dest, dest_stride, src, src_stride, width / 2, lines / 2);
-    MFCopyImage(dest + dest_stride / 2, dest_stride, src + src_stride / 2, src_stride, width / 2, lines / 2);
+    MFCopyImage(dest, dest_stride / 2, src, src_stride / 2, width / 2, lines);
 }
 
 static inline struct buffer *impl_from_IMFMediaBuffer(IMFMediaBuffer *iface)
@@ -1351,8 +1350,25 @@ static HRESULT create_2d_buffer(DWORD width, DWORD height, DWORD fourcc, BOOL bo
     if (is_yuv && bottom_up)
         return MF_E_INVALIDMEDIATYPE;
 
-    if (FAILED(hr = MFGetPlaneSize(fourcc, width, height, &plane_size)))
-        return hr;
+    switch (fourcc)
+    {
+        case MAKEFOURCC('I','M','C','1'):
+        case MAKEFOURCC('I','M','C','3'):
+            plane_size = stride * height * 2;
+            break;
+        case MAKEFOURCC('I','M','C','2'):
+        case MAKEFOURCC('I','M','C','4'):
+            plane_size = stride * 3 / 2 * height;
+            break;
+        case MAKEFOURCC('N','V','1','2'):
+        case MAKEFOURCC('Y','V','1','2'):
+        case MAKEFOURCC('I','4','2','0'):
+        case MAKEFOURCC('I','Y','U','V'):
+            plane_size = stride * height * 3 / 2;
+            break;
+        default:
+            plane_size = stride * height;
+    }
 
     if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;
@@ -1377,7 +1393,6 @@ static HRESULT create_2d_buffer(DWORD width, DWORD height, DWORD fourcc, BOOL bo
         case MAKEFOURCC('I','M','C','1'):
         case MAKEFOURCC('I','M','C','3'):
             max_length = pitch * height * 2;
-            plane_size *= 2;
             break;
         case MAKEFOURCC('N','V','1','2'):
         case MAKEFOURCC('Y','V','1','2'):

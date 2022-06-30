@@ -30,6 +30,7 @@
 #include "wine/gdi_driver.h"
 #include "wine/unixlib.h"
 #include "wine/debug.h"
+#include "wine/server.h"
 
 extern const struct user_callbacks *user_callbacks DECLSPEC_HIDDEN;
 
@@ -247,9 +248,6 @@ struct unix_funcs
     BOOL     (WINAPI *pNtUserGetMessage)( MSG *msg, HWND hwnd, UINT first, UINT last );
     INT      (WINAPI *pNtUserGetPriorityClipboardFormat)( UINT *list, INT count );
     DWORD    (WINAPI *pNtUserGetQueueStatus)( UINT flags );
-    UINT     (WINAPI *pNtUserGetRawInputBuffer)( RAWINPUT *data, UINT *data_size, UINT header_size );
-    UINT     (WINAPI *pNtUserGetRawInputData)( HRAWINPUT rawinput, UINT command,
-                                               void *data, UINT *data_size, UINT header_size );
     HMENU    (WINAPI *pNtUserGetSystemMenu)( HWND hwnd, BOOL revert );
     BOOL     (WINAPI *pNtUserGetUpdateRect)( HWND hwnd, RECT *rect, BOOL erase );
     INT      (WINAPI *pNtUserGetUpdateRgn)( HWND hwnd, HRGN hrgn, BOOL erase );
@@ -436,6 +434,10 @@ extern LRESULT send_internal_message_timeout( DWORD dest_pid, DWORD dest_tid, UI
 extern LRESULT send_message( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam ) DECLSPEC_HIDDEN;
 extern LRESULT send_message_timeout( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
                                      UINT flags, UINT timeout, PDWORD_PTR res_ptr, BOOL ansi );
+
+/* rawinput.c */
+extern BOOL process_rawinput_message( MSG *msg, UINT hw_id, const struct hardware_msg_data *msg_data ) DECLSPEC_HIDDEN;
+extern BOOL rawinput_device_get_usages( HANDLE handle, USHORT *usage_page, USHORT *usage ) DECLSPEC_HIDDEN;
 
 /* sysparams.c */
 extern BOOL enable_thunk_lock DECLSPEC_HIDDEN;
