@@ -1502,6 +1502,8 @@
 @ cdecl -arch=i386 -norelay _chkstk()
 @ stub _fltused
 @ cdecl -arch=i386 -ret64 _ftol()
+@ cdecl -arch=i386 -ret64 _ftol2() _ftol
+@ cdecl -arch=i386 -ret64 _ftol2_sse() _ftol # FIXME
 @ cdecl _i64toa(int64 ptr long)
 @ cdecl _i64toa_s(int64 ptr long long)
 @ cdecl _i64tow(int64 ptr long)
@@ -1523,7 +1525,6 @@
 @ varargs _snprintf_s(ptr long long str)
 @ varargs _snwprintf(ptr long wstr)
 @ varargs _snwprintf_s(ptr long long wstr)
-@ varargs _swprintf(ptr wstr) NTDLL_swprintf
 @ cdecl _splitpath(str ptr ptr ptr ptr)
 @ cdecl _splitpath_s(str ptr long ptr long ptr long ptr long)
 @ cdecl _strcmpi(str str) _stricmp
@@ -1533,6 +1534,7 @@
 @ cdecl _strnicmp(str str long)
 @ cdecl _strupr(str)
 @ cdecl _strupr_s(str long)
+@ varargs _swprintf(ptr wstr) NTDLL_swprintf
 @ cdecl _tolower(long)
 @ cdecl _toupper(long)
 @ cdecl _ui64toa(int64 ptr long)
@@ -1543,6 +1545,8 @@
 @ cdecl _ultoa_s(long ptr long long)
 @ cdecl _ultow(long ptr long)
 @ cdecl _ultow_s(long ptr long long)
+@ cdecl _vscprintf(str ptr)
+@ cdecl _vscwprintf(wstr ptr)
 @ cdecl -norelay _vsnprintf(ptr long str ptr)
 @ cdecl _vsnprintf_s(ptr long str ptr)
 @ cdecl _vsnwprintf(ptr long wstr ptr)
@@ -1563,9 +1567,11 @@
 @ cdecl _wtol(wstr)
 @ cdecl abs(long)
 @ cdecl atan(double)
+@ cdecl atan2(double double)
 @ cdecl atoi(str)
 @ cdecl atol(str)
 @ cdecl bsearch(ptr ptr long long ptr)
+@ cdecl bsearch_s(ptr ptr long long ptr ptr)
 @ cdecl ceil(double)
 @ cdecl cos(double)
 @ cdecl fabs(double)
@@ -1603,6 +1609,7 @@
 @ cdecl memset(ptr long long)
 @ cdecl pow(double double)
 @ cdecl qsort(ptr long long ptr)
+@ cdecl qsort_s(ptr long long ptr ptr)
 @ cdecl sin(double)
 @ varargs sprintf(ptr str) NTDLL_sprintf
 @ varargs sprintf_s(ptr long str)
