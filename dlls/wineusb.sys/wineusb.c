@@ -20,6 +20,7 @@
 
 #include <assert.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <pthread.h>
 #include <libusb.h>
@@ -106,6 +107,81 @@ static DRIVER_OBJECT *driver_obj;
 static DEVICE_OBJECT *bus_fdo, *bus_pdo;
 
 static libusb_hotplug_callback_handle hotplug_cb_handle;
+
+static pthread_cond_t event_cond = PTHREAD_COND_INITIALIZER;
+static pthread_mutex_t event_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+enum usb_event_type
+{
+    USB_EVENT_ADD_DEVICE,
+    USB_EVENT_REMOVE_DEVICE,
+    USB_EVENT_TRANSFER_COMPLETE,
+    USB_EVENT_SHUTDOWN,
+};
+
+struct usb_event
+{
+    enum usb_event_type type;
+
+    union
+    {
+        struct unix_device *added_device;
+        struct unix_device *removed_device;
+        IRP *completed_irp;
+    } u;
+};
+
+static struct usb_event *usb_events;
+static size_t usb_event_count, usb_events_capacity;
+
+static bool array_reserve(void **elements, size_t *capacity, size_t count, size_t size)
+{
+    unsigned int new_capacity, max_capacity;
+    void *new_elements;
+
+    if (count <= *capacity)
+        return true;
+
+    max_capacity = ~(size_t)0 / size;
+    if (count > max_capacity)
+        return false;
+
+    new_capacity = max(4, *capacity);
+    while (new_capacity < count && new_capacity <= max_capacity / 2)
+        new_capacity *= 2;
+    if (new_capacity < count)
+        new_capacity = max_capacity;
+
+    if (!(new_elements = realloc(*elements, new_capacity * size)))
+        return false;
+
+    *elements = new_elements;
+    *capacity = new_capacity;
+
+    return true;
+}
+
+static void queue_event(const struct usb_event *event)
+{
+    pthread_mutex_lock(&event_mutex);
+    if (array_reserve((void **)&usb_events, &usb_events_capacity, usb_event_count + 1, sizeof(*usb_events)))
+        usb_events[usb_event_count++] = *event;
+    else
+        ERR("Failed to queue event.\n");
+    pthread_mutex_unlock(&event_mutex);
+    pthread_cond_signal(&event_cond);
+}
+
+static void get_event(struct usb_event *event)
+{
+    pthread_mutex_lock(&event_mutex);
+    while (!usb_event_count)
+        pthread_cond_wait(&event_cond, &event_mutex);
+    *event = usb_events[0];
+    if (--usb_event_count)
+        memmove(usb_events, usb_events + 1, usb_event_count * sizeof(*usb_events));
+    pthread_mutex_unlock(&event_mutex);
+}
 
 static void destroy_unix_device(struct unix_device *unix_device)
 {
@@ -232,6 +308,7 @@ static void add_usb_device(libusb_device *libusb_device)
 {
     struct libusb_device_descriptor device_desc;
     struct unix_device *unix_device;
+    struct usb_event usb_event;
     int ret;
 
     libusb_get_device_descriptor(libusb_device, &device_desc);
@@ -252,7 +329,9 @@ static void add_usb_device(libusb_device *libusb_device)
     list_add_tail(&unix_device_list, &unix_device->entry);
     pthread_mutex_unlock(&unix_device_mutex);
 
-    add_unix_device(unix_device);
+    usb_event.type = USB_EVENT_ADD_DEVICE;
+    usb_event.u.added_device = unix_device;
+    queue_event(&usb_event);
 }
 
 static void remove_unix_device(struct unix_device *unix_device)
@@ -282,18 +361,23 @@ static void remove_unix_device(struct unix_device *unix_device)
 static void remove_usb_device(libusb_device *libusb_device)
 {
     struct unix_device *unix_device;
+    struct usb_event usb_event;
 
     TRACE("Removing device %p.\n", libusb_device);
 
     LIST_FOR_EACH_ENTRY(unix_device, &unix_device_list, struct unix_device, entry)
     {
         if (libusb_get_device(unix_device->handle) == libusb_device)
-            remove_unix_device(unix_device);
+        {
+            usb_event.type = USB_EVENT_REMOVE_DEVICE;
+            usb_event.u.removed_device = unix_device;
+            queue_event(&usb_event);
+        }
     }
 }
 
 static BOOL thread_shutdown;
-static HANDLE event_thread;
+static HANDLE libusb_event_thread, event_thread;
 
 static int LIBUSB_CALL hotplug_cb(libusb_context *context, libusb_device *device,
         libusb_hotplug_event event, void *user_data)
@@ -306,11 +390,12 @@ static int LIBUSB_CALL hotplug_cb(libusb_context *context, libusb_device *device
     return 0;
 }
 
-static DWORD CALLBACK event_thread_proc(void *arg)
+static DWORD CALLBACK libusb_event_thread_proc(void *arg)
 {
+    static const struct usb_event shutdown_event = {.type = USB_EVENT_SHUTDOWN};
     int ret;
 
-    TRACE("Starting event thread.\n");
+    TRACE("Starting libusb event thread.\n");
 
     while (!thread_shutdown)
     {
@@ -318,8 +403,51 @@ static DWORD CALLBACK event_thread_proc(void *arg)
             ERR("Error handling events: %s\n", libusb_strerror(ret));
     }
 
-    TRACE("Shutting down event thread.\n");
+    queue_event(&shutdown_event);
+
+    TRACE("Shutting down libusb event thread.\n");
     return 0;
+}
+
+static void complete_irp(IRP *irp)
+{
+    EnterCriticalSection(&wineusb_cs);
+    RemoveEntryList(&irp->Tail.Overlay.ListEntry);
+    LeaveCriticalSection(&wineusb_cs);
+
+    irp->IoStatus.Status = STATUS_SUCCESS;
+    IoCompleteRequest(irp, IO_NO_INCREMENT);
+}
+
+static DWORD CALLBACK event_thread_proc(void *arg)
+{
+    struct usb_event event;
+
+    TRACE("Starting client event thread.\n");
+
+    for (;;)
+    {
+        get_event(&event);
+
+        switch (event.type)
+        {
+            case USB_EVENT_ADD_DEVICE:
+                add_unix_device(event.u.added_device);
+                break;
+
+            case USB_EVENT_REMOVE_DEVICE:
+                remove_unix_device(event.u.removed_device);
+                break;
+
+            case USB_EVENT_TRANSFER_COMPLETE:
+                complete_irp(event.u.completed_irp);
+                break;
+
+            case USB_EVENT_SHUTDOWN:
+                TRACE("Shutting down client event thread.\n");
+                return 0;
+        }
+    }
 }
 
 static NTSTATUS fdo_pnp(IRP *irp)
@@ -391,6 +519,8 @@ static NTSTATUS fdo_pnp(IRP *irp)
             libusb_hotplug_deregister_callback(NULL, hotplug_cb_handle);
             thread_shutdown = TRUE;
             libusb_interrupt_event_handler(NULL);
+            WaitForSingleObject(libusb_event_thread, INFINITE);
+            CloseHandle(libusb_event_thread);
             WaitForSingleObject(event_thread, INFINITE);
             CloseHandle(event_thread);
 
@@ -658,6 +788,7 @@ static void LIBUSB_CALL transfer_cb(struct libusb_transfer *transfer)
 {
     IRP *irp = transfer->user_data;
     URB *urb = IoGetCurrentIrpStackLocation(irp)->Parameters.Others.Argument1;
+    struct usb_event event;
 
     TRACE("Completing IRP %p, status %#x.\n", irp, transfer->status);
 
@@ -693,12 +824,9 @@ static void LIBUSB_CALL transfer_cb(struct libusb_transfer *transfer)
         }
     }
 
-    EnterCriticalSection(&wineusb_cs);
-    RemoveEntryList(&irp->Tail.Overlay.ListEntry);
-    LeaveCriticalSection(&wineusb_cs);
-
-    irp->IoStatus.Status = STATUS_SUCCESS;
-    IoCompleteRequest(irp, IO_NO_INCREMENT);
+    event.type = USB_EVENT_TRANSFER_COMPLETE;
+    event.u.completed_irp = irp;
+    queue_event(&event);
 }
 
 static void queue_irp(struct usb_device *device, IRP *irp, struct libusb_transfer *transfer)
@@ -1007,6 +1135,7 @@ NTSTATUS WINAPI DriverEntry(DRIVER_OBJECT *driver, UNICODE_STRING *path)
         return STATUS_UNSUCCESSFUL;
     }
 
+    libusb_event_thread = CreateThread(NULL, 0, libusb_event_thread_proc, NULL, 0, NULL);
     event_thread = CreateThread(NULL, 0, event_thread_proc, NULL, 0, NULL);
 
     driver->DriverExtension->AddDevice = driver_add_device;

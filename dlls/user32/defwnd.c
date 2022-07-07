@@ -93,30 +93,6 @@ LRESULT WINAPI DefWindowProcA( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
 
     switch(msg)
     {
-    case WM_NCCREATE:
-        if (lParam)
-        {
-            CREATESTRUCTA *cs = (CREATESTRUCTA *)lParam;
-
-            result = NtUserMessageCall( hwnd, msg, wParam, lParam, 0, NtUserDefWindowProc, TRUE );
-
-            if(cs->style & (WS_HSCROLL | WS_VSCROLL))
-            {
-                SCROLLINFO si = {sizeof si, SIF_ALL, 0, 100, 0, 0, 0};
-                SetScrollInfo( hwnd, SB_HORZ, &si, FALSE );
-                SetScrollInfo( hwnd, SB_VERT, &si, FALSE );
-            }
-        }
-        break;
-
-    case WM_NCMOUSEMOVE:
-        result = NC_HandleNCMouseMove( hwnd, wParam, lParam );
-        break;
-
-    case WM_NCMOUSELEAVE:
-        result = NC_HandleNCMouseLeave( hwnd );
-        break;
-
     case WM_SYSCOMMAND:
         result = NC_HandleSysCommand( hwnd, wParam, lParam );
         break;
@@ -228,30 +204,6 @@ LRESULT WINAPI DefWindowProcW(
 
     switch(msg)
     {
-    case WM_NCCREATE:
-        if (lParam)
-        {
-            CREATESTRUCTW *cs = (CREATESTRUCTW *)lParam;
-
-            result = NtUserMessageCall( hwnd, msg, wParam, lParam, 0, NtUserDefWindowProc, FALSE );
-
-            if(cs->style & (WS_HSCROLL | WS_VSCROLL))
-            {
-                SCROLLINFO si = {sizeof si, SIF_ALL, 0, 100, 0, 0, 0};
-                SetScrollInfo( hwnd, SB_HORZ, &si, FALSE );
-                SetScrollInfo( hwnd, SB_VERT, &si, FALSE );
-            }
-        }
-        break;
-
-    case WM_NCMOUSEMOVE:
-        result = NC_HandleNCMouseMove( hwnd, wParam, lParam );
-        break;
-
-    case WM_NCMOUSELEAVE:
-        result = NC_HandleNCMouseLeave( hwnd );
-        break;
-
     case WM_SYSCOMMAND:
         result = NC_HandleSysCommand( hwnd, wParam, lParam );
         break;

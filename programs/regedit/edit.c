@@ -178,11 +178,6 @@ static INT_PTR CALLBACK bin_modify_dlgproc(HWND hwndDlg, UINT uMsg, WPARAM wPara
     return FALSE;
 }
 
-static BOOL value_exists(HWND hwnd, HKEY hKey, const WCHAR *value_name)
-{
-    return !RegQueryValueExW(hKey, value_name, NULL, NULL, NULL, NULL);
-}
-
 static LPWSTR read_value(HWND hwnd, HKEY hKey, LPCWSTR valueName, DWORD *lpType, LONG *len)
 {
     DWORD valueDataLen;
@@ -201,7 +196,7 @@ static LPWSTR read_value(HWND hwnd, HKEY hKey, LPCWSTR valueName, DWORD *lpType,
         error_code_messagebox(hwnd, IDS_BAD_VALUE, valueName);
         goto done;
     }
-    if ( *lpType == REG_DWORD ) valueDataLen = sizeof(DWORD);
+
     buffer = heap_xalloc(valueDataLen + sizeof(WCHAR));
     lRet = RegQueryValueExW(hKey, valueName, 0, 0, (LPBYTE)buffer, &valueDataLen);
     if (lRet) {
@@ -312,12 +307,12 @@ BOOL ModifyValue(HWND hwnd, HKEY hKeyRoot, LPCWSTR keyPath, LPCWSTR valueName)
         WCHAR *tmpValueData = NULL;
         INT i, j, count;
 
-        for ( i = 0, count = 0; i < len - 1; i++)
+        for (i = 0, count = 0; i < len / sizeof(WCHAR); i++)
             if ( !stringValueData[i] && stringValueData[i + 1] )
                 count++;
-        tmpValueData = heap_xalloc((len + count) * sizeof(WCHAR));
+        tmpValueData = heap_xalloc(len + (count * sizeof(WCHAR)));
 
-        for ( i = 0, j = 0; i < len - 1; i++)
+        for ( i = 0, j = 0; i < len / sizeof(WCHAR); i++)
         {
             if ( !stringValueData[i] && stringValueData[i + 1])
             {
@@ -327,7 +322,7 @@ BOOL ModifyValue(HWND hwnd, HKEY hKeyRoot, LPCWSTR keyPath, LPCWSTR valueName)
             else
                 tmpValueData[j++] = stringValueData[i];
         }
-        tmpValueData[j] = stringValueData[i];
+
         heap_free(stringValueData);
         stringValueData = tmpValueData;
         tmpValueData = NULL;
@@ -337,7 +332,7 @@ BOOL ModifyValue(HWND hwnd, HKEY hKeyRoot, LPCWSTR keyPath, LPCWSTR valueName)
             len = lstrlenW( stringValueData );
             tmpValueData = heap_xalloc((len + 2) * sizeof(WCHAR));
 
-            for ( i = 0, j = 0; i < len - 1; i++)
+            for (i = 0, j = 0; i < len; i++)
             {
                 if ( stringValueData[i] == char1 && stringValueData[i + 1] == char2)
                 {
@@ -348,7 +343,7 @@ BOOL ModifyValue(HWND hwnd, HKEY hKeyRoot, LPCWSTR keyPath, LPCWSTR valueName)
                 else
                     tmpValueData[j++] = stringValueData[i];
             }
-            tmpValueData[j++] = stringValueData[i];
+
             tmpValueData[j++] = 0;
             tmpValueData[j++] = 0;
             heap_free(stringValueData);
@@ -523,7 +518,7 @@ BOOL RenameValue(HWND hwnd, HKEY hKeyRoot, LPCWSTR keyPath, LPCWSTR oldName, LPC
 	return FALSE;
     }
 
-    if (value_exists(hwnd, hKey, newName)) {
+    if (!RegQueryValueExW(hKey, newName, NULL, NULL, NULL, NULL)) {
         error_code_messagebox(hwnd, IDS_VALUE_EXISTS, oldName);
         goto done;
     }

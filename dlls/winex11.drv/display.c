@@ -464,9 +464,7 @@ static DWORD get_display_depth(ULONG_PTR display_id)
  */
 BOOL X11DRV_EnumDisplaySettingsEx( LPCWSTR name, DWORD n, LPDEVMODEW devmode, DWORD flags)
 {
-    static const WCHAR dev_name[CCHDEVICENAME] =
-        { 'W','i','n','e',' ','X','1','1',' ','d','r','i','v','e','r',0 };
-    DEVMODEW *modes;
+    DEVMODEW *modes, mode;
     UINT mode_count;
     ULONG_PTR id;
 
@@ -477,21 +475,20 @@ BOOL X11DRV_EnumDisplaySettingsEx( LPCWSTR name, DWORD n, LPDEVMODEW devmode, DW
             ERR("Failed to get %s registry display settings.\n", wine_dbgstr_w(name));
             return FALSE;
         }
-        goto done;
+        return TRUE;
     }
 
     if (n == ENUM_CURRENT_SETTINGS)
     {
-        if (!settings_handler.get_id(name, &id) || !settings_handler.get_current_mode(id, devmode))
+        if (!settings_handler.get_id( name, &id ) || !settings_handler.get_current_mode( id, &mode ))
         {
             ERR("Failed to get %s current display settings.\n", wine_dbgstr_w(name));
             return FALSE;
         }
 
-        if (!is_detached_mode(devmode))
-            devmode->dmBitsPerPel = get_display_depth(id);
-
-        goto done;
+        memcpy( &devmode->dmFields, &mode.dmFields, devmode->dmSize - offsetof(DEVMODEW, dmFields) );
+        if (!is_detached_mode( devmode )) devmode->dmBitsPerPel = get_display_depth( id );
+        return TRUE;
     }
 
     pthread_mutex_lock( &settings_mutex );
@@ -522,16 +519,10 @@ BOOL X11DRV_EnumDisplaySettingsEx( LPCWSTR name, DWORD n, LPDEVMODEW devmode, DW
         return FALSE;
     }
 
-    memcpy(devmode, (BYTE *)cached_modes + (sizeof(*cached_modes) + cached_modes[0].dmDriverExtra) * n, sizeof(*devmode));
+    mode = *(DEVMODEW *)((BYTE *)cached_modes + (sizeof(*cached_modes) + cached_modes[0].dmDriverExtra) * n);
     pthread_mutex_unlock( &settings_mutex );
 
-done:
-    /* Set generic fields */
-    devmode->dmSize = FIELD_OFFSET(DEVMODEW, dmICMMethod);
-    devmode->dmDriverExtra = 0;
-    devmode->dmSpecVersion = DM_SPECVERSION;
-    devmode->dmDriverVersion = DM_SPECVERSION;
-    lstrcpyW(devmode->dmDeviceName, dev_name);
+    memcpy( &devmode->dmFields, &mode.dmFields, devmode->dmSize - offsetof(DEVMODEW, dmFields) );
     return TRUE;
 }
 
@@ -1198,8 +1189,7 @@ void X11DRV_DisplayDevices_Update(BOOL send_display_change)
 
 static BOOL force_display_devices_refresh;
 
-void X11DRV_UpdateDisplayDevices( const struct gdi_device_manager *device_manager,
-                                  BOOL force, void *param )
+BOOL X11DRV_UpdateDisplayDevices( const struct gdi_device_manager *device_manager, BOOL force, void *param )
 {
     struct x11drv_display_device_handler *handler;
     struct gdi_adapter *adapters;
@@ -1208,15 +1198,14 @@ void X11DRV_UpdateDisplayDevices( const struct gdi_device_manager *device_manage
     INT gpu_count, adapter_count, monitor_count;
     INT gpu, adapter, monitor;
 
-    if (!force && !force_display_devices_refresh) return;
+    if (!force && !force_display_devices_refresh) return TRUE;
     force_display_devices_refresh = FALSE;
     handler = is_virtual_desktop() ? &desktop_handler : &host_handler;
 
     TRACE("via %s\n", wine_dbgstr_a(handler->name));
 
     /* Initialize GPUs */
-    if (!handler->get_gpus(&gpus, &gpu_count))
-        return;
+    if (!handler->get_gpus( &gpus, &gpu_count )) return FALSE;
     TRACE("GPU count: %d\n", gpu_count);
 
     for (gpu = 0; gpu < gpu_count; gpu++)
@@ -1248,6 +1237,7 @@ void X11DRV_UpdateDisplayDevices( const struct gdi_device_manager *device_manage
     }
 
     handler->free_gpus(gpus);
+    return TRUE;
 }
 
 void X11DRV_DisplayDevices_Init(BOOL force)

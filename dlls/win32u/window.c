@@ -812,7 +812,7 @@ BOOL is_window_unicode( HWND hwnd )
 }
 
 /* see EnableWindow */
-static BOOL enable_window( HWND hwnd, BOOL enable )
+BOOL enable_window( HWND hwnd, BOOL enable )
 {
     BOOL ret;
 
@@ -4662,7 +4662,7 @@ static void free_window_handle( HWND hwnd )
         }
         SERVER_END_REQ;
         user_unlock();
-        if (user_callbacks) user_callbacks->free_win_ptr( win );
+        free( win->pScroll );
         free( win->text );
         free( win );
     }
@@ -4865,7 +4865,7 @@ void destroy_thread_windows(void)
             register_window_surface( win->surface, NULL );
             window_surface_release( win->surface );
         }
-        if (user_callbacks) user_callbacks->free_win_ptr( win );
+        free( win->pScroll );
         free( win->text );
         free( win );
     }
@@ -5442,6 +5442,12 @@ ULONG_PTR WINAPI NtUserCallHwndParam( HWND hwnd, DWORD_PTR param, DWORD code )
     case NtUserCallHwndParam_GetClientRect:
         return get_client_rect( hwnd, (RECT *)param );
 
+    case NtUserCallHwndParam_GetScrollInfo:
+        {
+            struct get_scroll_info_params *params = (void *)param;
+            return get_scroll_info( hwnd, params->bar, params->info );
+        }
+
     case NtUserCallHwndParam_GetWindowInfo:
         return get_window_info( hwnd, (WINDOWINFO *)param );
 
@@ -5501,9 +5507,6 @@ ULONG_PTR WINAPI NtUserCallHwndParam( HWND hwnd, DWORD_PTR param, DWORD code )
         return show_owned_popups( hwnd, param );
 
     /* temporary exports */
-    case NtUserIsWindowDrawable:
-        return is_window_drawable( hwnd, param );
-
     case NtUserSetWindowStyle:
         {
             STYLESTRUCT *style = (void *)param;

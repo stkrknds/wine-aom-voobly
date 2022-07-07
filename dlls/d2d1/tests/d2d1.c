@@ -28,7 +28,6 @@
 #include "initguid.h"
 #include "dwrite.h"
 #include "wincodec.h"
-#include "wine/heap.h"
 
 DEFINE_GUID(CLSID_TestEffect, 0xb9ee12e9,0x32d9,0xe659,0xac,0x61,0x2d,0x7c,0xea,0x69,0x28,0x78);
 DEFINE_GUID(GUID_TestVertexShader, 0x5bcdcfae,0x1e92,0x4dc1,0x94,0xfa,0x3b,0x01,0xca,0x54,0x59,0x20);
@@ -50,10 +49,54 @@ L"<?xml version='1.0'?>                                                       \
             <Property name='Max'         type='uint32' value='100'/>          \
             <Property name='Default'     type='uint32' value='10'/>           \
         </Property>                                                           \
+        <Property name='Int32Prop' type='int32' value='-2'>                   \
+            <Property name='DisplayName' type='string' value='Int32 prop'/>   \
+            <Property name='Default' type='int32' value='10'/>                \
+        </Property>                                                           \
+        <Property name='UInt32Prop' type='uint32' value='-3'>                 \
+            <Property name='DisplayName' type='string' value='UInt32 prop'/>  \
+            <Property name='Default' type='uint32' value='10'/>               \
+        </Property>                                                           \
         <Property name='Bool' type='bool'>                                     \
             <Property name='DisplayName' type='string' value='Bool property'/> \
             <Property name='Default'     type='bool' value='false'/>           \
         </Property>                                                            \
+        <Property name='Vec2Prop' type='vector2' value='( 3.0,  4.0)'>         \
+            <Property name='DisplayName' type='string' value='Vec2 prop'/>    \
+            <Property name='Default'     type='vector2' value='(1.0, 2.0)'/>  \
+        </Property>                                                           \
+        <Property name='Vec3Prop' type='vector3' value='(5.0, 6.0, 7.0)'>     \
+            <Property name='DisplayName' type='string' value='Vec3 prop'/>    \
+            <Property name='Default' type='vector3' value='(0.1, 0.2, 0.3)'/> \
+        </Property>                                                           \
+        <Property name='Vec4Prop' type='vector4' value='(8.0,9.0,10.0,11.0)'>   \
+            <Property name='DisplayName' type='string' value='Vec4 prop'/>      \
+            <Property name='Default' type='vector4' value='(0.8,0.9,1.0,1.1)'/> \
+        </Property>                                                             \
+        <Property name='Mat3x2Prop' type='matrix3x2'                          \
+            value='(1.0,2.0,3.0,4.0,5.0,6.0)'>                                \
+            <Property name='DisplayName' type='string' value='Mat3x2 prop'/>  \
+            <Property name='Default' type='matrix3x2'                         \
+                value='(0.1,0.2,0.3,0.4,0.5,0.6)'/>                           \
+        </Property>                                                           \
+        <Property name='Mat4x3Prop' type='matrix4x3'                          \
+            value='(1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0,10.0,11.0,12)'>       \
+            <Property name='DisplayName' type='string' value='Mat4x3 prop'/>  \
+            <Property name='Default' type='matrix4x3'                         \
+                value='(0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0,1.1,1.2)'/>   \
+        </Property>                                                           \
+        <Property name='Mat4x4Prop' type='matrix4x4'                          \
+            value='(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16)'>                 \
+            <Property name='DisplayName' type='string' value='Mat4x4 prop'/>  \
+            <Property name='Default' type='matrix4x4'                         \
+                value='(16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1)'/>            \
+        </Property>                                                           \
+        <Property name='Mat5x4Prop' type='matrix5x4'                          \
+            value='(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20)'>     \
+            <Property name='DisplayName' type='string' value='Mat5x4 prop'/>  \
+            <Property name='Default' type='matrix5x4'                         \
+                value='(20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1)'/>\
+        </Property>                                                           \
     </Effect>                                                                 \
 ";
 
@@ -314,7 +357,7 @@ static void queue_d3d1x_test(void (*test)(BOOL d3d11), BOOL d3d11)
     if (mt_test_count >= mt_tests_size)
     {
         mt_tests_size = max(16, mt_tests_size * 2);
-        mt_tests = heap_realloc(mt_tests, mt_tests_size * sizeof(*mt_tests));
+        mt_tests = realloc(mt_tests, mt_tests_size * sizeof(*mt_tests));
     }
     mt_tests[mt_test_count].test = test;
     mt_tests[mt_test_count++].d3d11 = d3d11;
@@ -364,7 +407,7 @@ static void run_queued_tests(void)
 
     GetSystemInfo(&si);
     thread_count = si.dwNumberOfProcessors;
-    threads = heap_calloc(thread_count, sizeof(*threads));
+    threads = calloc(thread_count, sizeof(*threads));
     for (i = 0, test_idx = 0; i < thread_count; ++i)
     {
         threads[i] = CreateThread(NULL, 0, thread_func, &test_idx, 0, NULL);
@@ -375,7 +418,7 @@ static void run_queued_tests(void)
     {
         CloseHandle(threads[i]);
     }
-    heap_free(threads);
+    free(threads);
 }
 
 static void set_point(D2D1_POINT_2F *point, float x, float y)
@@ -10636,7 +10679,7 @@ static ULONG STDMETHODCALLTYPE effect_impl_Release(ID2D1EffectImpl *iface)
     {
         if (effect_impl->effect_context)
             ID2D1EffectContext_Release(effect_impl->effect_context);
-        heap_free(effect_impl);
+        free(effect_impl);
     }
 
     return refcount;
@@ -10674,7 +10717,7 @@ static HRESULT STDMETHODCALLTYPE effect_impl_create(IUnknown **effect_impl)
 {
     struct effect_impl *object;
 
-    if (!(object = heap_alloc(sizeof(*object))))
+    if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;
 
     object->ID2D1EffectImpl_iface.lpVtbl = &effect_impl_vtbl;
@@ -10804,6 +10847,11 @@ static void test_effect_register(BOOL d3d11)
         return;
     }
 
+    /* Using builtin effect CLSID. */
+    hr = ID2D1Factory1_RegisterEffectFromString(factory, &CLSID_D2D1Crop, effect_xml_a, NULL,
+            0, effect_impl_create);
+    ok(hr == E_INVALIDARG, "Got unexpected hr %#lx.\n", hr);
+
     /* Register effect once */
     for (i = 0; i < ARRAY_SIZE(xml_tests); ++i)
     {
@@ -10811,7 +10859,6 @@ static void test_effect_register(BOOL d3d11)
         winetest_push_context("Test %u", i);
 
         hr = ID2D1Factory1_RegisterEffectFromString(factory, &CLSID_TestEffect, test->xml, NULL, 0, effect_impl_create);
-        todo_wine_if(i == 5)
         ok(hr == test->hr, "Got unexpected hr %#lx, expected %#lx.\n", hr, test->hr);
         if (hr == S_OK)
         {
@@ -10890,7 +10937,11 @@ static void test_effect_register(BOOL d3d11)
         hr = ID2D1Factory1_RegisterEffectFromString(factory, &CLSID_TestEffect,
                 test->effect_xml, test->binding, test->binding_count, effect_impl_create);
         ok(hr == test->hr, "Got unexpected hr %#lx, expected %#lx.\n", hr, test->hr);
-        ID2D1Factory1_UnregisterEffect(factory, &CLSID_TestEffect);
+        if (SUCCEEDED(hr))
+        {
+            hr = ID2D1Factory1_UnregisterEffect(factory, &CLSID_TestEffect);
+            ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+        }
 
         winetest_pop_context();
     }
@@ -11022,6 +11073,7 @@ static void test_effect_properties(BOOL d3d11)
     UINT32 i, min_inputs, max_inputs, integer, index, size;
     ID2D1EffectContext *effect_context;
     D2D1_BUFFER_PRECISION precision;
+    float vec2[2], vec3[3], vec4[4];
     ID2D1Properties *subproperties;
     D2D1_PROPERTY_TYPE prop_type;
     struct d2d1_test_context ctx;
@@ -11029,6 +11081,8 @@ static void test_effect_properties(BOOL d3d11)
     ID2D1Effect *effect;
     UINT32 count, data;
     WCHAR buffer[128];
+    float mat[20];
+    INT32 val;
     CLSID clsid;
     BOOL cached;
     HRESULT hr;
@@ -11119,6 +11173,113 @@ static void test_effect_properties(BOOL d3d11)
     ok(!wcscmp(buffer, L"IsReadOnly"), "Unexpected name %s.\n", wine_dbgstr_w(buffer));
 
     ID2D1Properties_Release(subproperties);
+
+    /* Int32 property. */
+    index = ID2D1Effect_GetPropertyIndex(effect, L"Int32Prop");
+    hr = ID2D1Effect_GetPropertyName(effect, index, buffer, ARRAY_SIZE(buffer));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(!wcscmp(buffer, L"Int32Prop"), "Unexpected name %s.\n", wine_dbgstr_w(buffer));
+    prop_type = ID2D1Effect_GetType(effect, index);
+    ok(prop_type == D2D1_PROPERTY_TYPE_INT32, "Unexpected type %u.\n", prop_type);
+    hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_INT32, (BYTE *)&val, sizeof(val));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(val == -2, "Unexpected value %d.\n", val);
+
+    /* UInt32 property. */
+    index = ID2D1Effect_GetPropertyIndex(effect, L"UInt32Prop");
+    hr = ID2D1Effect_GetPropertyName(effect, index, buffer, ARRAY_SIZE(buffer));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(!wcscmp(buffer, L"UInt32Prop"), "Unexpected name %s.\n", wine_dbgstr_w(buffer));
+    prop_type = ID2D1Effect_GetType(effect, index);
+    ok(prop_type == D2D1_PROPERTY_TYPE_UINT32, "Unexpected type %u.\n", prop_type);
+    hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_UINT32, (BYTE *)&integer, sizeof(integer));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(integer == -3, "Unexpected value %u.\n", integer);
+
+    /* Vector2 property. */
+    index = ID2D1Effect_GetPropertyIndex(effect, L"Vec2Prop");
+    hr = ID2D1Effect_GetPropertyName(effect, index, buffer, ARRAY_SIZE(buffer));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(!wcscmp(buffer, L"Vec2Prop"), "Unexpected name %s.\n", wine_dbgstr_w(buffer));
+    prop_type = ID2D1Effect_GetType(effect, index);
+    ok(prop_type == D2D1_PROPERTY_TYPE_VECTOR2, "Unexpected type %u.\n", prop_type);
+    hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_VECTOR2, (BYTE *)vec2, sizeof(vec2));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(vec2[0] == 3.0f && vec2[1] == 4.0f, "Unexpected vector (%.8e,%.8e).\n", vec2[0], vec2[1]);
+
+    /* Vector3 property. */
+    index = ID2D1Effect_GetPropertyIndex(effect, L"Vec3Prop");
+    hr = ID2D1Effect_GetPropertyName(effect, index, buffer, ARRAY_SIZE(buffer));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(!wcscmp(buffer, L"Vec3Prop"), "Unexpected name %s.\n", wine_dbgstr_w(buffer));
+    prop_type = ID2D1Effect_GetType(effect, index);
+    ok(prop_type == D2D1_PROPERTY_TYPE_VECTOR3, "Unexpected type %u.\n", prop_type);
+    hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_VECTOR3, (BYTE *)vec3, sizeof(vec3));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(vec3[0] == 5.0f && vec3[1] == 6.0f && vec3[2] == 7.0f, "Unexpected vector (%.8e,%.8e,%.8e).\n",
+            vec3[0], vec3[1], vec3[2]);
+
+    /* Vector4 property. */
+    index = ID2D1Effect_GetPropertyIndex(effect, L"Vec4Prop");
+    hr = ID2D1Effect_GetPropertyName(effect, index, buffer, ARRAY_SIZE(buffer));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(!wcscmp(buffer, L"Vec4Prop"), "Unexpected name %s.\n", wine_dbgstr_w(buffer));
+    prop_type = ID2D1Effect_GetType(effect, index);
+    ok(prop_type == D2D1_PROPERTY_TYPE_VECTOR4, "Unexpected type %u.\n", prop_type);
+    hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_VECTOR4, (BYTE *)vec4, sizeof(vec4));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(vec4[0] == 8.0f && vec4[1] == 9.0f && vec4[2] == 10.0f && vec4[3] == 11.0f,
+            "Unexpected vector (%.8e,%.8e,%.8e,%.8e).\n", vec4[0], vec4[1], vec4[2], vec4[3]);
+
+    /* Matrix3x2 property. */
+    index = ID2D1Effect_GetPropertyIndex(effect, L"Mat3x2Prop");
+    hr = ID2D1Effect_GetPropertyName(effect, index, buffer, ARRAY_SIZE(buffer));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(!wcscmp(buffer, L"Mat3x2Prop"), "Unexpected name %s.\n", wine_dbgstr_w(buffer));
+    prop_type = ID2D1Effect_GetType(effect, index);
+    ok(prop_type == D2D1_PROPERTY_TYPE_MATRIX_3X2, "Unexpected type %u.\n", prop_type);
+    hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_MATRIX_3X2, (BYTE *)mat, 6 * sizeof(float));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(mat[0] == 1.0f && mat[1] == 2.0f && mat[2] == 3.0f && mat[3] == 4.0f && mat[4] == 5.0f && mat[5] == 6.0f,
+            "Unexpected matrix (%.8e,%.8e,%.8e,%.8e,%.8e,%.8e).\n",
+            mat[0], mat[1], mat[2], mat[3], mat[4], mat[5]);
+
+    /* Matrix4x3 property. */
+    index = ID2D1Effect_GetPropertyIndex(effect, L"Mat4x3Prop");
+    hr = ID2D1Effect_GetPropertyName(effect, index, buffer, ARRAY_SIZE(buffer));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(!wcscmp(buffer, L"Mat4x3Prop"), "Unexpected name %s.\n", wine_dbgstr_w(buffer));
+    prop_type = ID2D1Effect_GetType(effect, index);
+    ok(prop_type == D2D1_PROPERTY_TYPE_MATRIX_4X3, "Unexpected type %u.\n", prop_type);
+    hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_MATRIX_4X3, (BYTE *)mat, 12 * sizeof(float));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    for (i = 0; i < 12; ++i)
+        ok(mat[i] == 1.0f + i, "Unexpected matrix element %u.\n", i);
+
+    /* Matrix4x4 property. */
+    index = ID2D1Effect_GetPropertyIndex(effect, L"Mat4x4Prop");
+    hr = ID2D1Effect_GetPropertyName(effect, index, buffer, ARRAY_SIZE(buffer));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(!wcscmp(buffer, L"Mat4x4Prop"), "Unexpected name %s.\n", wine_dbgstr_w(buffer));
+    prop_type = ID2D1Effect_GetType(effect, index);
+    ok(prop_type == D2D1_PROPERTY_TYPE_MATRIX_4X4, "Unexpected type %u.\n", prop_type);
+    hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_MATRIX_4X4, (BYTE *)mat, 16 * sizeof(float));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    for (i = 0; i < 16; ++i)
+        ok(mat[i] == 1.0f + i, "Unexpected matrix element %u.\n", i);
+
+    /* Matrix5x4 property. */
+    index = ID2D1Effect_GetPropertyIndex(effect, L"Mat5x4Prop");
+    hr = ID2D1Effect_GetPropertyName(effect, index, buffer, ARRAY_SIZE(buffer));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(!wcscmp(buffer, L"Mat5x4Prop"), "Unexpected name %s.\n", wine_dbgstr_w(buffer));
+    prop_type = ID2D1Effect_GetType(effect, index);
+    ok(prop_type == D2D1_PROPERTY_TYPE_MATRIX_5X4, "Unexpected type %u.\n", prop_type);
+    hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_MATRIX_5X4, (BYTE *)mat, 20 * sizeof(float));
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    for (i = 0; i < 20; ++i)
+        ok(mat[i] == 1.0f + i, "Unexpected matrix element %u.\n", i);
+
     ID2D1Effect_Release(effect);
 
     hr = ID2D1Factory1_UnregisterEffect(factory, &CLSID_TestEffect);
@@ -11770,6 +11931,69 @@ static void test_effect_grayscale(BOOL d3d11)
     }
 
     ID2D1Effect_Release(effect);
+    release_test_context(&ctx);
+}
+
+static void test_registered_effects(BOOL d3d11)
+{
+    UINT32 ret, count, count2, count3;
+    struct d2d1_test_context ctx;
+    ID2D1Factory1 *factory;
+    CLSID *effects;
+    HRESULT hr;
+
+    if (!init_test_context(&ctx, d3d11))
+        return;
+
+    factory = ctx.factory1;
+
+    count = 0;
+    hr = ID2D1Factory1_GetRegisteredEffects(factory, NULL, 0, NULL, &count);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(count > 0, "Unexpected effect count %u.\n", count);
+
+    hr = ID2D1Factory1_RegisterEffectFromString(factory, &CLSID_TestEffect, effect_xml_a,
+            NULL, 0, effect_impl_create);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    count2 = 0;
+    hr = ID2D1Factory1_GetRegisteredEffects(factory, NULL, 0, NULL, &count2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(count2 == count + 1, "Unexpected effect count %u.\n", count2);
+
+    effects = calloc(count2, sizeof(*effects));
+
+    count3 = 0;
+    hr = ID2D1Factory1_GetRegisteredEffects(factory, effects, 0, NULL, &count3);
+    ok(hr == D2DERR_INSUFFICIENT_BUFFER, "Unexpected hr %#lx.\n", hr);
+    ok(count2 == count3, "Unexpected effect count %u.\n", count3);
+
+    ret = 999;
+    hr = ID2D1Factory1_GetRegisteredEffects(factory, effects, 0, &ret, NULL);
+    ok(hr == D2DERR_INSUFFICIENT_BUFFER, "Unexpected hr %#lx.\n", hr);
+    ok(!ret, "Unexpected count %u.\n", ret);
+
+    ret = 0;
+    hr = ID2D1Factory1_GetRegisteredEffects(factory, effects, 1, &ret, NULL);
+    ok(hr == D2DERR_INSUFFICIENT_BUFFER, "Unexpected hr %#lx.\n", hr);
+    ok(ret == 1, "Unexpected count %u.\n", ret);
+    ok(!IsEqualGUID(effects, &CLSID_TestEffect), "Unexpected clsid.\n");
+
+    ret = 0;
+    hr = ID2D1Factory1_GetRegisteredEffects(factory, effects, count2, &ret, NULL);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(ret == count2, "Unexpected count %u.\n", ret);
+    ok(IsEqualGUID(&effects[ret - 1], &CLSID_TestEffect), "Unexpected clsid.\n");
+
+    free(effects);
+
+    ID2D1Factory1_UnregisterEffect(factory, &CLSID_TestEffect);
+
+    count2 = 0;
+    hr = ID2D1Factory1_GetRegisteredEffects(factory, NULL, 0, NULL, &count2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(count2 == count, "Unexpected effect count %u.\n", count2);
+
     release_test_context(&ctx);
 }
 
@@ -12587,6 +12811,7 @@ START_TEST(d2d1)
     queue_test(test_effect_2d_affine);
     queue_test(test_effect_crop);
     queue_test(test_effect_grayscale);
+    queue_test(test_registered_effects);
     queue_d3d10_test(test_stroke_contains_point);
     queue_test(test_image_bounds);
     queue_test(test_bitmap_map);
