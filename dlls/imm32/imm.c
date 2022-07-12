@@ -29,7 +29,7 @@
 #include "windef.h"
 #include "winbase.h"
 #include "wingdi.h"
-#include "winuser.h"
+#include "ntuser.h"
 #include "winerror.h"
 #include "wine/debug.h"
 #include "imm.h"
@@ -42,6 +42,15 @@ WINE_DEFAULT_DEBUG_CHANNEL(imm);
 
 #define IMM_INIT_MAGIC 0x19650412
 BOOL WINAPI User32InitializeImmEntryTable(DWORD);
+
+/* MSIME messages */
+static UINT WM_MSIME_SERVICE;
+static UINT WM_MSIME_RECONVERTOPTIONS;
+static UINT WM_MSIME_MOUSE;
+static UINT WM_MSIME_RECONVERTREQUEST;
+static UINT WM_MSIME_RECONVERT;
+static UINT WM_MSIME_QUERYPOSITION;
+static UINT WM_MSIME_DOCUMENTFEED;
 
 typedef struct _tagImmHkl{
     struct list entry;
@@ -73,6 +82,7 @@ typedef struct _tagImmHkl{
 
 typedef struct tagInputContextData
 {
+        HIMC            handle;
         DWORD           dwLock;
         INPUTCONTEXT    IMC;
         DWORD           threadID;
@@ -80,7 +90,6 @@ typedef struct tagInputContextData
         ImmHkl          *immKbd;
         UINT            lastVK;
         BOOL            threadDefault;
-        DWORD           magic;
 } InputContextData;
 
 #define WINE_IMC_VALID_MAGIC 0x56434D49
@@ -98,8 +107,13 @@ typedef struct _tagIMMThreadData {
     HWND hwndDefault;
     BOOL disableIME;
     DWORD windowRefs;
+} IMMThreadData;
+
+struct coinit_spy
+{
     IInitializeSpy IInitializeSpy_iface;
-    ULARGE_INTEGER spy_cookie;
+    LONG ref;
+    ULARGE_INTEGER cookie;
     enum
     {
         IMM_APT_INIT = 0x1,
@@ -107,7 +121,9 @@ typedef struct _tagIMMThreadData {
         IMM_APT_CAN_FREE = 0x4,
         IMM_APT_BROKEN = 0x8
     } apt_flags;
-} IMMThreadData;
+};
+
+static LONG spy_tls = TLS_OUT_OF_INDEXES;
 
 static struct list ImmHklList = LIST_INIT(ImmHklList);
 static struct list ImmThreadDataList = LIST_INIT(ImmThreadDataList);
@@ -240,62 +256,38 @@ static DWORD convert_candidatelist_AtoW(
     return ret;
 }
 
-static void imm_coinit_thread(IMMThreadData *thread_data)
+static void imm_couninit_thread(BOOL cleanup)
 {
-    HRESULT hr;
+    struct coinit_spy *spy;
 
-    TRACE("implicit COM initialization\n");
-
-    if (thread_data->threadID != GetCurrentThreadId())
-        return;
-
-    if (thread_data->apt_flags & (IMM_APT_INIT | IMM_APT_BROKEN))
-        return;
-    thread_data->apt_flags |= IMM_APT_INIT;
-
-    if(!thread_data->spy_cookie.QuadPart)
-    {
-        hr = CoRegisterInitializeSpy(&thread_data->IInitializeSpy_iface,
-                &thread_data->spy_cookie);
-        if (FAILED(hr))
-            return;
-    }
-
-    hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
-    if (SUCCEEDED(hr))
-        thread_data->apt_flags |= IMM_APT_CREATED;
-}
-
-static void imm_couninit_thread(IMMThreadData *thread_data, BOOL cleanup)
-{
     TRACE("implicit COM deinitialization\n");
 
-    if (thread_data->apt_flags & IMM_APT_BROKEN)
+    if (!(spy = TlsGetValue(spy_tls)) || (spy->apt_flags & IMM_APT_BROKEN))
         return;
 
-    if (cleanup && thread_data->spy_cookie.QuadPart)
+    if (cleanup && spy->cookie.QuadPart)
     {
-        CoRevokeInitializeSpy(thread_data->spy_cookie);
-        thread_data->spy_cookie.QuadPart = 0;
+        CoRevokeInitializeSpy(spy->cookie);
+        spy->cookie.QuadPart = 0;
     }
 
-    if (!(thread_data->apt_flags & IMM_APT_INIT))
+    if (!(spy->apt_flags & IMM_APT_INIT))
         return;
-    thread_data->apt_flags &= ~IMM_APT_INIT;
+    spy->apt_flags &= ~IMM_APT_INIT;
 
-    if (thread_data->apt_flags & IMM_APT_CREATED)
+    if (spy->apt_flags & IMM_APT_CREATED)
     {
-        thread_data->apt_flags &= ~IMM_APT_CREATED;
-        if (thread_data->apt_flags & IMM_APT_CAN_FREE)
+        spy->apt_flags &= ~IMM_APT_CREATED;
+        if (spy->apt_flags & IMM_APT_CAN_FREE)
             CoUninitialize();
     }
     if (cleanup)
-        thread_data->apt_flags = 0;
+        spy->apt_flags = 0;
 }
 
-static inline IMMThreadData *impl_from_IInitializeSpy(IInitializeSpy *iface)
+static inline struct coinit_spy *impl_from_IInitializeSpy(IInitializeSpy *iface)
 {
-    return CONTAINING_RECORD(iface, IMMThreadData, IInitializeSpy_iface);
+    return CONTAINING_RECORD(iface, struct coinit_spy, IInitializeSpy_iface);
 }
 
 static HRESULT WINAPI InitializeSpy_QueryInterface(IInitializeSpy *iface, REFIID riid, void **obj)
@@ -314,24 +306,28 @@ static HRESULT WINAPI InitializeSpy_QueryInterface(IInitializeSpy *iface, REFIID
 
 static ULONG WINAPI InitializeSpy_AddRef(IInitializeSpy *iface)
 {
-    return 2;
+    struct coinit_spy *spy = impl_from_IInitializeSpy(iface);
+    return InterlockedIncrement(&spy->ref);
 }
 
 static ULONG WINAPI InitializeSpy_Release(IInitializeSpy *iface)
 {
-    return 1;
+    struct coinit_spy *spy = impl_from_IInitializeSpy(iface);
+    LONG ref = InterlockedDecrement(&spy->ref);
+    if (!ref) HeapFree(GetProcessHeap(), 0, spy);
+    return ref;
 }
 
 static HRESULT WINAPI InitializeSpy_PreInitialize(IInitializeSpy *iface,
         DWORD coinit, DWORD refs)
 {
-    IMMThreadData *thread_data = impl_from_IInitializeSpy(iface);
+    struct coinit_spy *spy = impl_from_IInitializeSpy(iface);
 
-    if ((thread_data->apt_flags & IMM_APT_CREATED) &&
+    if ((spy->apt_flags & IMM_APT_CREATED) &&
             !(coinit & COINIT_APARTMENTTHREADED) && refs == 1)
     {
-        imm_couninit_thread(thread_data, TRUE);
-        thread_data->apt_flags |= IMM_APT_BROKEN;
+        imm_couninit_thread(TRUE);
+        spy->apt_flags |= IMM_APT_BROKEN;
     }
     return S_OK;
 }
@@ -339,12 +335,12 @@ static HRESULT WINAPI InitializeSpy_PreInitialize(IInitializeSpy *iface,
 static HRESULT WINAPI InitializeSpy_PostInitialize(IInitializeSpy *iface,
         HRESULT hr, DWORD coinit, DWORD refs)
 {
-    IMMThreadData *thread_data = impl_from_IInitializeSpy(iface);
+    struct coinit_spy *spy = impl_from_IInitializeSpy(iface);
 
-    if ((thread_data->apt_flags & IMM_APT_CREATED) && hr == S_FALSE && refs == 2)
+    if ((spy->apt_flags & IMM_APT_CREATED) && hr == S_FALSE && refs == 2)
         hr = S_OK;
     if (SUCCEEDED(hr))
-        thread_data->apt_flags |= IMM_APT_CAN_FREE;
+        spy->apt_flags |= IMM_APT_CAN_FREE;
     return hr;
 }
 
@@ -355,12 +351,14 @@ static HRESULT WINAPI InitializeSpy_PreUninitialize(IInitializeSpy *iface, DWORD
 
 static HRESULT WINAPI InitializeSpy_PostUninitialize(IInitializeSpy *iface, DWORD refs)
 {
-    IMMThreadData *thread_data = impl_from_IInitializeSpy(iface);
+    struct coinit_spy *spy = impl_from_IInitializeSpy(iface);
 
-    if (refs == 1 && !thread_data->windowRefs)
-        imm_couninit_thread(thread_data, FALSE);
+    TRACE("%lu %p\n", refs, ImmGetDefaultIMEWnd(0));
+
+    if (refs == 1 && !ImmGetDefaultIMEWnd(0))
+        imm_couninit_thread(FALSE);
     else if (!refs)
-        thread_data->apt_flags &= ~IMM_APT_CAN_FREE;
+        spy->apt_flags &= ~IMM_APT_CAN_FREE;
     return S_OK;
 }
 
@@ -374,6 +372,45 @@ static const IInitializeSpyVtbl InitializeSpyVtbl =
     InitializeSpy_PreUninitialize,
     InitializeSpy_PostUninitialize,
 };
+
+static void imm_coinit_thread(void)
+{
+    struct coinit_spy *spy;
+    HRESULT hr;
+
+    TRACE("implicit COM initialization\n");
+
+    if (spy_tls == TLS_OUT_OF_INDEXES)
+    {
+        DWORD tls = TlsAlloc();
+        if (tls == TLS_OUT_OF_INDEXES) return;
+        if (InterlockedCompareExchange(&spy_tls, tls, TLS_OUT_OF_INDEXES)) TlsFree(tls);
+    }
+    if (!(spy = TlsGetValue(spy_tls)))
+    {
+        if (!(spy = HeapAlloc(GetProcessHeap(), 0, sizeof(*spy)))) return;
+        spy->IInitializeSpy_iface.lpVtbl = &InitializeSpyVtbl;
+        spy->ref = 1;
+        spy->cookie.QuadPart = 0;
+        spy->apt_flags = 0;
+        TlsSetValue(spy_tls, spy);
+    }
+
+    if (spy->apt_flags & (IMM_APT_INIT | IMM_APT_BROKEN))
+        return;
+    spy->apt_flags |= IMM_APT_INIT;
+
+    if(!spy->cookie.QuadPart)
+    {
+        hr = CoRegisterInitializeSpy(&spy->IInitializeSpy_iface, &spy->cookie);
+        if (FAILED(hr))
+            return;
+    }
+
+    hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    if (SUCCEEDED(hr))
+        spy->apt_flags |= IMM_APT_CREATED;
+}
 
 static IMMThreadData *IMM_GetThreadData(HWND hwnd, DWORD thread)
 {
@@ -401,7 +438,6 @@ static IMMThreadData *IMM_GetThreadData(HWND hwnd, DWORD thread)
         if (data->threadID == thread) return data;
 
     data = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*data));
-    data->IInitializeSpy_iface.lpVtbl = &InitializeSpyVtbl;
     data->threadID = thread;
     list_add_head(&ImmThreadDataList,&data->entry);
     TRACE("Thread Data Created (%lx)\n",thread);
@@ -420,6 +456,7 @@ static BOOL IMM_IsDefaultContext(HIMC imc)
 
 static void IMM_FreeThreadData(void)
 {
+    struct coinit_spy *spy;
     IMMThreadData *data;
 
     EnterCriticalSection(&threaddata_cs);
@@ -430,13 +467,14 @@ static void IMM_FreeThreadData(void)
             list_remove(&data->entry);
             LeaveCriticalSection(&threaddata_cs);
             IMM_DestroyContext(data->defaultContext);
-            imm_couninit_thread(data, TRUE);
             HeapFree(GetProcessHeap(),0,data);
             TRACE("Thread Data Destroyed\n");
             return;
         }
     }
     LeaveCriticalSection(&threaddata_cs);
+
+    if ((spy = TlsGetValue(spy_tls))) IInitializeSpy_Release(&spy->IInitializeSpy_iface);
 }
 
 static HMODULE load_graphics_driver(void)
@@ -534,11 +572,6 @@ static ImmHkl *IMM_GetImmHkl(HKL hkl)
 }
 #undef LOAD_FUNCPTR
 
-HWND WINAPI __wine_get_ui_window(HKL hkl)
-{
-    ImmHkl *immHkl = IMM_GetImmHkl(hkl);
-    return immHkl->UIWnd;
-}
 
 static void IMM_FreeAllImmHkl(void)
 {
@@ -628,19 +661,13 @@ static HIMCC ImmCreateBlankCompStr(void)
     return rc;
 }
 
-static InputContextData* get_imc_data(HIMC hIMC)
+static InputContextData *get_imc_data(HIMC handle)
 {
-    InputContextData *data = hIMC;
+    InputContextData *ret;
 
-    if (hIMC == NULL)
-        return NULL;
-
-    if(IsBadReadPtr(data, sizeof(InputContextData)) || data->magic != WINE_IMC_VALID_MAGIC)
-    {
-        SetLastError(ERROR_INVALID_HANDLE);
-        return NULL;
-    }
-    return data;
+    if (!handle) return NULL;
+    ret = (void *)NtUserQueryInputContext( handle, NtUserInputContextClientPtr );
+    return ret && ret->handle == handle ? ret : NULL;
 }
 
 static HIMC get_default_context( HWND hwnd )
@@ -668,7 +695,7 @@ static HIMC get_default_context( HWND hwnd )
 
     ret = ImmCreateContext();
     if (!ret) return 0;
-    ((InputContextData*)ret)->threadDefault = TRUE;
+    get_imc_data(ret)->threadDefault = TRUE;
 
     /* thread_data is in the current thread so we can assume it's still valid */
     EnterCriticalSection(&threaddata_cs);
@@ -706,19 +733,13 @@ static BOOL IMM_IsCrossThreadAccess(HWND hWnd,  HIMC hIMC)
 BOOL WINAPI ImmSetActiveContext(HWND hwnd, HIMC himc, BOOL activate)
 {
     InputContextData *data = get_imc_data(himc);
-    IMMThreadData *thread_data;
 
     TRACE("(%p, %p, %x)\n", hwnd, himc, activate);
 
     if (himc && !data && activate)
         return FALSE;
 
-    thread_data = IMM_GetThreadData(hwnd, 0);
-    if (thread_data)
-    {
-        imm_coinit_thread(thread_data);
-        LeaveCriticalSection(&threaddata_cs);
-    }
+    imm_coinit_thread();
 
     if (data)
     {
@@ -903,9 +924,16 @@ HIMC WINAPI ImmCreateContext(void)
     InputContextData *new_context;
     LPGUIDELINE gl;
     LPCANDIDATEINFO ci;
+    HIMC handle;
     int i;
 
     new_context = HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,sizeof(InputContextData));
+
+    if (!(handle = NtUserCreateInputContext((UINT_PTR)new_context)))
+    {
+        HeapFree(GetProcessHeap(),0,new_context);
+        return 0;
+    }
 
     /* Load the IME */
     new_context->immKbd = IMM_GetImmHkl(GetKeyboardLayout(0));
@@ -913,6 +941,7 @@ HIMC WINAPI ImmCreateContext(void)
     if (!new_context->immKbd->hIME)
     {
         TRACE("IME dll could not be loaded\n");
+        NtUserDestroyInputContext(handle);
         HeapFree(GetProcessHeap(),0,new_context);
         return 0;
     }
@@ -940,9 +969,10 @@ HIMC WINAPI ImmCreateContext(void)
     new_context->IMC.fdwConversion = new_context->immKbd->imeInfo.fdwConversionCaps;
     new_context->IMC.fdwSentence = new_context->immKbd->imeInfo.fdwSentenceCaps;
 
-    if (!new_context->immKbd->pImeSelect(new_context, TRUE))
+    if (!new_context->immKbd->pImeSelect(handle, TRUE))
     {
         TRACE("Selection of IME failed\n");
+        NtUserDestroyInputContext(handle);
         IMM_DestroyContext(new_context);
         return 0;
     }
@@ -952,8 +982,7 @@ HIMC WINAPI ImmCreateContext(void)
     new_context->immKbd->uSelected++;
     TRACE("Created context %p\n",new_context);
 
-    new_context->magic = WINE_IMC_VALID_MAGIC;
-    return new_context;
+    return new_context->handle = handle;
 }
 
 static BOOL IMM_DestroyContext(HIMC hIMC)
@@ -975,7 +1004,7 @@ static BOOL IMM_DestroyContext(HIMC hIMC)
     ImmDestroyIMCC(data->IMC.hPrivate);
     ImmDestroyIMCC(data->IMC.hMsgBuf);
 
-    data->magic = 0;
+    NtUserDestroyInputContext(data->handle);
     HeapFree(GetProcessHeap(),0,data);
 
     return TRUE;
@@ -996,7 +1025,6 @@ static HWND imm_detach_default_window(IMMThreadData *thread_data)
 {
     HWND to_destroy;
 
-    imm_couninit_thread(thread_data, TRUE);
     to_destroy = thread_data->hwndDefault;
     thread_data->hwndDefault = NULL;
     thread_data->windowRefs = 0;
@@ -1730,8 +1758,9 @@ HIMC WINAPI ImmGetContext(HWND hWnd)
 
     if (rc)
     {
-        InputContextData *data = rc;
-        data->IMC.hWnd = hWnd;
+        InputContextData *data = get_imc_data(rc);
+        if (data) data->IMC.hWnd = hWnd;
+        else rc = 0;
     }
 
     TRACE("returning %p\n", rc);
@@ -2218,7 +2247,7 @@ BOOL WINAPI ImmGetStatusWindowPos(HIMC hIMC, LPPOINT lpptPos)
 UINT WINAPI ImmGetVirtualKey(HWND hWnd)
 {
   OSVERSIONINFOA version;
-  InputContextData *data = ImmGetContext( hWnd );
+  InputContextData *data = get_imc_data( ImmGetContext( hWnd ));
   TRACE("%p\n", hWnd);
 
   if ( data )
@@ -3233,10 +3262,7 @@ BOOL WINAPI ImmTranslateMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lKeyD
 
     TRACE("%p %x %x %x\n",hwnd, msg, (UINT)wParam, (UINT)lKeyData);
 
-    if (imc)
-        data = imc;
-    else
-        return FALSE;
+    if (!(data = get_imc_data( imc ))) return FALSE;
 
     if (!data->immKbd->hIME || !data->immKbd->pImeToAsciiEx || data->lastVK == VK_PROCESSKEY)
         return FALSE;
@@ -3292,10 +3318,7 @@ BOOL WINAPI ImmProcessKey(HWND hwnd, HKL hKL, UINT vKey, LPARAM lKeyData, DWORD 
 
     TRACE("%p %p %x %x %lx\n",hwnd, hKL, vKey, (UINT)lKeyData, unknown);
 
-    if (imc)
-        data = imc;
-    else
-        return FALSE;
+    if (!(data = get_imc_data( imc ))) return FALSE;
 
     /* Make sure we are inputting to the correct keyboard */
     if (data->immKbd->hkl != hKL)
@@ -3363,4 +3386,115 @@ BOOL WINAPI ImmDisableLegacyIME(void)
 {
     FIXME("stub\n");
     return TRUE;
+}
+
+static HWND get_ui_window(HKL hkl)
+{
+    ImmHkl *immHkl = IMM_GetImmHkl(hkl);
+    return immHkl->UIWnd;
+}
+
+static BOOL is_ime_ui_msg(UINT msg)
+{
+    switch (msg)
+    {
+    case WM_IME_STARTCOMPOSITION:
+    case WM_IME_ENDCOMPOSITION:
+    case WM_IME_COMPOSITION:
+    case WM_IME_SETCONTEXT:
+    case WM_IME_NOTIFY:
+    case WM_IME_CONTROL:
+    case WM_IME_COMPOSITIONFULL:
+    case WM_IME_SELECT:
+    case WM_IME_CHAR:
+    case WM_IME_REQUEST:
+    case WM_IME_KEYDOWN:
+    case WM_IME_KEYUP:
+        return TRUE;
+    default:
+        return msg == WM_MSIME_RECONVERTOPTIONS ||
+            msg == WM_MSIME_SERVICE ||
+            msg == WM_MSIME_MOUSE ||
+            msg == WM_MSIME_RECONVERTREQUEST ||
+            msg == WM_MSIME_RECONVERT ||
+            msg == WM_MSIME_QUERYPOSITION ||
+            msg == WM_MSIME_DOCUMENTFEED;
+    }
+}
+
+static LRESULT ime_internal_msg( WPARAM wparam, LPARAM lparam)
+{
+    HWND hwnd = (HWND)lparam;
+    HIMC himc;
+
+    switch (wparam)
+    {
+    case IME_INTERNAL_ACTIVATE:
+    case IME_INTERNAL_DEACTIVATE:
+        himc = ImmGetContext(hwnd);
+        ImmSetActiveContext(hwnd, himc, wparam == IME_INTERNAL_ACTIVATE);
+        ImmReleaseContext(hwnd, himc);
+        break;
+    default:
+        FIXME("wparam = %Ix\n", wparam);
+        break;
+    }
+
+    return 0;
+}
+
+static void init_messages(void)
+{
+    static BOOL initialized;
+
+    if (initialized) return;
+
+    WM_MSIME_SERVICE = RegisterWindowMessageW(L"MSIMEService");
+    WM_MSIME_RECONVERTOPTIONS = RegisterWindowMessageW(L"MSIMEReconvertOptions");
+    WM_MSIME_MOUSE = RegisterWindowMessageW(L"MSIMEMouseOperation");
+    WM_MSIME_RECONVERTREQUEST = RegisterWindowMessageW(L"MSIMEReconvertRequest");
+    WM_MSIME_RECONVERT = RegisterWindowMessageW(L"MSIMEReconvert");
+    WM_MSIME_QUERYPOSITION = RegisterWindowMessageW(L"MSIMEQueryPosition");
+    WM_MSIME_DOCUMENTFEED = RegisterWindowMessageW(L"MSIMEDocumentFeed");
+    initialized = TRUE;
+}
+
+LRESULT WINAPI __wine_ime_wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, BOOL ansi)
+{
+    HWND uiwnd;
+
+    switch (msg)
+    {
+    case WM_CREATE:
+        init_messages();
+        return TRUE;
+
+    case WM_DESTROY:
+        {
+            HWND default_hwnd = ImmGetDefaultIMEWnd(0);
+            if (!default_hwnd || hwnd == default_hwnd)
+                imm_couninit_thread(TRUE);
+        }
+        return TRUE;
+
+    case WM_IME_INTERNAL:
+        return ime_internal_msg(wparam, lparam);
+    }
+
+    if (is_ime_ui_msg(msg))
+    {
+        if ((uiwnd = get_ui_window(NtUserGetKeyboardLayout(0))))
+        {
+            if (ansi)
+                return SendMessageA(uiwnd, msg, wparam, lparam);
+            else
+                return SendMessageW(uiwnd, msg, wparam, lparam);
+        }
+        return FALSE;
+    }
+
+    if (ansi)
+        return DefWindowProcA(hwnd, msg, wparam, lparam);
+    else
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
 }

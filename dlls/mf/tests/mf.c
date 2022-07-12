@@ -6390,7 +6390,7 @@ static void check_sample_pcm16_(int line, IMFSample *sample, const BYTE *expect_
         if (expect - value + 512 > 1024) break;
     }
 
-    todo_wine_if(todo)
+    todo_wine_if(todo && i < length / 2)
     ok_(__FILE__, line)(i == length, "unexpected buffer data\n");
 
     if (output_file) WriteFile(output_file, buffer, length, &length, NULL);
@@ -7027,6 +7027,9 @@ static void test_wma_decoder(void)
         hr = IMFTransform_ProcessOutput(transform, 0, 1, &output, &status);
 
         winetest_pop_context();
+
+        /* some FFmpeg version request more input to complete decoding */
+        if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT && i == 2) break;
     }
     todo_wine
     ok(wmadec_data_len == 0, "missing %#lx bytes\n", wmadec_data_len);
@@ -7154,157 +7157,102 @@ static void test_h264_decoder(void)
             ATTR_GUID(MF_MT_SUBTYPE, MFVideoFormat_H264_ES),
         },
     };
-    static const media_type_desc default_outputs[] =
+    static const DWORD input_width = 120, input_height = 248;
+    const media_type_desc default_outputs[] =
     {
         {
             ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Video),
             ATTR_GUID(MF_MT_SUBTYPE, MFVideoFormat_NV12),
             ATTR_RATIO(MF_MT_PIXEL_ASPECT_RATIO, 1, 1),
             ATTR_RATIO(MF_MT_FRAME_RATE, 30000, 1001),
-            ATTR_UINT32(MF_MT_DEFAULT_STRIDE, 1920),
+            ATTR_UINT32(MF_MT_DEFAULT_STRIDE, input_width),
             ATTR_UINT32(MF_MT_INTERLACE_MODE, 7),
             ATTR_UINT32(MF_MT_FIXED_SIZE_SAMPLES, 1),
             ATTR_UINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, 1),
+            ATTR_RATIO(MF_MT_FRAME_SIZE, input_width, input_height),
+            ATTR_UINT32(MF_MT_SAMPLE_SIZE, input_width * input_height * 3 / 2),
+            /* ATTR_UINT32(MF_MT_VIDEO_ROTATION, 0), missing on Win7 */
         },
         {
             ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Video),
             ATTR_GUID(MF_MT_SUBTYPE, MFVideoFormat_YV12),
             ATTR_RATIO(MF_MT_PIXEL_ASPECT_RATIO, 1, 1),
             ATTR_RATIO(MF_MT_FRAME_RATE, 30000, 1001),
-            ATTR_UINT32(MF_MT_DEFAULT_STRIDE, 1920),
+            ATTR_UINT32(MF_MT_DEFAULT_STRIDE, input_width),
             ATTR_UINT32(MF_MT_INTERLACE_MODE, 7),
             ATTR_UINT32(MF_MT_FIXED_SIZE_SAMPLES, 1),
             ATTR_UINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, 1),
+            ATTR_RATIO(MF_MT_FRAME_SIZE, input_width, input_height),
+            ATTR_UINT32(MF_MT_SAMPLE_SIZE, input_width * input_height * 3 / 2),
+            /* ATTR_UINT32(MF_MT_VIDEO_ROTATION, 0), missing on Win7 */
         },
         {
             ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Video),
             ATTR_GUID(MF_MT_SUBTYPE, MFVideoFormat_IYUV),
             ATTR_RATIO(MF_MT_PIXEL_ASPECT_RATIO, 1, 1),
             ATTR_RATIO(MF_MT_FRAME_RATE, 30000, 1001),
-            ATTR_UINT32(MF_MT_DEFAULT_STRIDE, 1920),
+            ATTR_UINT32(MF_MT_DEFAULT_STRIDE, input_width),
             ATTR_UINT32(MF_MT_INTERLACE_MODE, 7),
             ATTR_UINT32(MF_MT_FIXED_SIZE_SAMPLES, 1),
             ATTR_UINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, 1),
+            ATTR_RATIO(MF_MT_FRAME_SIZE, input_width, input_height),
+            ATTR_UINT32(MF_MT_SAMPLE_SIZE, input_width * input_height * 3 / 2),
+            /* ATTR_UINT32(MF_MT_VIDEO_ROTATION, 0), missing on Win7 */
         },
         {
             ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Video),
             ATTR_GUID(MF_MT_SUBTYPE, MFVideoFormat_I420),
             ATTR_RATIO(MF_MT_PIXEL_ASPECT_RATIO, 1, 1),
             ATTR_RATIO(MF_MT_FRAME_RATE, 30000, 1001),
-            ATTR_UINT32(MF_MT_DEFAULT_STRIDE, 1920),
+            ATTR_UINT32(MF_MT_DEFAULT_STRIDE, input_width),
             ATTR_UINT32(MF_MT_INTERLACE_MODE, 7),
             ATTR_UINT32(MF_MT_FIXED_SIZE_SAMPLES, 1),
             ATTR_UINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, 1),
+            ATTR_RATIO(MF_MT_FRAME_SIZE, input_width, input_height),
+            ATTR_UINT32(MF_MT_SAMPLE_SIZE, input_width * input_height * 3 / 2),
+            /* ATTR_UINT32(MF_MT_VIDEO_ROTATION, 0), missing on Win7 */
         },
         {
             ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Video),
             ATTR_GUID(MF_MT_SUBTYPE, MFVideoFormat_YUY2),
             ATTR_RATIO(MF_MT_PIXEL_ASPECT_RATIO, 1, 1),
             ATTR_RATIO(MF_MT_FRAME_RATE, 30000, 1001),
-            ATTR_UINT32(MF_MT_DEFAULT_STRIDE, 3840),
+            ATTR_UINT32(MF_MT_DEFAULT_STRIDE, input_width * 2),
             ATTR_UINT32(MF_MT_INTERLACE_MODE, 7),
             ATTR_UINT32(MF_MT_FIXED_SIZE_SAMPLES, 1),
             ATTR_UINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, 1),
+            ATTR_RATIO(MF_MT_FRAME_SIZE, input_width, input_height),
+            ATTR_UINT32(MF_MT_SAMPLE_SIZE, input_width * input_height * 2),
+            /* ATTR_UINT32(MF_MT_VIDEO_ROTATION, 0), missing on Win7 */
         },
     };
-    static const media_type_desc default_outputs_extra[] =
-    {
-        {
-            ATTR_RATIO(MF_MT_FRAME_SIZE, 1920, 1080),
-            ATTR_UINT32(MF_MT_SAMPLE_SIZE, 3110400),
-            ATTR_UINT32(MF_MT_VIDEO_ROTATION, 0),
-        },
-        {
-            ATTR_RATIO(MF_MT_FRAME_SIZE, 1920, 1080),
-            ATTR_UINT32(MF_MT_SAMPLE_SIZE, 3110400),
-            ATTR_UINT32(MF_MT_VIDEO_ROTATION, 0),
-        },
-        {
-            ATTR_RATIO(MF_MT_FRAME_SIZE, 1920, 1080),
-            ATTR_UINT32(MF_MT_SAMPLE_SIZE, 3110400),
-            ATTR_UINT32(MF_MT_VIDEO_ROTATION, 0),
-        },
-        {
-            ATTR_RATIO(MF_MT_FRAME_SIZE, 1920, 1080),
-            ATTR_UINT32(MF_MT_SAMPLE_SIZE, 3110400),
-            ATTR_UINT32(MF_MT_VIDEO_ROTATION, 0),
-        },
-        {
-            ATTR_RATIO(MF_MT_FRAME_SIZE, 1920, 1080),
-            ATTR_UINT32(MF_MT_SAMPLE_SIZE, 4147200),
-            ATTR_UINT32(MF_MT_VIDEO_ROTATION, 0),
-        },
-    };
-    static const media_type_desc default_outputs_win7[] =
-    {
-        {
-            ATTR_RATIO(MF_MT_FRAME_SIZE, 1920, 1088),
-            ATTR_UINT32(MF_MT_SAMPLE_SIZE, 3133440),
-        },
-        {
-            ATTR_RATIO(MF_MT_FRAME_SIZE, 1920, 1088),
-            ATTR_UINT32(MF_MT_SAMPLE_SIZE, 3133440),
-        },
-        {
-            ATTR_RATIO(MF_MT_FRAME_SIZE, 1920, 1088),
-            ATTR_UINT32(MF_MT_SAMPLE_SIZE, 3133440),
-        },
-        {
-            ATTR_RATIO(MF_MT_FRAME_SIZE, 1920, 1088),
-            ATTR_UINT32(MF_MT_SAMPLE_SIZE, 3133440),
-        },
-        {
-            ATTR_RATIO(MF_MT_FRAME_SIZE, 1920, 1088),
-            ATTR_UINT32(MF_MT_SAMPLE_SIZE, 4177920),
-        },
-    };
-    static const struct attribute_desc input_type_desc[] =
+    const struct attribute_desc input_type_desc[] =
     {
         ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Video),
         ATTR_GUID(MF_MT_SUBTYPE, MFVideoFormat_H264),
+        ATTR_RATIO(MF_MT_FRAME_SIZE, input_width, input_height),
         {0},
     };
-    static const struct attribute_desc minimal_output_type_desc[] =
+    const struct attribute_desc minimal_output_type_desc[] =
     {
         ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Video),
         ATTR_GUID(MF_MT_SUBTYPE, MFVideoFormat_NV12),
-        ATTR_RATIO(MF_MT_FRAME_SIZE, 1920, 1080),
+        ATTR_RATIO(MF_MT_FRAME_SIZE, input_width, input_height),
         {0},
     };
-    static const struct attribute_desc output_type_desc[] =
+    const struct attribute_desc output_type_desc[] =
     {
         ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Video),
         ATTR_GUID(MF_MT_SUBTYPE, MFVideoFormat_NV12),
-        ATTR_RATIO(MF_MT_FRAME_SIZE, 1920, 1080),
+        ATTR_RATIO(MF_MT_FRAME_SIZE, input_width, input_height),
         ATTR_RATIO(MF_MT_FRAME_RATE, 60000, 1000),
         ATTR_RATIO(MF_MT_PIXEL_ASPECT_RATIO, 2, 1),
         ATTR_UINT32(MF_MT_DEFAULT_STRIDE, 3840),
-        ATTR_UINT32(MF_MT_SAMPLE_SIZE, 3840 * 1080 * 3 / 2),
-        ATTR_UINT32(MF_MT_VIDEO_ROTATION, 0),
-        {0},
-    };
-    static const struct attribute_desc output_type_desc_win7[] =
-    {
-        ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Video),
-        ATTR_GUID(MF_MT_SUBTYPE, MFVideoFormat_NV12),
-        ATTR_RATIO(MF_MT_FRAME_SIZE, 1920, 1088),
-        ATTR_RATIO(MF_MT_FRAME_RATE, 60000, 1000),
-        ATTR_RATIO(MF_MT_PIXEL_ASPECT_RATIO, 2, 1),
-        ATTR_UINT32(MF_MT_DEFAULT_STRIDE, 3840),
-        ATTR_UINT32(MF_MT_SAMPLE_SIZE, 3840 * 1088 * 3 / 2),
+        ATTR_UINT32(MF_MT_SAMPLE_SIZE, 3840 * input_height * 3 / 2),
         ATTR_UINT32(MF_MT_VIDEO_ROTATION, 0),
         {0},
     };
     static const struct attribute_desc new_output_type_desc[] =
-    {
-        ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Video),
-        ATTR_GUID(MF_MT_SUBTYPE, MFVideoFormat_I420),
-        ATTR_RATIO(MF_MT_FRAME_SIZE, 96, 96),
-        ATTR_RATIO(MF_MT_FRAME_RATE, 1, 1),
-        ATTR_RATIO(MF_MT_PIXEL_ASPECT_RATIO, 1, 2),
-        {0},
-    };
-    static const struct attribute_desc new_output_type_desc_win7[] =
     {
         ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Video),
         ATTR_GUID(MF_MT_SUBTYPE, MFVideoFormat_I420),
@@ -7404,7 +7352,6 @@ static void test_h264_decoder(void)
     IMFMediaType *media_type;
     LONGLONG time, duration;
     IMFTransform *transform;
-    BOOL is_win7 = FALSE;
     ULONG i, ret, flags;
     HANDLE output_file;
     IMFSample *sample;
@@ -7499,6 +7446,9 @@ static void test_h264_decoder(void)
     init_media_type(media_type, input_type_desc, 2);
     hr = IMFTransform_SetInputType(transform, 0, media_type, 0);
     ok(hr == S_OK, "SetInputType returned %#lx.\n", hr);
+    init_media_type(media_type, input_type_desc, -1);
+    hr = IMFTransform_SetInputType(transform, 0, media_type, 0);
+    ok(hr == S_OK, "SetInputType returned %#lx.\n", hr);
     ret = IMFMediaType_Release(media_type);
     ok(ret == 1, "Release returned %lu\n", ret);
 
@@ -7508,8 +7458,7 @@ static void test_h264_decoder(void)
     ok(hr == S_OK, "GetOutputStreamInfo returned %#lx\n", hr);
     ok(output_info.dwFlags == flags, "got dwFlags %#lx\n", output_info.dwFlags);
     todo_wine
-    ok(output_info.cbSize == 1920 * 1080 * 2 || broken(output_info.cbSize == 1920 * 1088 * 2) /* Win7 */,
-            "got cbSize %#lx\n", output_info.cbSize);
+    ok(output_info.cbSize == input_width * input_height * 2, "got cbSize %#lx\n", output_info.cbSize);
     ok(output_info.cbAlignment == 0, "got cbAlignment %#lx\n", output_info.cbAlignment);
 
     /* output types can now be enumerated (though they are actually the same for all input types) */
@@ -7520,9 +7469,6 @@ static void test_h264_decoder(void)
         winetest_push_context("out %lu", i);
         ok(hr == S_OK, "GetOutputAvailableType returned %#lx\n", hr);
         check_media_type(media_type, default_outputs[i], -1);
-        hr = IMFMediaType_GetItem(media_type, &MF_MT_VIDEO_ROTATION, NULL);
-        is_win7 = broken(FAILED(hr));
-        check_media_type(media_type, is_win7 ? default_outputs_win7[i] : default_outputs_extra[i], -1);
         ret = IMFMediaType_Release(media_type);
         ok(ret == 0, "Release returned %lu\n", ret);
         winetest_pop_context();
@@ -7550,8 +7496,8 @@ static void test_h264_decoder(void)
         init_media_type(media_type, minimal_output_type_desc, i + 1);
     }
     hr = IMFTransform_SetOutputType(transform, 0, media_type, 0);
-    ok(hr == (is_win7 ? MF_E_INVALIDMEDIATYPE : S_OK), "SetOutputType returned %#lx.\n", hr);
-    init_media_type(media_type, is_win7 ? output_type_desc_win7 : output_type_desc, -1);
+    ok(hr == S_OK, "SetOutputType returned %#lx.\n", hr);
+    init_media_type(media_type, output_type_desc, -1);
     hr = IMFTransform_SetOutputType(transform, 0, media_type, 0);
     ok(hr == S_OK, "SetOutputType returned %#lx.\n", hr);
     ret = IMFMediaType_Release(media_type);
@@ -7559,7 +7505,7 @@ static void test_h264_decoder(void)
 
     hr = IMFTransform_GetOutputCurrentType(transform, 0, &media_type);
     ok(hr == S_OK, "GetOutputCurrentType returned %#lx\n", hr);
-    check_media_type(media_type, is_win7 ? output_type_desc_win7 : output_type_desc, -1);
+    check_media_type(media_type, output_type_desc, -1);
     ret = IMFMediaType_Release(media_type);
     ok(ret == 0, "Release returned %lu\n", ret);
 
@@ -7571,7 +7517,6 @@ static void test_h264_decoder(void)
         winetest_push_context("out %lu", i);
         ok(hr == S_OK, "GetOutputAvailableType returned %#lx\n", hr);
         check_media_type(media_type, default_outputs[i], -1);
-        check_media_type(media_type, is_win7 ? default_outputs_win7[i] : default_outputs_extra[i], -1);
         ret = IMFMediaType_Release(media_type);
         ok(ret == 0, "Release returned %lu\n", ret);
         winetest_pop_context();
@@ -7595,8 +7540,7 @@ static void test_h264_decoder(void)
     ok(hr == S_OK, "GetOutputStreamInfo returned %#lx\n", hr);
     ok(output_info.dwFlags == flags, "got dwFlags %#lx\n", output_info.dwFlags);
     todo_wine
-    ok(output_info.cbSize == 1920 * 1080 * 2 || broken(output_info.cbSize == 1920 * 1088 * 2) /* Win7 */,
-            "got cbSize %#lx\n", output_info.cbSize);
+    ok(output_info.cbSize == input_width * input_height * 2, "got cbSize %#lx\n", output_info.cbSize);
     ok(output_info.cbAlignment == 0, "got cbAlignment %#lx\n", output_info.cbAlignment);
 
     input_count = output_count = 0xdeadbeef;
@@ -7707,7 +7651,7 @@ static void test_h264_decoder(void)
     /* current output type is still the one we selected */
     hr = IMFTransform_GetOutputCurrentType(transform, 0, &media_type);
     ok(hr == S_OK, "GetOutputCurrentType returned %#lx\n", hr);
-    check_media_type(media_type, is_win7 ? output_type_desc_win7 : output_type_desc, -1);
+    check_media_type(media_type, output_type_desc, -1);
     hr = IMFMediaType_GetItemType(media_type, &MF_MT_MINIMUM_DISPLAY_APERTURE, NULL);
     ok(hr == MF_E_ATTRIBUTENOTFOUND, "GetItemType returned %#lx\n", hr);
     ret = IMFMediaType_Release(media_type);
@@ -7727,7 +7671,7 @@ static void test_h264_decoder(void)
 
     status = 0;
     memset(&output, 0, sizeof(output));
-    output.pSample = create_sample(NULL, actual_width * actual_height * 2);
+    output.pSample = create_sample(NULL, nv12_frame_len);
     hr = IMFTransform_ProcessOutput(transform, 0, 1, &output, &status);
     ok(hr == S_OK, "ProcessOutput returned %#lx\n", hr);
     ok(output.dwStreamID == 0, "got dwStreamID %lu\n", output.dwStreamID);
@@ -7771,7 +7715,7 @@ static void test_h264_decoder(void)
     for (i = 0; i < actual_aperture.Area.cy; ++i)
     {
         memset(data + actual_width * i + actual_aperture.Area.cx, 0xcd, actual_width - actual_aperture.Area.cx);
-        memset(data + actual_width * (actual_height + i) + actual_aperture.Area.cx, 0xcd, actual_width - actual_aperture.Area.cx);
+        memset(data + actual_width * (actual_height + i / 2) + actual_aperture.Area.cx, 0xcd, actual_width - actual_aperture.Area.cx);
     }
     memset(data + actual_width * actual_aperture.Area.cy, 0xcd, (actual_height - actual_aperture.Area.cy) * actual_width);
     memset(data + actual_width * (actual_height + actual_aperture.Area.cy / 2), 0xcd, (actual_height - actual_aperture.Area.cy) / 2 * actual_width);
@@ -7791,10 +7735,10 @@ static void test_h264_decoder(void)
     /* we can change it, but only with the correct frame size */
     hr = MFCreateMediaType(&media_type);
     ok(hr == S_OK, "MFCreateMediaType returned %#lx\n", hr);
-    init_media_type(media_type, is_win7 ? output_type_desc_win7 : output_type_desc, -1);
+    init_media_type(media_type, output_type_desc, -1);
     hr = IMFTransform_SetOutputType(transform, 0, media_type, 0);
     ok(hr == MF_E_INVALIDMEDIATYPE, "SetOutputType returned %#lx.\n", hr);
-    init_media_type(media_type, is_win7 ? new_output_type_desc_win7 : new_output_type_desc, -1);
+    init_media_type(media_type, new_output_type_desc, -1);
     hr = IMFTransform_SetOutputType(transform, 0, media_type, 0);
     ok(hr == S_OK, "SetOutputType returned %#lx.\n", hr);
     ret = IMFMediaType_Release(media_type);
@@ -7802,7 +7746,7 @@ static void test_h264_decoder(void)
 
     hr = IMFTransform_GetOutputCurrentType(transform, 0, &media_type);
     ok(hr == S_OK, "GetOutputCurrentType returned %#lx\n", hr);
-    check_media_type(media_type, is_win7 ? new_output_type_desc_win7 : new_output_type_desc, -1);
+    check_media_type(media_type, new_output_type_desc, -1);
     hr = IMFMediaType_GetItemType(media_type, &MF_MT_MINIMUM_DISPLAY_APERTURE, NULL);
     ok(hr == MF_E_ATTRIBUTENOTFOUND, "GetItemType returned %#lx\n", hr);
     ret = IMFMediaType_Release(media_type);
@@ -7815,7 +7759,7 @@ static void test_h264_decoder(void)
     todo_wine
     ok(hr == MF_E_TRANSFORM_STREAM_CHANGE, "ProcessOutput returned %#lx\n", hr);
 
-    if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT)
+    while (hr == MF_E_TRANSFORM_NEED_MORE_INPUT)
     {
         hr = IMFTransform_ProcessInput(transform, 0, sample, 0);
         ok(hr == S_OK, "ProcessInput returned %#lx\n", hr);
@@ -7823,16 +7767,14 @@ static void test_h264_decoder(void)
         ok(ret <= 1, "Release returned %lu\n", ret);
         sample = next_h264_sample(&h264_encoded_data, &h264_encoded_data_len);
         hr = IMFTransform_ProcessOutput(transform, 0, 1, &output, &status);
-        todo_wine
+        todo_wine_if(hr == MF_E_TRANSFORM_NEED_MORE_INPUT)
         ok(hr == MF_E_TRANSFORM_STREAM_CHANGE, "ProcessOutput returned %#lx\n", hr);
     }
 
     ok(output.dwStreamID == 0, "got dwStreamID %lu\n", output.dwStreamID);
     ok(!!output.pSample, "got pSample %p\n", output.pSample);
-    todo_wine
     ok(output.dwStatus == MFT_OUTPUT_DATA_BUFFER_FORMAT_CHANGE, "got dwStatus %#lx\n", output.dwStatus);
     ok(!output.pEvents, "got pEvents %p\n", output.pEvents);
-    todo_wine
     ok(status == MFT_PROCESS_OUTPUT_STATUS_NEW_STREAMS, "got status %#lx\n", status);
     hr = IMFSample_GetTotalLength(output.pSample, &length);
     ok(hr == S_OK, "GetTotalLength returned %#lx\n", hr);
@@ -7855,17 +7797,16 @@ static void test_h264_decoder(void)
     memset(&output, 0, sizeof(output));
     output.pSample = create_sample(NULL, actual_width * actual_height * 2);
     hr = IMFTransform_ProcessOutput(transform, 0, 1, &output, &status);
-    todo_wine
     ok(hr == S_OK, "ProcessOutput returned %#lx\n", hr);
     ok(output.dwStreamID == 0, "got dwStreamID %lu\n", output.dwStreamID);
     ok(!!output.pSample, "got pSample %p\n", output.pSample);
     ok(output.dwStatus == 0, "got dwStatus %#lx\n", output.dwStatus);
     ok(!output.pEvents, "got pEvents %p\n", output.pEvents);
     ok(status == 0, "got status %#lx\n", status);
-    if (hr != S_OK) goto skip_i420_tests;
 
     hr = IMFSample_GetSampleTime(output.pSample, &time);
     ok(hr == S_OK, "GetSampleTime returned %#lx\n", hr);
+    todo_wine_if(time == 1334666)  /* when VA-API plugin is used */
     ok(time - 333666 <= 2, "got time %I64d\n", time);
 
     duration = 0xdeadbeef;
@@ -7901,7 +7842,6 @@ static void test_h264_decoder(void)
 
     check_sample(output.pSample, i420_frame_data, output_file);
 
-skip_i420_tests:
     ret = IMFSample_Release(output.pSample);
     ok(ret == 0, "Release returned %lu\n", ret);
 
@@ -7912,6 +7852,7 @@ skip_i420_tests:
     memset(&output, 0, sizeof(output));
     output.pSample = create_sample(NULL, actual_width * actual_height * 2);
     hr = IMFTransform_ProcessOutput(transform, 0, 1, &output, &status);
+    todo_wine_if(hr == S_OK)  /* when VA-API plugin is used */
     ok(hr == MF_E_TRANSFORM_NEED_MORE_INPUT, "ProcessOutput returned %#lx\n", hr);
     ok(output.dwStreamID == 0, "got dwStreamID %lu\n", output.dwStreamID);
     ok(!!output.pSample, "got pSample %p\n", output.pSample);
