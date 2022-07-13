@@ -119,22 +119,6 @@ static void dpiaware_init(void)
     }
 }
 
-static void CDECL notify_ime( HWND hwnd, UINT param )
-{
-    HWND ime_default = ImmGetDefaultIMEWnd( hwnd );
-    if (ime_default) SendMessageW( ime_default, WM_IME_INTERNAL, param, HandleToUlong(hwnd) );
-}
-
-static BOOL WINAPI register_imm( HWND hwnd )
-{
-    return imm_register_window( hwnd );
-}
-
-static void WINAPI unregister_imm( HWND hwnd )
-{
-    imm_unregister_window( hwnd );
-}
-
 static NTSTATUS try_finally( NTSTATUS (CDECL *func)( void *), void *arg,
                              void (CALLBACK *finally_func)( BOOL ))
 {
@@ -149,14 +133,7 @@ static NTSTATUS try_finally( NTSTATUS (CDECL *func)( void *), void *arg,
 
 static const struct user_callbacks user_funcs =
 {
-    ImmProcessKey,
-    ImmTranslateMessage,
     NtWaitForMultipleObjects,
-    notify_ime,
-    post_dde_message,
-    unpack_dde_message,
-    register_imm,
-    unregister_imm,
     try_finally,
 };
 
@@ -182,6 +159,17 @@ static NTSTATUS WINAPI User32DrawText( const struct draw_text_params *params, UL
     return DrawTextW( params->hdc, params->str, size / sizeof(WCHAR), params->rect, params->flags );
 }
 
+static NTSTATUS WINAPI User32ImmProcessKey( const struct imm_process_key_params *params, ULONG size )
+{
+    return ImmProcessKey( params->hwnd, params->hkl, params->vkey, params->key_data, 0 );
+}
+
+static NTSTATUS WINAPI User32ImmTranslateMessage( const struct imm_translate_message_params *params,
+                                                  ULONG size )
+{
+    return ImmTranslateMessage( params->hwnd, params->msg, params->wparam, params->key_data );
+}
+
 static NTSTATUS WINAPI User32LoadImage( const struct load_image_params *params, ULONG size )
 {
     HANDLE ret = LoadImageW( params->hinst, params->name, params->type,
@@ -202,6 +190,12 @@ static NTSTATUS WINAPI User32FreeCachedClipboardData( const struct free_cached_d
     return 0;
 }
 
+static NTSTATUS WINAPI User32PostDDEMessage( const struct post_dde_message_params *params, ULONG size )
+{
+    return post_dde_message( params->hwnd, params->msg, params->wparam, params->lparam,
+                             params->dest_tid, params->type );
+}
+
 static NTSTATUS WINAPI User32RenderSsynthesizedFormat( const struct render_synthesized_format_params *params,
                                                        ULONG size )
 {
@@ -212,6 +206,16 @@ static NTSTATUS WINAPI User32RenderSsynthesizedFormat( const struct render_synth
 static BOOL WINAPI User32LoadDriver( const WCHAR *path, ULONG size )
 {
     return LoadLibraryW( path ) != NULL;
+}
+
+static NTSTATUS WINAPI User32UnpackDDEMessage( const struct unpack_dde_message_params *params, ULONG size )
+{
+    struct unpack_dde_message_result *result = params->result;
+    result->wparam = params->wparam;
+    result->lparam = params->lparam;
+    size -= FIELD_OFFSET( struct unpack_dde_message_params, data );
+    return unpack_dde_message( params->hwnd, params->message, &result->wparam, &result->lparam,
+                               params->data, size );
 }
 
 static const void *kernel_callback_table[NtUserCallCount] =
@@ -225,11 +229,15 @@ static const void *kernel_callback_table[NtUserCallCount] =
     User32DrawScrollBar,
     User32DrawText,
     User32FreeCachedClipboardData,
+    User32ImmProcessKey,
+    User32ImmTranslateMessage,
     User32LoadDriver,
     User32LoadImage,
     User32LoadSysMenu,
+    User32PostDDEMessage,
     User32RegisterBuiltinClasses,
     User32RenderSsynthesizedFormat,
+    User32UnpackDDEMessage,
 };
 
 

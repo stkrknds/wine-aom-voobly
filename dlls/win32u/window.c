@@ -4680,12 +4680,7 @@ LRESULT destroy_window( HWND hwnd )
 
     TRACE( "%p\n", hwnd );
 
-    /* destroy default IME window */
-    if (win_set_flags( hwnd, 0, WIN_HAS_IME_WIN ) & WIN_HAS_IME_WIN)
-    {
-        TRACE("unregister IME window for %p\n", hwnd);
-        if (user_callbacks) user_callbacks->unregister_imm( hwnd );
-    }
+    unregister_imm_window( hwnd );
 
     /* free child windows */
     if ((children = list_window_children( 0, hwnd, NULL, 0 )))
@@ -5163,6 +5158,8 @@ HWND WINAPI NtUserCreateWindowEx( DWORD ex_style, UNICODE_STRING *class_name,
 
     if (win->dwStyle & WS_SYSMENU) NtUserSetSystemMenu( hwnd, 0 );
 
+    win->imc = get_default_input_context();
+
     /* call the WH_CBT hook */
 
     release_win_ptr( win );
@@ -5260,7 +5257,7 @@ HWND WINAPI NtUserCreateWindowEx( DWORD ex_style, UNICODE_STRING *class_name,
     /* create default IME window */
 
     if (!is_desktop_window( hwnd ) && parent != get_hwnd_message_parent() &&
-        user_callbacks && user_callbacks->register_imm( hwnd ))
+        register_imm_window( hwnd ))
     {
         TRACE( "register IME window for %p\n", hwnd );
         win_set_flags( hwnd, WIN_HAS_IME_WIN, 0 );
@@ -5375,6 +5372,9 @@ ULONG_PTR WINAPI NtUserCallHwnd( HWND hwnd, DWORD code )
     case NtUserCallHwnd_DrawMenuBar:
         return draw_menu_bar( hwnd );
 
+    case NtUserCallHwnd_GetDefaultImeWindow:
+        return HandleToUlong( get_default_ime_window( hwnd ));
+
     case NtUserCallHwnd_GetDpiForWindow:
         return get_dpi_for_window( hwnd );
 
@@ -5386,6 +5386,9 @@ ULONG_PTR WINAPI NtUserCallHwnd( HWND hwnd, DWORD code )
 
     case NtUserCallHwnd_GetWindowDpiAwarenessContext:
         return (ULONG_PTR)get_window_dpi_awareness_context( hwnd );
+
+    case NtUserCallHwnd_GetWindowInputContext:
+        return HandleToUlong( get_window_input_context( hwnd ));
 
     case NtUserCallHwnd_GetWindowTextLength:
         return get_server_window_text( hwnd, NULL, 0 );

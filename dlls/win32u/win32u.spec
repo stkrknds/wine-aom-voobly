@@ -753,7 +753,7 @@
 @ stdcall -syscall NtUserAddClipboardFormatListener(long)
 @ stub NtUserAddVisualIdentifier
 @ stub NtUserAlterWindowStyle
-@ stub NtUserAssociateInputContext
+@ stdcall -syscall NtUserAssociateInputContext(long long long)
 @ stdcall -syscall NtUserAttachThreadInput(long long long)
 @ stub NtUserAutoPromoteMouseInPointer
 @ stub NtUserAutoRotateScreen
@@ -837,7 +837,7 @@
 @ stdcall NtUserDestroyWindow(long)
 @ stub NtUserDisableImmersiveOwner
 @ stub NtUserDisableProcessWindowFiltering
-@ stub NtUserDisableThreadIme
+@ stdcall NtUserDisableThreadIme(long)
 @ stub NtUserDiscardPointerFrameMessages
 @ stdcall NtUserDispatchMessage(ptr)
 @ stub NtUserDisplayConfigGetDeviceInfo

@@ -37,11 +37,15 @@ enum
     NtUserDrawScrollBar,
     NtUserDrawText,
     NtUserFreeCachedClipboardData,
+    NtUserImmProcessKey,
+    NtUserImmTranslateMessage,
     NtUserLoadDriver,
     NtUserLoadImage,
     NtUserLoadSysMenu,
+    NtUserPostDDEMessage,
     NtUserRegisterBuiltinClasses,
     NtUserRenderSynthesizedFormat,
+    NtUserUnpackDDEMessage,
     /* win16 hooks */
     NtUserCallFreeIcon,
     NtUserThunkLock,
@@ -63,6 +67,8 @@ struct ntuser_thread_info
     ULONG_PTR  message_extra;     /* value for GetMessageExtraInfo */
     HWND       top_window;        /* desktop window */
     HWND       msg_window;        /* HWND_MESSAGE parent window */
+    HIMC       default_imc;       /* default input context */
+    void      *client_imm;        /* client IMM thread info */
 };
 
 static inline struct ntuser_thread_info *NtUserGetThreadInfo(void)
@@ -179,6 +185,24 @@ struct free_cached_data_params
     HANDLE handle;
 };
 
+/* NtUserImmProcessKey params */
+struct imm_process_key_params
+{
+    HWND hwnd;
+    HKL hkl;
+    UINT vkey;
+    LPARAM key_data;
+};
+
+/* NtUserImmTranslateMessage params */
+struct imm_translate_message_params
+{
+    HWND hwnd;
+    UINT msg;
+    WPARAM wparam;
+    LPARAM key_data;
+};
+
 /* NtUserLoadImage params */
 struct load_image_params
 {
@@ -196,11 +220,39 @@ struct load_sys_menu_params
     BOOL mdi;
 };
 
+/* NtUserPostDDEMessage params */
+struct post_dde_message_params
+{
+    HWND hwnd;
+    UINT msg;
+    WPARAM wparam;
+    LPARAM lparam;
+    DWORD dest_tid;
+    DWORD type;
+};
+
 /* NtUserRenderSynthesizedFormat params */
 struct render_synthesized_format_params
 {
     UINT format;
     UINT from;
+};
+
+/* NtUserUnpackDDEMessage params */
+struct unpack_dde_message_result
+{
+    WPARAM wparam;
+    LPARAM lparam;
+};
+
+struct unpack_dde_message_params
+{
+    struct unpack_dde_message_result *result;  /* FIXME: Use NtCallbackReturn instead */
+    HWND hwnd;
+    UINT message;
+    WPARAM wparam;
+    LPARAM lparam;
+    char data[1];
 };
 
 /* process DPI awareness contexts */
@@ -365,6 +417,14 @@ enum input_context_attr
 {
     NtUserInputContextClientPtr,
     NtUserInputContextThreadId,
+};
+
+/* NtUserAssociateInputContext result */
+enum associate_input_context_result
+{
+    AICR_OK,
+    AICR_FOCUS_CHANGED,
+    AICR_FAILED,
 };
 
 /* internal messages codes */
@@ -545,6 +605,7 @@ struct packed_MDICREATESTRUCTW
 
 HKL     WINAPI NtUserActivateKeyboardLayout( HKL layout, UINT flags );
 BOOL    WINAPI NtUserAddClipboardFormatListener( HWND hwnd );
+UINT    WINAPI NtUserAssociateInputContext( HWND hwnd, HIMC ctx, ULONG flags );
 BOOL    WINAPI NtUserAttachThreadInput( DWORD from, DWORD to, BOOL attach );
 HDC     WINAPI NtUserBeginPaint( HWND hwnd, PAINTSTRUCT *ps );
 NTSTATUS WINAPI NtUserBuildHwndList( HDESK desktop, ULONG unk2, ULONG unk3, ULONG unk4,
@@ -588,6 +649,7 @@ BOOL    WINAPI NtUserDestroyCursor( HCURSOR cursor, ULONG arg );
 BOOL    WINAPI NtUserDestroyInputContext( HIMC handle );
 BOOL    WINAPI NtUserDestroyMenu( HMENU menu );
 BOOL    WINAPI NtUserDestroyWindow( HWND hwnd );
+BOOL    WINAPI NtUserDisableThreadIme( DWORD thread_id );
 LRESULT WINAPI NtUserDispatchMessage( const MSG *msg );
 BOOL    WINAPI NtUserDragDetect( HWND hwnd, int x, int y );
 BOOL    WINAPI NtUserDrawCaptionTemp( HWND hwnd, HDC hdc, const RECT *rect, HFONT font,
@@ -1044,10 +1106,12 @@ enum
 {
     NtUserCallHwnd_ArrangeIconicWindows,
     NtUserCallHwnd_DrawMenuBar,
+    NtUserCallHwnd_GetDefaultImeWindow,
     NtUserCallHwnd_GetDpiForWindow,
     NtUserCallHwnd_GetParent,
     NtUserCallHwnd_GetWindowContextHelpId,
     NtUserCallHwnd_GetWindowDpiAwarenessContext,
+    NtUserCallHwnd_GetWindowInputContext,
     NtUserCallHwnd_GetWindowTextLength,
     NtUserCallHwnd_IsWindow,
     NtUserCallHwnd_IsWindowEnabled,
@@ -1071,6 +1135,11 @@ static inline DWORD NtUserGetWindowContextHelpId( HWND hwnd )
     return NtUserCallHwnd( hwnd, NtUserCallHwnd_GetWindowContextHelpId );
 }
 
+static inline HWND NtUserGetDefaultImeWindow( HWND hwnd )
+{
+    return UlongToHandle( NtUserCallHwnd( hwnd, NtUserCallHwnd_GetDefaultImeWindow ));
+}
+
 static inline UINT NtUserGetDpiForWindow( HWND hwnd )
 {
     return NtUserCallHwnd( hwnd, NtUserCallHwnd_GetDpiForWindow );
@@ -1085,6 +1154,11 @@ static inline DPI_AWARENESS_CONTEXT NtUserGetWindowDpiAwarenessContext( HWND hwn
 {
     return (DPI_AWARENESS_CONTEXT)NtUserCallHwnd( hwnd,
                                                   NtUserCallHwnd_GetWindowDpiAwarenessContext );
+}
+
+static inline HIMC NtUserGetWindowInputContext( HWND hwnd )
+{
+    return UlongToHandle( NtUserCallHwnd( hwnd, NtUserCallHwnd_GetWindowInputContext ));
 }
 
 static inline INT NtUserGetWindowTextLength( HWND hwnd )

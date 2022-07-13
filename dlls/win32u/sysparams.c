@@ -4818,6 +4818,7 @@ static void thread_detach(void)
     free( thread_info->rawinput );
 
     destroy_thread_windows();
+    cleanup_imm_thread();
     NtClose( thread_info->server_queue );
 
     exiting_thread_id = 0;
