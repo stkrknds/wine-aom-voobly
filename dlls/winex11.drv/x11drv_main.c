@@ -273,6 +273,7 @@ static inline BOOL ignore_error( Display *display, XErrorEvent *event )
 void X11DRV_expect_error( Display *display, x11drv_error_callback callback, void *arg )
 {
     pthread_mutex_lock( &error_mutex );
+    XLockDisplay( display );
     err_callback         = callback;
     err_callback_display = display;
     err_callback_arg     = arg;
@@ -291,6 +292,7 @@ int X11DRV_check_error(void)
 {
     int res = err_callback_result;
     err_callback = NULL;
+    XUnlockDisplay( err_callback_display );
     pthread_mutex_unlock( &error_mutex );
     return res;
 }
@@ -302,7 +304,7 @@ int X11DRV_check_error(void)
 static int error_handler( Display *display, XErrorEvent *error_evt )
 {
     if (err_callback && display == err_callback_display &&
-        (long)(error_evt->serial - err_serial) >= 0)
+        (!error_evt->serial || error_evt->serial >= err_serial))
     {
         if ((err_callback_result = err_callback( display, error_evt, err_callback_arg )))
         {

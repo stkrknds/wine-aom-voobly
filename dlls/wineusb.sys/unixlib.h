@@ -26,13 +26,6 @@
 #include "ddk/wdm.h"
 #include "wine/unixlib.h"
 
-struct unix_device
-{
-    struct list entry;
-
-    libusb_device_handle *handle;
-};
-
 enum usb_event_type
 {
     USB_EVENT_ADD_DEVICE,
@@ -47,7 +40,14 @@ struct usb_event
 
     union
     {
-        struct unix_device *added_device;
+        struct usb_add_device_event
+        {
+            struct unix_device *device;
+            UINT16 vendor, product, revision;
+            UINT8 class, subclass, protocol;
+            bool interface;
+            UINT8 interface_index;
+        } added_device;
         struct unix_device *removed_device;
         IRP *completed_irp;
     } u;

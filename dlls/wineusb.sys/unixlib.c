@@ -40,6 +40,15 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(wineusb);
 
+struct unix_device
+{
+    struct list entry;
+
+    libusb_device_handle *handle;
+
+    bool interface;
+};
+
 static libusb_hotplug_callback_handle hotplug_cb_handle;
 
 static bool thread_shutdown;
@@ -109,6 +118,7 @@ static NTSTATUS usb_get_event(void *args)
 
 static void add_usb_device(libusb_device *libusb_device)
 {
+    struct libusb_config_descriptor *config_desc;
     struct libusb_device_descriptor device_desc;
     struct unix_device *unix_device;
     struct usb_event usb_event;
@@ -128,13 +138,74 @@ static void add_usb_device(libusb_device *libusb_device)
         free(unix_device);
         return;
     }
+    unix_device->interface = false;
+
     pthread_mutex_lock(&device_mutex);
     list_add_tail(&device_list, &unix_device->entry);
     pthread_mutex_unlock(&device_mutex);
 
     usb_event.type = USB_EVENT_ADD_DEVICE;
-    usb_event.u.added_device = unix_device;
+    usb_event.u.added_device.device = unix_device;
+    usb_event.u.added_device.vendor = device_desc.idVendor;
+    usb_event.u.added_device.product = device_desc.idProduct;
+    usb_event.u.added_device.revision = device_desc.bcdDevice;
+    usb_event.u.added_device.class = device_desc.bDeviceClass;
+    usb_event.u.added_device.subclass = device_desc.bDeviceSubClass;
+    usb_event.u.added_device.protocol = device_desc.bDeviceProtocol;
+    usb_event.u.added_device.interface = false;
     queue_event(&usb_event);
+
+    if (!(ret = libusb_get_active_config_descriptor(libusb_device, &config_desc)))
+    {
+        /* Create new devices for interfaces of composite devices.
+         *
+         * On Windows this is the job of usbccgp.sys, a separate driver that
+         * layers on top of the base USB driver. While we could take this
+         * approach as well, implementing usbccgp is a lot more work, whereas
+         * interface support is effectively built into libusb.
+         *
+         * FIXME: usbccgp does not create separate interfaces in some cases,
+         * e.g. when there is an interface association descriptor available.
+         */
+        if (config_desc->bNumInterfaces > 1)
+        {
+            uint8_t i;
+
+            for (i = 0; i < config_desc->bNumInterfaces; ++i)
+            {
+                const struct libusb_interface *interface = &config_desc->interface[i];
+                const struct libusb_interface_descriptor *iface_desc;
+                struct unix_device *unix_iface;
+
+                if (interface->num_altsetting != 1)
+                    FIXME("Interface %u has %u alternate settings; using the first one.\n",
+                            i, interface->num_altsetting);
+                iface_desc = &interface->altsetting[0];
+
+                if (!(unix_iface = calloc(1, sizeof(*unix_iface))))
+                    return;
+
+                unix_iface->handle = unix_device->handle;
+                unix_iface->interface = true;
+                pthread_mutex_lock(&device_mutex);
+                list_add_tail(&device_list, &unix_iface->entry);
+                pthread_mutex_unlock(&device_mutex);
+
+                usb_event.u.added_device.device = unix_iface;
+                usb_event.u.added_device.class = iface_desc->bInterfaceClass;
+                usb_event.u.added_device.subclass = iface_desc->bInterfaceSubClass;
+                usb_event.u.added_device.protocol = iface_desc->bInterfaceProtocol;
+                usb_event.u.added_device.interface = true;
+                usb_event.u.added_device.interface_index = iface_desc->bInterfaceNumber;
+                queue_event(&usb_event);
+            }
+        }
+        libusb_free_config_descriptor(config_desc);
+    }
+    else
+    {
+        ERR("Failed to get configuration descriptor: %s\n", libusb_strerror(ret));
+    }
 }
 
 static void remove_usb_device(libusb_device *libusb_device)
@@ -173,12 +244,19 @@ static NTSTATUS usb_main_loop(void *args)
 
     TRACE("Starting libusb event thread.\n");
 
+    if ((ret = libusb_init(NULL)))
+    {
+        ERR("Failed to initialize libusb: %s\n", libusb_strerror(ret));
+        return STATUS_UNSUCCESSFUL;
+    }
+
     if ((ret = libusb_hotplug_register_callback(NULL,
             LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED | LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT,
             LIBUSB_HOTPLUG_ENUMERATE, LIBUSB_HOTPLUG_MATCH_ANY, LIBUSB_HOTPLUG_MATCH_ANY,
             LIBUSB_HOTPLUG_MATCH_ANY, hotplug_cb, NULL, &hotplug_cb_handle)))
     {
         ERR("Failed to register callback: %s\n", libusb_strerror(ret));
+        libusb_exit(NULL);
         return STATUS_UNSUCCESSFUL;
     }
 
@@ -187,6 +265,8 @@ static NTSTATUS usb_main_loop(void *args)
         if ((ret = libusb_handle_events(NULL)))
             ERR("Error handling events: %s\n", libusb_strerror(ret));
     }
+
+    libusb_exit(NULL);
 
     queue_event(&shutdown_event);
 
