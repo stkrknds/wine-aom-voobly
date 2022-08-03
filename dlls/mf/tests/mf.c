@@ -125,7 +125,6 @@ static void check_dmo(const GUID *class_id, const WCHAR *expect_name, const GUID
 
     hr = DMOGetName(class_id, name);
     ok(hr == S_OK, "DMOGetName returned %#lx\n", hr);
-    todo_wine_if(!wcscmp(expect_name, L"WMAudio Decoder DMO"))
     ok(!wcscmp(name, expect_name), "got name %s\n", debugstr_w(name));
 
     hr = DMOGetTypes(class_id, ARRAY_SIZE(input), &input_count, input,
@@ -2139,7 +2138,6 @@ static void test_topology_loader(void)
             /* PCM -> PCM, same enumerated type, no current type */
             .input_type = &audio_pcm_44100, .output_type = &audio_pcm_44100, .sink_method = MF_CONNECT_DIRECT, .source_method = -1,
             .expected_result = S_OK,
-            .flags = LOADER_TODO,
         },
         {
             /* PCM -> PCM, same enumerated type, incomplete current type */
@@ -2180,7 +2178,6 @@ static void test_topology_loader(void)
             /* PCM -> PCM, different enumerated bps, no current type */
             .input_type = &audio_pcm_44100, .output_type = &audio_pcm_48000, .sink_method = MF_CONNECT_DIRECT, .source_method = -1,
             .expected_result = MF_E_INVALIDMEDIATYPE,
-            .flags = LOADER_TODO,
         },
         {
             /* PCM -> PCM, different enumerated bps, same current bps */
@@ -2199,25 +2196,24 @@ static void test_topology_loader(void)
             /* PCM -> PCM, different enumerated bps, no current type, sink allow converter */
             .input_type = &audio_pcm_44100, .output_type = &audio_pcm_48000, .sink_method = MF_CONNECT_ALLOW_CONVERTER, .source_method = MF_CONNECT_DIRECT,
             .expected_result = S_OK,
-            .flags = LOADER_NEEDS_VIDEO_PROCESSOR | LOADER_EXPECTED_CONVERTER | LOADER_TODO,
+            .flags = LOADER_NEEDS_VIDEO_PROCESSOR | LOADER_EXPECTED_CONVERTER,
         },
         {
             /* PCM -> PCM, different enumerated bps, no current type, sink allow decoder */
             .input_type = &audio_pcm_44100, .output_type = &audio_pcm_48000, .sink_method = MF_CONNECT_ALLOW_DECODER, .source_method = MF_CONNECT_DIRECT,
             .expected_result = S_OK,
-            .flags = LOADER_NEEDS_VIDEO_PROCESSOR | LOADER_EXPECTED_CONVERTER | LOADER_TODO,
+            .flags = LOADER_NEEDS_VIDEO_PROCESSOR | LOADER_EXPECTED_CONVERTER,
         },
         {
             /* PCM -> PCM, different enumerated bps, no current type, default methods */
             .input_type = &audio_pcm_44100, .output_type = &audio_pcm_48000, .sink_method = -1, .source_method = -1,
             .expected_result = S_OK,
-            .flags = LOADER_NEEDS_VIDEO_PROCESSOR | LOADER_EXPECTED_CONVERTER | LOADER_TODO,
+            .flags = LOADER_NEEDS_VIDEO_PROCESSOR | LOADER_EXPECTED_CONVERTER,
         },
         {
             /* PCM -> PCM, different enumerated bps, no current type, source allow converter */
             .input_type = &audio_pcm_44100, .output_type = &audio_pcm_48000, .sink_method = MF_CONNECT_DIRECT, .source_method = MF_CONNECT_ALLOW_CONVERTER,
             .expected_result = MF_E_INVALIDMEDIATYPE,
-            .flags = LOADER_TODO,
         },
 
         {
@@ -2238,7 +2234,7 @@ static void test_topology_loader(void)
             .input_type = &audio_mp3_44100, .output_type = &audio_pcm_44100, .sink_method = MF_CONNECT_ALLOW_CONVERTER, .source_method = -1,
             .current_input = &audio_mp3_44100,
             .expected_result = MF_E_TRANSFORM_NOT_POSSIBLE_FOR_CURRENT_MEDIATYPE_COMBINATION,
-            .flags = LOADER_NEEDS_VIDEO_PROCESSOR | LOADER_TODO,
+            .flags = LOADER_NEEDS_VIDEO_PROCESSOR,
         },
         {
             /* MP3 -> PCM */
@@ -2324,7 +2320,6 @@ static void test_topology_loader(void)
 
     /* Source node only. */
     hr = IMFTopoLoader_Load(loader, topology, &full_topology, NULL);
-    todo_wine_if(hr == E_INVALIDARG)
     ok(hr == MF_E_TOPO_UNSUPPORTED, "Unexpected hr %#lx.\n", hr);
 
     hr = MFCreateTopologyNode(MF_TOPOLOGY_OUTPUT_NODE, &sink_node);
@@ -2428,7 +2423,7 @@ todo_wine {
 
             hr = IMFTopology_GetNodeCount(full_topology, &node_count);
             ok(hr == S_OK, "Failed to get node count, hr %#lx.\n", hr);
-            todo_wine_if(test->flags & (LOADER_EXPECTED_CONVERTER | LOADER_EXPECTED_DECODER))
+            todo_wine_if(test->flags & LOADER_EXPECTED_DECODER)
             ok(node_count == count, "Unexpected node count %u.\n", node_count);
 
             hr = IMFTopologyNode_GetTopoNodeID(src_node, &node_id);
@@ -2443,7 +2438,7 @@ todo_wine {
             hr = IMFTopology_GetNodeByID(full_topology, node_id, &sink_node2);
             ok(hr == S_OK, "Failed to get sink in resolved topology, hr %#lx.\n", hr);
 
-            if (test->flags & (LOADER_EXPECTED_DECODER | LOADER_EXPECTED_CONVERTER) && strcmp(winetest_platform, "wine"))
+            if (test->flags & (LOADER_EXPECTED_DECODER | LOADER_EXPECTED_CONVERTER))
             {
                 hr = IMFTopologyNode_GetOutput(src_node2, 0, &mft_node, &index);
                 ok(hr == S_OK, "Failed to get transform node in resolved topology, hr %#lx.\n", hr);
@@ -4438,6 +4433,29 @@ static void check_sar_rate_support(IMFMediaSink *sink)
 
 static void test_sar(void)
 {
+    static const struct attribute_desc input_type_desc_48000[] =
+    {
+        ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio),
+        ATTR_GUID(MF_MT_SUBTYPE, MFAudioFormat_Float),
+        ATTR_UINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, 48000),
+        ATTR_UINT32(MF_MT_AUDIO_NUM_CHANNELS, 2),
+        ATTR_UINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 32),
+        ATTR_UINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, 8),
+        ATTR_UINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, 8 * 48000),
+        {0},
+    };
+    static const struct attribute_desc input_type_desc_44100[] =
+    {
+        ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio),
+        ATTR_GUID(MF_MT_SUBTYPE, MFAudioFormat_Float),
+        ATTR_UINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, 44100),
+        ATTR_UINT32(MF_MT_AUDIO_NUM_CHANNELS, 2),
+        ATTR_UINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 32),
+        ATTR_UINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, 8),
+        ATTR_UINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, 8 * 44100),
+        {0},
+    };
+
     IMFPresentationClock *present_clock, *present_clock2;
     IMFMediaType *mediatype, *mediatype2, *mediatype3;
     IMFClockStateSink *state_sink, *state_sink2;
@@ -4447,17 +4465,16 @@ static void test_sar(void)
     IMFAudioStreamVolume *stream_volume;
     IMFMediaSink *sink, *sink2;
     IMFStreamSink *stream_sink;
+    UINT32 channel_count, rate;
     IMFAttributes *attributes;
-    DWORD i, id, flags, count;
+    DWORD id, flags, count;
     IMFActivate *activate;
-    UINT32 channel_count;
     MFCLOCK_STATE state;
     IMFClock *clock;
     IUnknown *unk;
     HRESULT hr;
     GUID guid;
     BOOL mute;
-    int found;
     LONG ref;
 
     hr = CoInitialize(NULL);
@@ -4617,21 +4634,37 @@ if (SUCCEEDED(hr))
     ok(hr == S_OK, "Failed to get type count, hr %#lx.\n", hr);
     ok(!!count, "Unexpected type count %lu.\n", count);
 
-    /* A number of same major/subtype entries are returned, with different degrees of finer format
-       details. Some incomplete types are not accepted, check that at least one of them is considered supported. */
+    hr = IMFMediaTypeHandler_GetMediaTypeByIndex(handler, count, &mediatype);
+    ok(hr == MF_E_NO_MORE_TYPES, "Unexpected hr %#lx.\n", hr);
 
-    for (i = 0, found = -1; i < count; ++i)
+    hr = IMFMediaTypeHandler_GetMediaTypeByIndex(handler, 0, &mediatype);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFMediaType_GetUINT32(mediatype, &MF_MT_AUDIO_SAMPLES_PER_SECOND, &rate);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(rate == 48000 || rate == 44100, "got rate %u.\n", rate);
+    IMFMediaType_Release(mediatype);
+
+
+    /* check required output media type attributes */
+
+    hr = MFCreateMediaType(&mediatype);
+    ok(hr == S_OK, "MFCreateMediaType returned %#lx\n", hr);
+    hr = IMFMediaTypeHandler_IsMediaTypeSupported(handler, mediatype, NULL);
+    ok(hr == MF_E_ATTRIBUTENOTFOUND, "Unexpected hr %#lx.\n", hr);
+    init_media_type(mediatype, rate == 44100 ? input_type_desc_44100 : input_type_desc_48000, 2);
+    for (int i = 1; i < (rate == 44100 ? ARRAY_SIZE(input_type_desc_44100) : ARRAY_SIZE(input_type_desc_48000)) - 1; ++i)
     {
-        hr = IMFMediaTypeHandler_GetMediaTypeByIndex(handler, i, &mediatype);
-        ok(hr == S_OK, "Failed to get media type, hr %#lx.\n", hr);
-
-        if (SUCCEEDED(IMFMediaTypeHandler_IsMediaTypeSupported(handler, mediatype, NULL)))
-            found = i;
-        IMFMediaType_Release(mediatype);
-
-        if (found != -1) break;
+        hr = IMFMediaTypeHandler_IsMediaTypeSupported(handler, mediatype, NULL);
+        ok(hr == MF_E_INVALIDMEDIATYPE, "Unexpected hr %#lx.\n", hr);
+        init_media_type(mediatype, rate == 44100 ? input_type_desc_44100 : input_type_desc_48000, i + 1);
     }
-    ok(found != -1, "Haven't found a supported type.\n");
+    hr = IMFMediaTypeHandler_IsMediaTypeSupported(handler, mediatype, NULL);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    init_media_type(mediatype, rate == 44100 ? input_type_desc_44100 : input_type_desc_48000, -1);
+    hr = IMFMediaTypeHandler_IsMediaTypeSupported(handler, mediatype, NULL);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    IMFMediaType_Release(mediatype);
+
 
     hr = IMFMediaTypeHandler_GetCurrentMediaType(handler, &mediatype);
     ok(hr == MF_E_NOT_INITIALIZED, "Unexpected hr %#lx.\n", hr);
@@ -4656,10 +4689,9 @@ if (SUCCEEDED(hr))
     hr = IMFMediaTypeHandler_SetCurrentMediaType(handler, mediatype);
     ok(hr == MF_E_INVALIDMEDIATYPE, "Unexpected hr %#lx.\n", hr);
 
-    hr = IMFMediaTypeHandler_GetMediaTypeByIndex(handler, found, &mediatype2);
+    hr = IMFMediaTypeHandler_GetMediaTypeByIndex(handler, count - 1, &mediatype2);
     ok(hr == S_OK, "Failed to get media type, hr %#lx.\n", hr);
-
-    hr = IMFMediaTypeHandler_GetMediaTypeByIndex(handler, found, &mediatype3);
+    hr = IMFMediaTypeHandler_GetMediaTypeByIndex(handler, count - 1, &mediatype3);
     ok(hr == S_OK, "Failed to get media type, hr %#lx.\n", hr);
     ok(mediatype2 == mediatype3, "Unexpected instance.\n");
     IMFMediaType_Release(mediatype3);
