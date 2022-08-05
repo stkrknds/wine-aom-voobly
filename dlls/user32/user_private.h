@@ -54,9 +54,6 @@ static inline struct user_thread_info *get_user_thread_info(void)
 
 extern HMODULE user32_module DECLSPEC_HIDDEN;
 
-struct dce;
-struct tagWND;
-
 extern BOOL post_dde_message( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, DWORD dest_tid,
                               DWORD type ) DECLSPEC_HIDDEN;
 extern BOOL unpack_dde_message( HWND hwnd, UINT message, WPARAM *wparam, LPARAM *lparam,
@@ -76,7 +73,6 @@ extern BOOL map_wparam_AtoW( UINT message, WPARAM *wparam, enum wm_char_mapping 
 extern HPEN SYSCOLOR_GetPen( INT index ) DECLSPEC_HIDDEN;
 extern HBRUSH SYSCOLOR_Get55AABrush(void) DECLSPEC_HIDDEN;
 extern void SYSPARAMS_Init(void) DECLSPEC_HIDDEN;
-extern void USER_CheckNotLock(void) DECLSPEC_HIDDEN;
 
 typedef LRESULT (*winproc_callback_t)( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
                                        LRESULT *result, void *arg );

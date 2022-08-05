@@ -5410,6 +5410,10 @@ ULONG_PTR WINAPI NtUserCallHwnd( HWND hwnd, DWORD code )
     case NtUserCallHwnd_GetDialogInfo:
         return (ULONG_PTR)get_dialog_info( hwnd );
 
+    case NtUserCallHwnd_GetMDIClientInfo:
+        if (!(win_get_flags( hwnd ) & WIN_ISMDICLIENT)) return 0;
+        return get_window_long_ptr( hwnd, sizeof(void *), FALSE );
+
     case NtUserCallHwnd_GetWindowContextHelpId:
         return get_window_context_help_id( hwnd );
 
@@ -5418,6 +5422,9 @@ ULONG_PTR WINAPI NtUserCallHwnd( HWND hwnd, DWORD code )
 
     case NtUserCallHwnd_GetWindowInputContext:
         return HandleToUlong( get_window_input_context( hwnd ));
+
+    case NtUserCallHwnd_GetWindowSysSubMenu:
+        return HandleToUlong( get_window_sys_sub_menu( hwnd ));
 
     case NtUserCallHwnd_GetWindowTextLength:
         return get_server_window_text( hwnd, NULL, 0 );
@@ -5465,6 +5472,9 @@ ULONG_PTR WINAPI NtUserCallHwndParam( HWND hwnd, DWORD_PTR param, DWORD code )
 
     case NtUserCallHwndParam_EnableWindow:
         return enable_window( hwnd, param );
+
+    case NtUserCallHwndParam_GetChildRect:
+        return get_window_rects( hwnd, COORDS_PARENT, (RECT *)param, NULL, get_thread_dpi() );
 
     case NtUserCallHwndParam_GetClassLongA:
         return get_class_long( hwnd, param, TRUE );
@@ -5544,6 +5554,10 @@ ULONG_PTR WINAPI NtUserCallHwndParam( HWND hwnd, DWORD_PTR param, DWORD code )
 
     case NtUserCallHwndParam_SetDialogInfo:
         return set_dialog_info( hwnd, (void *)param );
+
+    case NtUserCallHwndParam_SetMDIClientInfo:
+        NtUserSetWindowLongPtr( hwnd, sizeof(void *), param, FALSE );
+        return win_set_flags( hwnd, WIN_ISMDICLIENT, 0 );
 
     case NtUserCallHwndParam_SetWindowContextHelpId:
         return set_window_context_help_id( hwnd, param );
