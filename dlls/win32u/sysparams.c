@@ -448,8 +448,11 @@ static BOOL write_adapter_mode( HKEY adapter_key, DWORD index, const DEVMODEW *m
     set_mode_field( flagsW, dmDisplayFlags, DM_DISPLAYFLAGS );
     set_mode_field( orientationW, dmDisplayOrientation, DM_DISPLAYORIENTATION );
     set_mode_field( fixed_outputW, dmDisplayFixedOutput, DM_DISPLAYFIXEDOUTPUT );
-    set_mode_field( x_panningW, dmPosition.x, DM_POSITION );
-    set_mode_field( y_panningW, dmPosition.y, DM_POSITION );
+    if (index == ENUM_CURRENT_SETTINGS || index == ENUM_REGISTRY_SETTINGS)
+    {
+        set_mode_field( x_panningW, dmPosition.x, DM_POSITION );
+        set_mode_field( y_panningW, dmPosition.y, DM_POSITION );
+    }
     ret = set_reg_value( hkey, driver_extraW, REG_BINARY, mode + 1, mode->dmDriverExtra );
 
 #undef set_mode_field
@@ -487,8 +490,11 @@ static BOOL read_adapter_mode( HKEY adapter_key, DWORD index, DEVMODEW *mode )
     query_mode_field( y_resolutionW, dmPelsHeight, DM_PELSHEIGHT );
     query_mode_field( v_refreshW, dmDisplayFrequency, DM_DISPLAYFREQUENCY );
     query_mode_field( flagsW, dmDisplayFlags, DM_DISPLAYFLAGS );
-    query_mode_field( x_panningW, dmPosition.x, DM_POSITION );
-    query_mode_field( y_panningW, dmPosition.y, DM_POSITION );
+    if (index == ENUM_CURRENT_SETTINGS || index == ENUM_REGISTRY_SETTINGS)
+    {
+        query_mode_field( x_panningW, dmPosition.x, DM_POSITION );
+        query_mode_field( y_panningW, dmPosition.y, DM_POSITION );
+    }
     query_mode_field( orientationW, dmDisplayOrientation, DM_DISPLAYORIENTATION );
     query_mode_field( fixed_outputW, dmDisplayFixedOutput, 0 );
 
@@ -1602,7 +1608,7 @@ UINT get_win_monitor_dpi( HWND hwnd )
  */
 DPI_AWARENESS get_thread_dpi_awareness(void)
 {
-    struct user_thread_info *info = get_user_thread_info();
+    struct ntuser_thread_info *info = NtUserGetThreadInfo();
     ULONG_PTR context = info->dpi_awareness;
 
     if (!context) context = NtUserGetProcessDpiAwarenessContext( NULL );
@@ -1671,7 +1677,7 @@ static DPI_AWARENESS get_awareness_from_dpi_awareness_context( DPI_AWARENESS_CON
  */
 DPI_AWARENESS_CONTEXT WINAPI SetThreadDpiAwarenessContext( DPI_AWARENESS_CONTEXT context )
 {
-    struct user_thread_info *info = get_user_thread_info();
+    struct ntuser_thread_info *info = NtUserGetThreadInfo();
     DPI_AWARENESS prev, val = get_awareness_from_dpi_awareness_context( context );
 
     if (val == DPI_AWARENESS_INVALID)
@@ -2149,7 +2155,8 @@ BOOL WINAPI NtUserEnumDisplaySettings( UNICODE_STRING *device, DWORD index, DEVM
     memset( &devmode->dmDriverExtra, 0, devmode->dmSize - offsetof(DEVMODEW, dmDriverExtra) );
 
     if (index == ENUM_REGISTRY_SETTINGS) ret = read_registry_settings( adapter_path, devmode );
-    else ret = user_driver->pEnumDisplaySettingsEx( device_name, index, devmode, flags );
+    else if (index != ENUM_CURRENT_SETTINGS) ret = user_driver->pEnumDisplaySettingsEx( device_name, index, devmode, flags );
+    else ret = user_driver->pGetCurrentDisplaySettings( device_name, devmode );
 
     if (!ret) WARN( "Failed to query %s display settings.\n", debugstr_w(device_name) );
     else TRACE( "position %dx%d, resolution %ux%u, frequency %u, depth %u, orientation %#x.\n",

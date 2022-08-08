@@ -821,6 +821,7 @@ static void register_rawinput_device( const RAWINPUTDEVICE *device )
 BOOL WINAPI NtUserRegisterRawInputDevices( const RAWINPUTDEVICE *devices, UINT device_count, UINT device_size )
 {
     struct rawinput_device *server_devices;
+    RAWINPUTDEVICE *new_registered_devices;
     SIZE_T size;
     BOOL ret;
     UINT i;
@@ -856,25 +857,37 @@ BOOL WINAPI NtUserRegisterRawInputDevices( const RAWINPUTDEVICE *devices, UINT d
 
     pthread_mutex_lock( &rawinput_mutex );
 
-    size = (SIZE_T)device_size * (registered_device_count + device_count);
-    registered_devices = realloc( registered_devices, size );
-    if (registered_devices) for (i = 0; i < device_count; ++i) register_rawinput_device( devices + i );
+    if (!registered_device_count && !device_count)
+    {
+        pthread_mutex_unlock( &rawinput_mutex );
+        return TRUE;
+    }
 
-    server_devices = malloc( registered_device_count * sizeof(*server_devices) );
-    if (server_devices) for (i = 0; i < registered_device_count; ++i)
+    size = (SIZE_T)device_size * (registered_device_count + device_count);
+    if (!(new_registered_devices = realloc( registered_devices, size )))
+    {
+        pthread_mutex_unlock( &rawinput_mutex );
+        SetLastError( ERROR_OUTOFMEMORY );
+        return FALSE;
+    }
+
+    registered_devices = new_registered_devices;
+    for (i = 0; i < device_count; ++i) register_rawinput_device( devices + i );
+
+    if (!(device_count = registered_device_count)) server_devices = NULL;
+    else if (!(server_devices = malloc( device_count * sizeof(*server_devices) )))
+    {
+        pthread_mutex_unlock( &rawinput_mutex );
+        SetLastError( ERROR_OUTOFMEMORY );
+        return FALSE;
+    }
+
+    for (i = 0; i < device_count; ++i)
     {
         server_devices[i].usage_page = registered_devices[i].usUsagePage;
         server_devices[i].usage = registered_devices[i].usUsage;
         server_devices[i].flags = registered_devices[i].dwFlags;
         server_devices[i].target = wine_server_user_handle( registered_devices[i].hwndTarget );
-    }
-
-    pthread_mutex_unlock( &rawinput_mutex );
-
-    if (!registered_devices || !server_devices)
-    {
-        SetLastError( ERROR_OUTOFMEMORY );
-        return FALSE;
     }
 
     SERVER_START_REQ( update_rawinput_devices )
@@ -885,6 +898,8 @@ BOOL WINAPI NtUserRegisterRawInputDevices( const RAWINPUTDEVICE *devices, UINT d
     SERVER_END_REQ;
 
     free( server_devices );
+
+    pthread_mutex_unlock( &rawinput_mutex );
 
     return ret;
 }

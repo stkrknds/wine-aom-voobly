@@ -39,11 +39,11 @@ enum
     NtUserFreeCachedClipboardData,
     NtUserImmProcessKey,
     NtUserImmTranslateMessage,
+    NtUserInitBuiltinClasses,
     NtUserLoadDriver,
     NtUserLoadImage,
     NtUserLoadSysMenu,
     NtUserPostDDEMessage,
-    NtUserRegisterBuiltinClasses,
     NtUserRenderSynthesizedFormat,
     NtUserUnpackDDEMessage,
     /* win16 hooks */
@@ -61,14 +61,19 @@ enum
 /* TEB thread info, not compatible with Windows */
 struct ntuser_thread_info
 {
-    void      *driver_data;       /* driver-specific data */
-    DWORD      message_time;      /* value for GetMessageTime */
-    DWORD      message_pos;       /* value for GetMessagePos */
-    ULONG_PTR  message_extra;     /* value for GetMessageExtraInfo */
-    HWND       top_window;        /* desktop window */
-    HWND       msg_window;        /* HWND_MESSAGE parent window */
-    HIMC       default_imc;       /* default input context */
-    void      *client_imm;        /* client IMM thread info */
+    void          *driver_data;       /* driver-specific data */
+    DWORD          message_time;      /* value for GetMessageTime */
+    DWORD          message_pos;       /* value for GetMessagePos */
+    ULONG_PTR      message_extra;     /* value for GetMessageExtraInfo */
+    INPUT_MESSAGE_SOURCE msg_source;  /* Message source for current message */
+    WORD           recursion_count;   /* SendMessage recursion counter */
+    UINT           receive_flags;     /* currently received message flags */
+    HWND           top_window;        /* desktop window */
+    HWND           msg_window;        /* HWND_MESSAGE parent window */
+    DPI_AWARENESS  dpi_awareness;     /* DPI awareness */
+    HIMC           default_imc;       /* default input context */
+    void          *client_imm;        /* client IMM thread info */
+    struct wm_char_mapping_data *wmchar_data; /* Data for WM_CHAR mappings */
 };
 
 static inline struct ntuser_thread_info *NtUserGetThreadInfo(void)
@@ -262,6 +267,14 @@ struct unpack_dde_message_params
 #define NTUSER_DPI_PER_MONITOR_AWARE_V2   0x00000022
 #define NTUSER_DPI_PER_UNAWARE_GDISCALED  0x40006010
 
+/* message spy definitions */
+#define SPY_DISPATCHMESSAGE  0x0100
+#define SPY_SENDMESSAGE      0x0101
+#define SPY_DEFWNDPROC       0x0102
+
+#define SPY_RESULT_OK      0x0001
+#define SPY_RESULT_DEFWND  0x0002
+
 /* NtUserMessageCall codes */
 enum
 {
@@ -450,6 +463,8 @@ enum wine_internal_message
 #define WM_IME_INTERNAL 0x287
 #define IME_INTERNAL_ACTIVATE   0x17
 #define IME_INTERNAL_DEACTIVATE 0x18
+
+#define WM_SYSTIMER  0x0118
 
 /* the various structures that can be sent in messages, in platform-independent layout */
 struct packed_CREATESTRUCTW
