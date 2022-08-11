@@ -432,16 +432,11 @@ extern void reg_delete_value( HKEY hkey, const WCHAR *name ) DECLSPEC_HIDDEN;
 
 extern HKEY hkcu_key DECLSPEC_HIDDEN;
 
-static inline struct user_thread_info *get_user_thread_info(void)
-{
-    return (struct user_thread_info *)NtCurrentTeb()->Win32ClientInfo;
-}
-
 extern const struct user_driver_funcs *user_driver DECLSPEC_HIDDEN;
 
 static inline BOOL set_ntstatus( NTSTATUS status )
 {
-    if (status) SetLastError( RtlNtStatusToDosError( status ));
+    if (status) RtlSetLastWin32Error( RtlNtStatusToDosError( status ));
     return !status;
 }
 
@@ -492,6 +487,15 @@ static inline UINT asciiz_to_unicode( WCHAR *dst, const char *src )
 static inline BOOL is_win9x(void)
 {
     return NtCurrentTeb()->Peb->OSPlatformId == VER_PLATFORM_WIN32s;
+}
+
+static inline ULONG_PTR zero_bits(void)
+{
+#ifdef _WIN64
+    return !NtCurrentTeb()->WowTebOffset ? 0 : 0x7fffffff;
+#else
+    return 0;
+#endif
 }
 
 static inline const char *debugstr_us( const UNICODE_STRING *us )

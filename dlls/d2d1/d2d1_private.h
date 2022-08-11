@@ -769,10 +769,16 @@ void d2d_command_list_draw_glyph_run(struct d2d_command_list *command_list,
 void d2d_command_list_draw_bitmap(struct d2d_command_list *command_list, ID2D1Bitmap *bitmap,
         const D2D1_RECT_F *dst_rect, float opacity, D2D1_INTERPOLATION_MODE interpolation_mode,
         const D2D1_RECT_F *src_rect, const D2D1_MATRIX_4X4_F *perspective_transform) DECLSPEC_HIDDEN;
+void d2d_command_list_draw_image(struct d2d_command_list *command_list, ID2D1Image *image,
+        const D2D1_POINT_2F *target_offset, const D2D1_RECT_F *image_rect, D2D1_INTERPOLATION_MODE interpolation_mode,
+        D2D1_COMPOSITE_MODE composite_mode) DECLSPEC_HIDDEN;
 void d2d_command_list_fill_mesh(struct d2d_command_list *command_list, const struct d2d_device_context *context,
         ID2D1Mesh *mesh, ID2D1Brush *orig_brush) DECLSPEC_HIDDEN;
 void d2d_command_list_fill_opacity_mask(struct d2d_command_list *command_list, const struct d2d_device_context *context,
         ID2D1Bitmap *bitmap, ID2D1Brush *orig_brush, const D2D1_RECT_F *dst_rect, const D2D1_RECT_F *src_rect) DECLSPEC_HIDDEN;
+void d2d_command_list_push_layer(struct d2d_command_list *command_list, const struct d2d_device_context *context,
+        const D2D1_LAYER_PARAMETERS1 *params, ID2D1Layer *layer) DECLSPEC_HIDDEN;
+void d2d_command_list_pop_layer(struct d2d_command_list *command_list) DECLSPEC_HIDDEN;
 
 static inline BOOL d2d_array_reserve(void **elements, size_t *capacity, size_t count, size_t size)
 {

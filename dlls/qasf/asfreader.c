@@ -48,6 +48,90 @@ struct asf_reader
     struct asf_stream streams[16];
 };
 
+static inline struct asf_stream *impl_from_strmbase_pin(struct strmbase_pin *iface)
+{
+    return CONTAINING_RECORD(iface, struct asf_stream, source.pin);
+}
+
+static inline struct asf_reader *asf_reader_from_asf_stream(struct asf_stream *stream)
+{
+    return CONTAINING_RECORD(stream, struct asf_reader, streams[stream->index]);
+}
+
+static HRESULT asf_stream_query_accept(struct strmbase_pin *iface, const AM_MEDIA_TYPE *media_type)
+{
+    struct asf_stream *stream = impl_from_strmbase_pin(iface);
+    struct asf_reader *filter = asf_reader_from_asf_stream(stream);
+    IWMOutputMediaProps *props;
+    WM_MEDIA_TYPE *mt;
+    DWORD size, i = 0;
+    HRESULT hr;
+
+    TRACE("iface %p, media_type %p.\n", iface, media_type);
+
+    if (FAILED(hr = IWMReader_GetOutputFormat(filter->reader, stream->index, i, &props)))
+        return hr;
+    if (FAILED(hr = IWMOutputMediaProps_GetMediaType(props, NULL, &size)))
+    {
+        IWMOutputMediaProps_Release(props);
+        return hr;
+    }
+    if (!(mt = malloc(size)))
+    {
+        IWMOutputMediaProps_Release(props);
+        return E_OUTOFMEMORY;
+    }
+
+    do
+    {
+        if (SUCCEEDED(hr = IWMOutputMediaProps_GetMediaType(props, mt, &size))
+                && IsEqualGUID(&mt->majortype, &media_type->majortype)
+                && IsEqualGUID(&mt->subtype, &media_type->subtype))
+        {
+            IWMOutputMediaProps_Release(props);
+            break;
+        }
+
+        IWMOutputMediaProps_Release(props);
+    } while (SUCCEEDED(hr = IWMReader_GetOutputFormat(filter->reader, stream->index, ++i, &props)));
+
+    free(mt);
+    return hr;
+}
+
+static HRESULT asf_stream_get_media_type(struct strmbase_pin *iface, unsigned int index, AM_MEDIA_TYPE *media_type)
+{
+    struct asf_stream *stream = impl_from_strmbase_pin(iface);
+    struct asf_reader *filter = asf_reader_from_asf_stream(stream);
+    IWMOutputMediaProps *props;
+    WM_MEDIA_TYPE *mt;
+    DWORD size;
+    HRESULT hr;
+
+    TRACE("iface %p, index %u, media_type %p.\n", iface, index, media_type);
+
+    if (FAILED(IWMReader_GetOutputFormat(filter->reader, stream->index, index, &props)))
+        return VFW_S_NO_MORE_ITEMS;
+    if (FAILED(hr = IWMOutputMediaProps_GetMediaType(props, NULL, &size)))
+    {
+        IWMOutputMediaProps_Release(props);
+        return hr;
+    }
+    if (!(mt = malloc(size)))
+    {
+        IWMOutputMediaProps_Release(props);
+        return E_OUTOFMEMORY;
+    }
+
+    hr = IWMOutputMediaProps_GetMediaType(props, mt, &size);
+    if (SUCCEEDED(hr))
+        hr = CopyMediaType(media_type, (AM_MEDIA_TYPE *)mt);
+
+    free(mt);
+    IWMOutputMediaProps_Release(props);
+    return hr;
+}
+
 static inline struct asf_reader *impl_from_strmbase_filter(struct strmbase_filter *iface)
 {
     return CONTAINING_RECORD(iface, struct asf_reader, filter);
@@ -114,12 +198,35 @@ static const struct strmbase_filter_ops filter_ops =
 static HRESULT WINAPI asf_reader_DecideBufferSize(struct strmbase_source *iface,
         IMemAllocator *allocator, ALLOCATOR_PROPERTIES *req_props)
 {
-    FIXME("iface %p, allocator %p, req_props %p stub!\n", iface, allocator, req_props);
-    return E_NOTIMPL;
+    struct asf_stream *stream = impl_from_strmbase_pin(&iface->pin);
+    unsigned int buffer_size = 16384;
+    ALLOCATOR_PROPERTIES ret_props;
+
+    TRACE("iface %p, allocator %p, req_props %p.\n", iface, allocator, req_props);
+
+    if (IsEqualGUID(&stream->source.pin.mt.formattype, &FORMAT_VideoInfo))
+    {
+        VIDEOINFOHEADER *format = (VIDEOINFOHEADER *)stream->source.pin.mt.pbFormat;
+        buffer_size = format->bmiHeader.biSizeImage;
+    }
+    else if (IsEqualGUID(&stream->source.pin.mt.formattype, &FORMAT_WaveFormatEx)
+            && (IsEqualGUID(&stream->source.pin.mt.subtype, &MEDIASUBTYPE_PCM)
+            || IsEqualGUID(&stream->source.pin.mt.subtype, &MEDIASUBTYPE_IEEE_FLOAT)))
+    {
+        WAVEFORMATEX *format = (WAVEFORMATEX *)stream->source.pin.mt.pbFormat;
+        buffer_size = format->nAvgBytesPerSec;
+    }
+
+    req_props->cBuffers = max(req_props->cBuffers, 1);
+    req_props->cbBuffer = max(req_props->cbBuffer, buffer_size);
+    req_props->cbAlign = max(req_props->cbAlign, 1);
+    return IMemAllocator_SetProperties(allocator, req_props, &ret_props);
 }
 
 static const struct strmbase_source_ops source_ops =
 {
+    .base.pin_query_accept = asf_stream_query_accept,
+    .base.pin_get_media_type = asf_stream_get_media_type,
     .pfnDecideAllocator = BaseOutputPinImpl_DecideAllocator,
     .pfnAttemptConnection = BaseOutputPinImpl_AttemptConnection,
     .pfnDecideBufferSize = asf_reader_DecideBufferSize,
@@ -275,6 +382,7 @@ static HRESULT WINAPI reader_callback_OnStatus(IWMReaderCallback *iface, WMT_STA
         WMT_ATTR_DATATYPE type, BYTE *value, void *context)
 {
     struct asf_reader *filter = impl_from_IWMReaderCallback(iface)->filter;
+    AM_MEDIA_TYPE stream_media_type = {0};
     DWORD i, stream_count;
     WCHAR name[MAX_PATH];
 
@@ -304,7 +412,15 @@ static HRESULT WINAPI reader_callback_OnStatus(IWMReaderCallback *iface, WMT_STA
             for (i = 0; i < stream_count; ++i)
             {
                 struct asf_stream *stream = filter->streams + i;
-                swprintf(name, ARRAY_SIZE(name), L"Raw Stream %u", stream->index);
+
+                if (FAILED(hr = asf_stream_get_media_type(&stream->source.pin, 0, &stream_media_type)))
+                    WARN("Failed to get stream media type, hr %#lx.\n", hr);
+                if (IsEqualGUID(&stream_media_type.majortype, &MEDIATYPE_Video))
+                    swprintf(name, ARRAY_SIZE(name), L"Raw Video %u", stream->index);
+                else
+                    swprintf(name, ARRAY_SIZE(name), L"Raw Audio %u", stream->index);
+                FreeMediaType(&stream_media_type);
+
                 strmbase_source_init(&stream->source, &filter->filter, name, &source_ops);
             }
             filter->stream_count = stream_count;

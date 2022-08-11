@@ -40,12 +40,15 @@ enum d2d_command_type
     D2D_COMMAND_DRAW_GEOMETRY,
     D2D_COMMAND_DRAW_RECTANGLE,
     D2D_COMMAND_DRAW_BITMAP,
+    D2D_COMMAND_DRAW_IMAGE,
     D2D_COMMAND_FILL_MESH,
     D2D_COMMAND_FILL_OPACITY_MASK,
     D2D_COMMAND_FILL_GEOMETRY,
     D2D_COMMAND_FILL_RECTANGLE,
     D2D_COMMAND_PUSH_CLIP,
+    D2D_COMMAND_PUSH_LAYER,
     D2D_COMMAND_POP_CLIP,
+    D2D_COMMAND_POP_LAYER,
 };
 
 struct d2d_command
@@ -107,6 +110,13 @@ struct d2d_command_push_clip
     struct d2d_command c;
     D2D1_RECT_F rect;
     D2D1_ANTIALIAS_MODE mode;
+};
+
+struct d2d_command_push_layer
+{
+    struct d2d_command c;
+    D2D1_LAYER_PARAMETERS1 params;
+    ID2D1Layer *layer;
 };
 
 struct d2d_command_draw_line
@@ -186,6 +196,16 @@ struct d2d_command_draw_bitmap
     D2D1_RECT_F *dst_rect;
     D2D1_RECT_F *src_rect;
     D2D1_MATRIX_4X4_F *perspective_transform;
+};
+
+struct d2d_command_draw_image
+{
+    struct d2d_command c;
+    ID2D1Image *image;
+    D2D1_INTERPOLATION_MODE interpolation_mode;
+    D2D1_COMPOSITE_MODE composite_mode;
+    D2D1_POINT_2F *target_offset;
+    D2D1_RECT_F *image_rect;
 };
 
 static inline struct d2d_command_list *impl_from_ID2D1CommandList(ID2D1CommandList *iface)
@@ -387,6 +407,13 @@ static HRESULT STDMETHODCALLTYPE d2d_command_list_Stream(ID2D1CommandList *iface
                         c->interpolation_mode, c->src_rect, c->perspective_transform);
                 break;
             }
+            case D2D_COMMAND_DRAW_IMAGE:
+            {
+                const struct d2d_command_draw_image *c = data;
+                hr = ID2D1CommandSink_DrawImage(sink, c->image, c->target_offset, c->image_rect,
+                        c->interpolation_mode, c->composite_mode);
+                break;
+            }
             case D2D_COMMAND_FILL_MESH:
             {
                 const struct d2d_command_fill_mesh *c = data;
@@ -417,8 +444,17 @@ static HRESULT STDMETHODCALLTYPE d2d_command_list_Stream(ID2D1CommandList *iface
                 hr = ID2D1CommandSink_PushAxisAlignedClip(sink, &c->rect, c->mode);
                 break;
             }
+            case D2D_COMMAND_PUSH_LAYER:
+            {
+                const struct d2d_command_push_layer *c = data;
+                hr = ID2D1CommandSink_PushLayer(sink, &c->params, c->layer);
+                break;
+            }
             case D2D_COMMAND_POP_CLIP:
                 hr = ID2D1CommandSink_PopAxisAlignedClip(sink);
+                break;
+            case D2D_COMMAND_POP_LAYER:
+                hr = ID2D1CommandSink_PopLayer(sink);
                 break;
             default:
                 FIXME("Unhandled command %u.\n", command->op);
@@ -674,6 +710,37 @@ void d2d_command_list_pop_clip(struct d2d_command_list *command_list)
 
     command = d2d_command_list_require_space(command_list, sizeof(*command));
     command->op = D2D_COMMAND_POP_CLIP;
+}
+
+void d2d_command_list_push_layer(struct d2d_command_list *command_list, const struct d2d_device_context *context,
+        const D2D1_LAYER_PARAMETERS1 *params, ID2D1Layer *layer)
+{
+    struct d2d_command_push_layer *command;
+    ID2D1Brush *opacity_brush = NULL;
+
+    if (params->opacityBrush && FAILED(d2d_command_list_create_brush(command_list, context,
+            params->opacityBrush, &opacity_brush)))
+    {
+        command_list->state = D2D_COMMAND_LIST_STATE_ERROR;
+        return;
+    }
+
+    d2d_command_list_reference_object(command_list, layer);
+    d2d_command_list_reference_object(command_list, params->geometricMask);
+
+    command = d2d_command_list_require_space(command_list, sizeof(*command));
+    command->c.op = D2D_COMMAND_PUSH_LAYER;
+    command->params = *params;
+    command->params.opacityBrush = opacity_brush;
+    command->layer = layer;
+}
+
+void d2d_command_list_pop_layer(struct d2d_command_list *command_list)
+{
+    struct d2d_command *command;
+
+    command = d2d_command_list_require_space(command_list, sizeof(*command));
+    command->op = D2D_COMMAND_POP_LAYER;
 }
 
 void d2d_command_list_clear(struct d2d_command_list *command_list, const D2D1_COLOR_F *color)
@@ -955,6 +1022,32 @@ void d2d_command_list_draw_bitmap(struct d2d_command_list *command_list, ID2D1Bi
     d2d_command_list_write_field(&data, &command->dst_rect, dst_rect, sizeof(*dst_rect));
     d2d_command_list_write_field(&data, &command->src_rect, src_rect, sizeof(*src_rect));
     d2d_command_list_write_field(&data, &command->perspective_transform, perspective_transform, sizeof(*perspective_transform));
+}
+
+void d2d_command_list_draw_image(struct d2d_command_list *command_list, ID2D1Image *image,
+        const D2D1_POINT_2F *target_offset, const D2D1_RECT_F *image_rect, D2D1_INTERPOLATION_MODE interpolation_mode,
+        D2D1_COMPOSITE_MODE composite_mode)
+{
+    struct d2d_command_draw_image *command;
+    size_t size;
+    BYTE *data;
+
+    size = sizeof(*command);
+    if (target_offset) size += sizeof(*target_offset);
+    if (image_rect) size += sizeof(*image_rect);
+
+    d2d_command_list_reference_object(command_list, image);
+
+    command = d2d_command_list_require_space(command_list, size);
+    command->c.op = D2D_COMMAND_DRAW_IMAGE;
+    command->image = image;
+    command->interpolation_mode = interpolation_mode;
+    command->composite_mode = composite_mode;
+
+    data = (BYTE *)(command + 1);
+
+    d2d_command_list_write_field(&data, &command->target_offset, target_offset, sizeof(*target_offset));
+    d2d_command_list_write_field(&data, &command->image_rect, image_rect, sizeof(*image_rect));
 }
 
 void d2d_command_list_fill_mesh(struct d2d_command_list *command_list, const struct d2d_device_context *context,
