@@ -300,10 +300,9 @@ static BOOL is_default_coord( int x )
  */
 HWND WIN_CreateWindowEx( CREATESTRUCTW *cs, LPCWSTR className, HINSTANCE module, BOOL unicode )
 {
+    UNICODE_STRING class, window_name;
     HWND hwnd, top_child = 0;
     MDICREATESTRUCTW mdi_cs;
-    UNICODE_STRING class;
-    CBT_CREATEWNDW cbtc;
     WNDCLASSEXW info;
     HMENU menu;
 
@@ -399,15 +398,20 @@ HWND WIN_CreateWindowEx( CREATESTRUCTW *cs, LPCWSTR className, HINSTANCE module,
         }
     }
 
+    if (unicode || !cs->lpszName)
+        RtlInitUnicodeString( &window_name, cs->lpszName );
+    else if (!RtlCreateUnicodeStringFromAsciiz( &window_name, (const char *)cs->lpszName ))
+        return 0;
+
     menu = cs->hMenu;
     if (!menu && info.lpszMenuName && (cs->style & (WS_CHILD | WS_POPUP)) != WS_CHILD)
         menu = LoadMenuW( cs->hInstance, info.lpszMenuName );
 
-    cbtc.lpcs = cs;
-    hwnd = NtUserCreateWindowEx( cs->dwExStyle, &class, NULL, NULL, cs->style, cs->x, cs->y,
-                                 cs->cx, cs->cy, cs->hwndParent, menu, module,
-                                 cs->lpCreateParams, 0, &cbtc, 0, !unicode );
+    hwnd = NtUserCreateWindowEx( cs->dwExStyle, &class, NULL, &window_name, cs->style,
+                                 cs->x, cs->y, cs->cx, cs->cy, cs->hwndParent, menu, module,
+                                 cs->lpCreateParams, 0, NULL, 0, !unicode );
     if (!hwnd && menu && menu != cs->hMenu) NtUserDestroyMenu( menu );
+    if (!unicode) RtlFreeUnicodeString( &window_name );
     return hwnd;
 }
 
@@ -622,6 +626,29 @@ DPI_AWARENESS_CONTEXT WINAPI GetWindowDpiAwarenessContext( HWND hwnd )
 }
 
 
+static LONG_PTR get_window_long_ptr( HWND hwnd, int offset, LONG_PTR ret, BOOL ansi )
+{
+    if (offset == DWLP_DLGPROC && NtUserGetDialogInfo( hwnd ))
+    {
+        DLGPROC proc = NtUserGetDialogProc( (DLGPROC)ret, ansi );
+        if (proc && proc != WINPROC_PROC16) return (LONG_PTR)proc;
+    }
+    return ret;
+}
+
+
+static LONG_PTR set_dialog_proc( HWND hwnd, LONG_PTR newval, BOOL ansi )
+{
+    DLGPROC proc;
+    LONG_PTR ret;
+    newval = NtUserCallTwoParam( newval, ansi, NtUserAllocWinProc );
+    ret = NtUserSetWindowLong( hwnd, DWLP_DLGPROC, newval, ansi );
+    proc = NtUserGetDialogProc( (DLGPROC)ret, ansi );
+    if (proc) ret = (UINT_PTR)proc;
+    return ret;
+}
+
+
 /***********************************************************************
  *              GetDpiForWindow   (USER32.@)
  */
@@ -656,6 +683,11 @@ LONG WINAPI GetWindowLongA( HWND hwnd, INT offset )
         return 0;
 #endif
     default:
+        if (sizeof(void *) == sizeof(LONG))
+        {
+            LONG_PTR ret = NtUserGetWindowLongA( hwnd, offset );
+            return get_window_long_ptr( hwnd, offset, ret, TRUE );
+        }
         return NtUserGetWindowLongA( hwnd, offset );
     }
 }
@@ -677,6 +709,11 @@ LONG WINAPI GetWindowLongW( HWND hwnd, INT offset )
         return 0;
 #endif
     default:
+        if (sizeof(void *) == sizeof(LONG))
+        {
+            LONG_PTR ret = NtUserGetWindowLongW( hwnd, offset );
+            return get_window_long_ptr( hwnd, offset, ret, FALSE );
+        }
         return NtUserGetWindowLongW( hwnd, offset );
     }
 }
@@ -698,6 +735,10 @@ LONG WINAPI DECLSPEC_HOTPATCH SetWindowLongA( HWND hwnd, INT offset, LONG newval
         WARN( "Invalid offset %d\n", offset );
         SetLastError( ERROR_INVALID_INDEX );
         return 0;
+#else
+    case DWLP_DLGPROC:
+        if (NtUserGetDialogInfo( hwnd )) return set_dialog_proc( hwnd, newval, TRUE );
+        /* fall through */
 #endif
     default:
         return NtUserSetWindowLong( hwnd, offset, newval, TRUE );
@@ -786,6 +827,10 @@ LONG WINAPI DECLSPEC_HOTPATCH SetWindowLongW(
         WARN("Invalid offset %d\n", offset );
         SetLastError( ERROR_INVALID_INDEX );
         return 0;
+#else
+    case DWLP_DLGPROC:
+        if (NtUserGetDialogInfo( hwnd )) return set_dialog_proc( hwnd, newval, FALSE );
+        /* fall through */
 #endif
     default:
         return NtUserSetWindowLong( hwnd, offset, newval, FALSE );
@@ -1407,7 +1452,8 @@ BOOL WINAPI SetProcessDefaultLayout( DWORD layout )
  */
 LONG_PTR WINAPI GetWindowLongPtrW( HWND hwnd, INT offset )
 {
-    return NtUserGetWindowLongPtrW( hwnd, offset );
+    LONG_PTR ret = NtUserGetWindowLongPtrW( hwnd, offset );
+    return get_window_long_ptr( hwnd, offset, ret, FALSE );
 }
 
 /*****************************************************************************
@@ -1415,7 +1461,8 @@ LONG_PTR WINAPI GetWindowLongPtrW( HWND hwnd, INT offset )
  */
 LONG_PTR WINAPI GetWindowLongPtrA( HWND hwnd, INT offset )
 {
-    return NtUserGetWindowLongPtrA( hwnd, offset );
+    LONG_PTR ret = NtUserGetWindowLongPtrA( hwnd, offset );
+    return get_window_long_ptr( hwnd, offset, ret, TRUE );
 }
 
 /*****************************************************************************
@@ -1423,6 +1470,9 @@ LONG_PTR WINAPI GetWindowLongPtrA( HWND hwnd, INT offset )
  */
 LONG_PTR WINAPI SetWindowLongPtrW( HWND hwnd, INT offset, LONG_PTR newval )
 {
+    if (offset == DWLP_DLGPROC && NtUserGetDialogInfo( hwnd ))
+        return set_dialog_proc( hwnd, newval, FALSE );
+
     return NtUserSetWindowLongPtr( hwnd, offset, newval, FALSE );
 }
 
@@ -1431,6 +1481,9 @@ LONG_PTR WINAPI SetWindowLongPtrW( HWND hwnd, INT offset, LONG_PTR newval )
  */
 LONG_PTR WINAPI SetWindowLongPtrA( HWND hwnd, INT offset, LONG_PTR newval )
 {
+    if (offset == DWLP_DLGPROC && NtUserGetDialogInfo( hwnd ))
+        return set_dialog_proc( hwnd, newval, TRUE );
+
     return NtUserSetWindowLongPtr( hwnd, offset, newval, TRUE );
 }
 

@@ -1170,6 +1170,7 @@ enable_mfmediaengine
 enable_mfplat
 enable_mfplay
 enable_mfreadwrite
+enable_mfsrcsnk
 enable_mgmtapi
 enable_midimap
 enable_mlang
@@ -19413,6 +19414,35 @@ printf "%s\n" "$ac_cv_mabi_ms" >&6; }
            fi
            MSVCRTFLAGS="$MSVCRTFLAGS -mabi=ms" ;;
       esac ;;
+    arm*)
+      { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking whether the compiler supports -Wincompatible-function-pointer-types" >&5
+printf %s "checking whether the compiler supports -Wincompatible-function-pointer-types... " >&6; }
+if test ${ac_cv_cflags__Wincompatible_function_pointer_types+y}
+then :
+  printf %s "(cached) " >&6
+else $as_nop
+  ac_wine_try_cflags_saved=$CFLAGS
+CFLAGS="$CFLAGS -Wincompatible-function-pointer-types"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+int main(int argc, char **argv) { return 0; }
+_ACEOF
+if ac_fn_c_try_link "$LINENO"
+then :
+  ac_cv_cflags__Wincompatible_function_pointer_types=yes
+else $as_nop
+  ac_cv_cflags__Wincompatible_function_pointer_types=no
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam \
+    conftest$ac_exeext conftest.$ac_ext
+CFLAGS=$ac_wine_try_cflags_saved
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_cflags__Wincompatible_function_pointer_types" >&5
+printf "%s\n" "$ac_cv_cflags__Wincompatible_function_pointer_types" >&6; }
+if test "x$ac_cv_cflags__Wincompatible_function_pointer_types" = xyes
+then :
+  EXTRACFLAGS="$EXTRACFLAGS -Wno-error=incompatible-function-pointer-types"
+fi ;;
   esac
 
   CFLAGS=$saved_CFLAGS
@@ -21266,6 +21296,7 @@ wine_fn_config_makefile dlls/comm.drv16 enable_win16
 wine_fn_config_makefile dlls/commdlg.dll16 enable_win16
 wine_fn_config_makefile dlls/compobj.dll16 enable_win16
 wine_fn_config_makefile dlls/compstui enable_compstui
+wine_fn_config_makefile dlls/compstui/tests enable_tests
 wine_fn_config_makefile dlls/comsvcs enable_comsvcs
 wine_fn_config_makefile dlls/comsvcs/tests enable_tests
 wine_fn_config_makefile dlls/concrt140 enable_concrt140
@@ -21571,6 +21602,8 @@ wine_fn_config_makefile dlls/mfplay enable_mfplay
 wine_fn_config_makefile dlls/mfplay/tests enable_tests
 wine_fn_config_makefile dlls/mfreadwrite enable_mfreadwrite
 wine_fn_config_makefile dlls/mfreadwrite/tests enable_tests
+wine_fn_config_makefile dlls/mfsrcsnk enable_mfsrcsnk
+wine_fn_config_makefile dlls/mfsrcsnk/tests enable_tests
 wine_fn_config_makefile dlls/mgmtapi enable_mgmtapi
 wine_fn_config_makefile dlls/midimap enable_midimap
 wine_fn_config_makefile dlls/mlang enable_mlang

@@ -375,7 +375,7 @@ union sysparam_all_entry
 
 static UINT system_dpi;
 static RECT work_area;
-DWORD process_layout = ~0u;
+static DWORD process_layout = ~0u;
 
 static HDC display_dc;
 static pthread_mutex_t display_dc_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -1629,6 +1629,11 @@ DPI_AWARENESS get_thread_dpi_awareness(void)
     default:
         return DPI_AWARENESS_INVALID;
     }
+}
+
+DWORD get_process_layout(void)
+{
+    return process_layout == ~0u ? 0 : process_layout;
 }
 
 /**********************************************************************
@@ -4397,7 +4402,7 @@ BOOL WINAPI NtUserSystemParametersInfo( UINT action, UINT val, void *ptr, UINT w
         static const WCHAR emptyW[1];
         if (winini & (SPIF_SENDWININICHANGE | SPIF_SENDCHANGE))
             send_message_timeout( HWND_BROADCAST, WM_SETTINGCHANGE, action, (LPARAM) emptyW,
-                                  SMTO_ABORTIFHUNG, 2000, NULL, FALSE );
+                                  SMTO_ABORTIFHUNG, 2000, FALSE );
     }
     TRACE( "(%u, %u, %p, %u) ret %d\n", action, val, ptr, winini, ret );
     return ret;
@@ -4840,7 +4845,7 @@ BOOL WINAPI NtUserSetSysColors( INT count, const INT *colors, const COLORREF *va
 
     /* Send WM_SYSCOLORCHANGE message to all windows */
     send_message_timeout( HWND_BROADCAST, WM_SYSCOLORCHANGE, 0, 0,
-                          SMTO_ABORTIFHUNG, 2000, NULL, FALSE );
+                          SMTO_ABORTIFHUNG, 2000, FALSE );
     /* Repaint affected portions of all visible windows */
     NtUserRedrawWindow( 0, NULL, 0, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ALLCHILDREN );
     return TRUE;
@@ -5054,6 +5059,9 @@ ULONG_PTR WINAPI NtUserCallTwoParam( ULONG_PTR arg1, ULONG_PTR arg2, ULONG code 
 {
     switch(code)
     {
+    case NtUserCallTwoParam_GetDialogProc:
+        return (ULONG_PTR)get_dialog_proc( (DLGPROC)arg1, arg2 );
+
     case NtUserCallTwoParam_GetMenuInfo:
         return get_menu_info( UlongToHandle(arg1), (MENUINFO *)arg2 );
 
