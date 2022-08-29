@@ -2665,6 +2665,14 @@ NTSTATUS WINAPI wow64_NtUserLockWindowUpdate( UINT *args )
     return NtUserLockWindowUpdate( hwnd );
 }
 
+NTSTATUS WINAPI wow64_NtUserLogicalToPerMonitorDPIPhysicalPoint( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+    POINT *pt = get_ptr( &args );
+
+    return NtUserLogicalToPerMonitorDPIPhysicalPoint( hwnd, pt );
+}
+
 NTSTATUS WINAPI wow64_NtUserMapVirtualKeyEx( UINT *args )
 {
     UINT code = get_ulong( &args );
@@ -3090,6 +3098,14 @@ NTSTATUS WINAPI wow64_NtUserPeekMessage( UINT *args )
     if (!NtUserPeekMessage( msg32 ? &msg : NULL, hwnd, first, last, flags )) return FALSE;
     msg_64to32( &msg, msg32 );
     return TRUE;
+}
+
+NTSTATUS WINAPI wow64_NtUserPerMonitorDPIPhysicalToLogicalPoint( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+    POINT *pt = get_ptr( &args );
+
+    return NtUserPerMonitorDPIPhysicalToLogicalPoint( hwnd, pt );
 }
 
 NTSTATUS WINAPI wow64_NtUserPostMessage( UINT *args )

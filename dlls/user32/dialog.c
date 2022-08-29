@@ -18,22 +18,11 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include <ctype.h>
-#include <errno.h>
-#include <limits.h>
 #include <stdlib.h>
-#include <stdarg.h>
-#include <stdio.h>
-#include <string.h>
-
-#include "windef.h"
-#include "winbase.h"
-#include "wingdi.h"
-#include "winuser.h"
-#include "winnls.h"
-#include "controls.h"
-#include "win.h"
+#include <limits.h>
+#include <errno.h>
 #include "user_private.h"
+#include "controls.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dialog);
@@ -949,7 +938,7 @@ BOOL WINAPI EndDialog( HWND hwnd, INT_PTR retval )
         if (owner)
             SetForegroundWindow( owner );
         else
-            WINPOS_ActivateOtherWindow( hwnd );
+            NtUserActivateOtherWindow( hwnd );
     }
 
     /* unblock dialog loop */

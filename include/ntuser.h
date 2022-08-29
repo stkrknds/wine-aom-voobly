@@ -773,6 +773,7 @@ BOOL    WINAPI NtUserInvalidateRect( HWND hwnd, const RECT *rect, BOOL erase );
 BOOL    WINAPI NtUserInvalidateRgn( HWND hwnd, HRGN hrgn, BOOL erase );
 BOOL    WINAPI NtUserKillTimer( HWND hwnd, UINT_PTR id );
 BOOL    WINAPI NtUserLockWindowUpdate( HWND hwnd );
+BOOL    WINAPI NtUserLogicalToPerMonitorDPIPhysicalPoint( HWND hwnd, POINT *pt );
 UINT    WINAPI NtUserMapVirtualKeyEx( UINT code, UINT type, HKL layout );
 INT     WINAPI NtUserMenuItemFromPoint( HWND hwnd, HMENU handle, int x, int y );
 LRESULT WINAPI NtUserMessageCall( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
@@ -787,6 +788,7 @@ BOOL    WINAPI NtUserOpenClipboard( HWND hwnd, ULONG unk );
 HDESK   WINAPI NtUserOpenDesktop( OBJECT_ATTRIBUTES *attr, DWORD flags, ACCESS_MASK access );
 HDESK   WINAPI NtUserOpenInputDesktop( DWORD flags, BOOL inherit, ACCESS_MASK access );
 BOOL    WINAPI NtUserPeekMessage( MSG *msg_out, HWND hwnd, UINT first, UINT last, UINT flags );
+BOOL    WINAPI NtUserPerMonitorDPIPhysicalToLogicalPoint( HWND hwnd, POINT *pt );
 BOOL    WINAPI NtUserPostMessage( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam );
 BOOL    WINAPI NtUserPostThreadMessage( DWORD thread, UINT msg, WPARAM wparam, LPARAM lparam );
 UINT_PTR WINAPI NtUserQueryInputContext( HIMC handle, UINT attr );
@@ -1124,6 +1126,7 @@ static inline BOOL NtUserUnhookWindowsHook( INT id, HOOKPROC proc )
 /* NtUserCallHwnd codes, not compatible with Windows */
 enum
 {
+    NtUserCallHwnd_ActivateOtherWindow,
     NtUserCallHwnd_ArrangeIconicWindows,
     NtUserCallHwnd_DrawMenuBar,
     NtUserCallHwnd_GetDefaultImeWindow,
@@ -1146,6 +1149,11 @@ enum
     NtUserIsCurrehtProcessWindow,
     NtUserIsCurrehtThreadWindow,
 };
+
+static inline void NtUserActivateOtherWindow( HWND hwnd )
+{
+    NtUserCallHwnd( hwnd, NtUserCallHwnd_ActivateOtherWindow );
+}
 
 static inline UINT NtUserArrangeIconicWindows( HWND parent )
 {
