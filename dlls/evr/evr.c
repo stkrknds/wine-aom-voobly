@@ -24,11 +24,20 @@
 
 #include "evr_private.h"
 #include "d3d9.h"
+#include "mferror.h"
+#include "mfapi.h"
 
 #include "initguid.h"
 #include "dxva2api.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(evr);
+
+enum evr_flags
+{
+    EVR_INIT_SERVICES = 0x1, /* Currently in InitServices() call. */
+    EVR_MIXER_INITED_SERVICES = 0x2,
+    EVR_PRESENTER_INITED_SERVICES = 0x4,
+};
 
 struct evr
 {
@@ -37,9 +46,12 @@ struct evr
     IAMFilterMiscFlags IAMFilterMiscFlags_iface;
     IMFGetService IMFGetService_iface;
     IMFVideoRenderer IMFVideoRenderer_iface;
+    IMediaEventSink IMediaEventSink_iface;
+    IMFTopologyServiceLookup IMFTopologyServiceLookup_iface;
 
     IMFTransform *mixer;
     IMFVideoPresenter *presenter;
+    unsigned int flags;
 };
 
 static void evr_uninitialize(struct evr *filter)
@@ -111,11 +123,163 @@ static HRESULT evr_query_interface(struct strmbase_renderer *iface, REFIID iid, 
         *out = &filter->IMFGetService_iface;
     else if (IsEqualGUID(iid, &IID_IMFVideoRenderer))
         *out = &filter->IMFVideoRenderer_iface;
+    else if (IsEqualGUID(iid, &IID_IMediaEventSink))
+        *out = &filter->IMediaEventSink_iface;
+    else if (IsEqualGUID(iid, &IID_IMFTopologyServiceLookup))
+        *out = &filter->IMFTopologyServiceLookup_iface;
     else
         return E_NOINTERFACE;
 
     IUnknown_AddRef((IUnknown *)*out);
     return S_OK;
+}
+
+static BOOL evr_is_mixer_d3d_aware(const struct evr *filter)
+{
+    IMFAttributes *attributes;
+    unsigned int value = 0;
+    BOOL ret;
+
+    if (FAILED(IMFTransform_QueryInterface(filter->mixer, &IID_IMFAttributes, (void **)&attributes)))
+        return FALSE;
+
+    ret = SUCCEEDED(IMFAttributes_GetUINT32(attributes, &MF_SA_D3D_AWARE, &value)) && value;
+    IMFAttributes_Release(attributes);
+    return ret;
+}
+
+static HRESULT evr_init_services(struct evr *filter)
+{
+    IMFTopologyServiceLookupClient *lookup_client;
+    HRESULT hr;
+
+    if (SUCCEEDED(hr = IMFTransform_QueryInterface(filter->mixer, &IID_IMFTopologyServiceLookupClient,
+            (void **)&lookup_client)))
+    {
+        filter->flags |= EVR_INIT_SERVICES;
+        if (SUCCEEDED(hr = IMFTopologyServiceLookupClient_InitServicePointers(lookup_client,
+                &filter->IMFTopologyServiceLookup_iface)))
+        {
+            filter->flags |= EVR_MIXER_INITED_SERVICES;
+        }
+        filter->flags &= ~EVR_INIT_SERVICES;
+        IMFTopologyServiceLookupClient_Release(lookup_client);
+    }
+
+    if (FAILED(hr)) return hr;
+
+    /* Set device manager that presenter should have created. */
+    if (evr_is_mixer_d3d_aware(filter))
+    {
+        IUnknown *device_manager;
+        IMFGetService *gs;
+
+        if (SUCCEEDED(IUnknown_QueryInterface(filter->presenter, &IID_IMFGetService, (void **)&gs)))
+        {
+            if (SUCCEEDED(IMFGetService_GetService(gs, &MR_VIDEO_RENDER_SERVICE, &IID_IDirect3DDeviceManager9,
+                    (void **)&device_manager)))
+            {
+                IMFTransform_ProcessMessage(filter->mixer, MFT_MESSAGE_SET_D3D_MANAGER, (ULONG_PTR)device_manager);
+                IUnknown_Release(device_manager);
+            }
+
+            IMFGetService_Release(gs);
+        }
+    }
+
+    if (SUCCEEDED(hr = IMFVideoPresenter_QueryInterface(filter->presenter, &IID_IMFTopologyServiceLookupClient,
+            (void **)&lookup_client)))
+    {
+        filter->flags |= EVR_INIT_SERVICES;
+        if (SUCCEEDED(hr = IMFTopologyServiceLookupClient_InitServicePointers(lookup_client,
+                &filter->IMFTopologyServiceLookup_iface)))
+        {
+            filter->flags |= EVR_PRESENTER_INITED_SERVICES;
+        }
+        filter->flags &= ~EVR_INIT_SERVICES;
+        IMFTopologyServiceLookupClient_Release(lookup_client);
+    }
+
+    return hr;
+}
+
+static void evr_release_services(struct evr *filter)
+{
+    IMFTopologyServiceLookupClient *lookup_client;
+
+    if (filter->flags & EVR_MIXER_INITED_SERVICES && SUCCEEDED(IMFTransform_QueryInterface(filter->mixer,
+            &IID_IMFTopologyServiceLookupClient, (void **)&lookup_client)))
+    {
+        IMFTopologyServiceLookupClient_ReleaseServicePointers(lookup_client);
+        IMFTopologyServiceLookupClient_Release(lookup_client);
+        filter->flags &= ~EVR_MIXER_INITED_SERVICES;
+    }
+
+    if (filter->flags & EVR_PRESENTER_INITED_SERVICES && SUCCEEDED(IMFVideoPresenter_QueryInterface(filter->presenter,
+            &IID_IMFTopologyServiceLookupClient, (void **)&lookup_client)))
+    {
+        IMFTopologyServiceLookupClient_ReleaseServicePointers(lookup_client);
+        IMFTopologyServiceLookupClient_Release(lookup_client);
+        filter->flags &= ~EVR_PRESENTER_INITED_SERVICES;
+    }
+}
+
+static HRESULT evr_test_input_type(struct evr *filter, const AM_MEDIA_TYPE *mt, IMFMediaType **ret)
+{
+    IMFMediaType *media_type;
+    HRESULT hr = S_OK;
+
+    if (!filter->presenter)
+        hr = evr_initialize(filter, NULL, NULL);
+
+    if (SUCCEEDED(hr))
+        hr = evr_init_services(filter);
+
+    if (SUCCEEDED(hr))
+        hr = MFCreateMediaType(&media_type);
+
+    if (SUCCEEDED(hr))
+    {
+        if (SUCCEEDED(hr = MFInitMediaTypeFromAMMediaType(media_type, mt)))
+        {
+            /* TODO: some pin -> mixer input mapping is necessary to test the substreams. */
+            if (SUCCEEDED(hr = IMFTransform_SetInputType(filter->mixer, 0, media_type, MFT_SET_TYPE_TEST_ONLY)))
+            {
+                if (ret)
+                    IMFMediaType_AddRef((*ret = media_type));
+            }
+        }
+
+        IMFMediaType_Release(media_type);
+    }
+
+    return hr;
+}
+
+static HRESULT evr_connect(struct strmbase_renderer *iface, const AM_MEDIA_TYPE *mt)
+{
+    struct evr *filter = impl_from_strmbase_renderer(iface);
+    IMFMediaType *media_type;
+    HRESULT hr;
+
+    if (SUCCEEDED(hr = evr_test_input_type(filter, mt, &media_type)))
+    {
+        if (SUCCEEDED(hr = IMFTransform_SetInputType(filter->mixer, 0, media_type, 0)))
+            hr = IMFVideoPresenter_ProcessMessage(filter->presenter, MFVP_MESSAGE_INVALIDATEMEDIATYPE, 0);
+
+        IMFMediaType_Release(media_type);
+    }
+
+    return hr;
+}
+
+static void evr_disconnect(struct strmbase_renderer *iface)
+{
+    struct evr *filter = impl_from_strmbase_renderer(iface);
+
+    if (filter->mixer)
+        IMFTransform_SetInputType(filter->mixer, 0, NULL, 0);
+    evr_release_services(filter);
 }
 
 static void evr_destroy(struct strmbase_renderer *iface)
@@ -135,8 +299,17 @@ static HRESULT evr_render(struct strmbase_renderer *iface, IMediaSample *sample)
 
 static HRESULT evr_query_accept(struct strmbase_renderer *iface, const AM_MEDIA_TYPE *mt)
 {
-    FIXME("Not implemented.\n");
-    return E_NOTIMPL;
+    struct evr *filter = impl_from_strmbase_renderer(iface);
+    HRESULT hr;
+
+    EnterCriticalSection(&filter->renderer.filter.filter_cs);
+
+    hr = evr_test_input_type(filter, mt, NULL);
+    evr_release_services(filter);
+
+    LeaveCriticalSection(&filter->renderer.filter.filter_cs);
+
+    return hr;
 }
 
 static const struct strmbase_renderer_ops renderer_ops =
@@ -144,6 +317,8 @@ static const struct strmbase_renderer_ops renderer_ops =
     .renderer_query_accept = evr_query_accept,
     .renderer_render = evr_render,
     .renderer_query_interface = evr_query_interface,
+    .renderer_connect = evr_connect,
+    .renderer_disconnect = evr_disconnect,
     .renderer_destroy = evr_destroy,
 };
 
@@ -348,6 +523,111 @@ static const IMFVideoRendererVtbl filter_video_renderer_vtbl =
     filter_video_renderer_InitializeRenderer,
 };
 
+static struct evr *impl_from_IMediaEventSink(IMediaEventSink *iface)
+{
+    return CONTAINING_RECORD(iface, struct evr, IMediaEventSink_iface);
+}
+
+static HRESULT WINAPI filter_media_event_sink_QueryInterface(IMediaEventSink *iface, REFIID riid, void **obj)
+{
+    struct evr *filter = impl_from_IMediaEventSink(iface);
+    return IUnknown_QueryInterface(filter->renderer.filter.outer_unk, riid, obj);
+}
+
+static ULONG WINAPI filter_media_event_sink_AddRef(IMediaEventSink *iface)
+{
+    struct evr *filter = impl_from_IMediaEventSink(iface);
+    return IUnknown_AddRef(filter->renderer.filter.outer_unk);
+}
+
+static ULONG WINAPI filter_media_event_sink_Release(IMediaEventSink *iface)
+{
+    struct evr *filter = impl_from_IMediaEventSink(iface);
+    return IUnknown_Release(filter->renderer.filter.outer_unk);
+}
+
+static HRESULT WINAPI filter_media_event_sink_Notify(IMediaEventSink *iface, LONG event, LONG_PTR param1, LONG_PTR param2)
+{
+    FIXME("iface %p, event %ld, param1 %Id, param2 %Id.\n", iface, event, param1, param2);
+
+    return E_NOTIMPL;
+}
+
+static const IMediaEventSinkVtbl filter_media_event_sink_vtbl =
+{
+    filter_media_event_sink_QueryInterface,
+    filter_media_event_sink_AddRef,
+    filter_media_event_sink_Release,
+    filter_media_event_sink_Notify,
+};
+
+static struct evr *impl_from_IMFTopologyServiceLookup(IMFTopologyServiceLookup *iface)
+{
+    return CONTAINING_RECORD(iface, struct evr, IMFTopologyServiceLookup_iface);
+}
+
+static HRESULT WINAPI filter_service_lookup_QueryInterface(IMFTopologyServiceLookup *iface, REFIID riid, void **obj)
+{
+    struct evr *filter = impl_from_IMFTopologyServiceLookup(iface);
+    return IUnknown_QueryInterface(filter->renderer.filter.outer_unk, riid, obj);
+}
+
+static ULONG WINAPI filter_service_lookup_AddRef(IMFTopologyServiceLookup *iface)
+{
+    struct evr *filter = impl_from_IMFTopologyServiceLookup(iface);
+    return IUnknown_AddRef(filter->renderer.filter.outer_unk);
+}
+
+static ULONG WINAPI filter_service_lookup_Release(IMFTopologyServiceLookup *iface)
+{
+    struct evr *filter = impl_from_IMFTopologyServiceLookup(iface);
+    return IUnknown_Release(filter->renderer.filter.outer_unk);
+}
+
+static HRESULT WINAPI filter_service_lookup_LookupService(IMFTopologyServiceLookup *iface, MF_SERVICE_LOOKUP_TYPE lookup_type,
+        DWORD index, REFGUID service, REFIID riid, void **objects, DWORD *num_objects)
+{
+    struct evr *filter = impl_from_IMFTopologyServiceLookup(iface);
+    HRESULT hr = S_OK;
+
+    TRACE("iface %p, lookup_type %d, index %lu, service %s, riid %s, objects %p, num_objects %p.\n",
+            iface, lookup_type, index, debugstr_guid(service), debugstr_guid(riid), objects, num_objects);
+
+    EnterCriticalSection(&filter->renderer.filter.filter_cs);
+
+    if (!(filter->flags & EVR_INIT_SERVICES))
+        hr = MF_E_NOTACCEPTING;
+    else if (IsEqualGUID(service, &MR_VIDEO_RENDER_SERVICE))
+    {
+        if (IsEqualIID(riid, &IID_IMediaEventSink))
+        {
+            *objects = &filter->IMediaEventSink_iface;
+            IUnknown_AddRef((IUnknown *)*objects);
+        }
+    }
+    else if (IsEqualGUID(service, &MR_VIDEO_MIXER_SERVICE))
+    {
+        hr = IMFTransform_QueryInterface(filter->mixer, riid, objects);
+    }
+    else
+    {
+        WARN("Unsupported service %s.\n", debugstr_guid(service));
+        hr = MF_E_UNSUPPORTED_SERVICE;
+    }
+
+    LeaveCriticalSection(&filter->renderer.filter.filter_cs);
+
+    return hr;
+}
+
+static const IMFTopologyServiceLookupVtbl filter_service_lookup_vtbl =
+{
+    filter_service_lookup_QueryInterface,
+    filter_service_lookup_AddRef,
+    filter_service_lookup_Release,
+    filter_service_lookup_LookupService,
+};
+
 HRESULT evr_filter_create(IUnknown *outer, void **out)
 {
     struct evr *object;
@@ -361,6 +641,8 @@ HRESULT evr_filter_create(IUnknown *outer, void **out)
     object->IAMFilterMiscFlags_iface.lpVtbl = &filter_misc_flags_vtbl;
     object->IMFGetService_iface.lpVtbl = &filter_get_service_vtbl;
     object->IMFVideoRenderer_iface.lpVtbl = &filter_video_renderer_vtbl;
+    object->IMediaEventSink_iface.lpVtbl = &filter_media_event_sink_vtbl;
+    object->IMFTopologyServiceLookup_iface.lpVtbl = &filter_service_lookup_vtbl;
 
     TRACE("Created EVR %p.\n", object);
     *out = &object->renderer.filter.IUnknown_inner;
