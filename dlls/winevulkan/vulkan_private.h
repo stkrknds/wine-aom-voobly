@@ -212,9 +212,9 @@ uint64_t wine_vk_unwrap_handle(VkObjectType type, uint64_t handle) DECLSPEC_HIDD
 
 NTSTATUS init_vulkan(void *args) DECLSPEC_HIDDEN;
 
-extern const struct unix_funcs loader_funcs;
+NTSTATUS WINAPI vk_direct_unix_call(unixlib_handle_t handle, unsigned int code, void *arg) DECLSPEC_HIDDEN;
 
-BOOL WINAPI wine_vk_is_available_instance_function(VkInstance instance, const char *name) DECLSPEC_HIDDEN;
-BOOL WINAPI wine_vk_is_available_device_function(VkDevice device, const char *name) DECLSPEC_HIDDEN;
+NTSTATUS vk_is_available_instance_function(void *arg) DECLSPEC_HIDDEN;
+NTSTATUS vk_is_available_device_function(void *arg) DECLSPEC_HIDDEN;
 
 #endif /* __WINE_VULKAN_PRIVATE_H */

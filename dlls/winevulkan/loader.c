@@ -34,7 +34,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(vulkan);
 DEFINE_DEVPROPKEY(DEVPROPKEY_GPU_LUID, 0x60b193cb, 0x5276, 0x4d0f, 0x96, 0xfc, 0xf1, 0x73, 0xab, 0xad, 0x3e, 0xc6, 2);
 DEFINE_DEVPROPKEY(WINE_DEVPROPKEY_GPU_VULKAN_UUID, 0x233a9ef3, 0xafc4, 0x4abd, 0xb5, 0x64, 0xc3, 0x2f, 0x21, 0xf1, 0x53, 0x5c, 2);
 
-const struct unix_funcs *unix_funcs;
+NTSTATUS (WINAPI *p_vk_direct_unix_call)(unixlib_handle_t handle, unsigned int code, void *args);
 unixlib_handle_t unix_handle;
 
 static HINSTANCE hinstance;
@@ -88,6 +88,18 @@ static void *wine_vk_get_global_proc_addr(const char *name)
     return NULL;
 }
 
+static BOOL is_available_instance_function(VkInstance instance, const char *name)
+{
+    struct is_available_instance_function_params params = { .instance = instance, .name = name };
+    return vk_unix_call(unix_is_available_instance_function, &params);
+}
+
+static BOOL is_available_device_function(VkDevice device, const char *name)
+{
+    struct is_available_device_function_params params = { .device = device, .name = name };
+    return vk_unix_call(unix_is_available_device_function, &params);
+}
+
 PFN_vkVoidFunction WINAPI vkGetInstanceProcAddr(VkInstance instance, const char *name)
 {
     void *func;
@@ -111,7 +123,7 @@ PFN_vkVoidFunction WINAPI vkGetInstanceProcAddr(VkInstance instance, const char 
         return NULL;
     }
 
-    if (!unix_funcs->p_is_available_instance_function(instance, name))
+    if (!is_available_instance_function(instance, name))
         return NULL;
 
     func = wine_vk_get_instance_proc_addr(name);
@@ -142,7 +154,7 @@ PFN_vkVoidFunction WINAPI vkGetDeviceProcAddr(VkDevice device, const char *name)
      * vkCommandBuffer or vkQueue.
      * Loader takes care of filtering of extensions which are enabled or not.
      */
-    if (unix_funcs->p_is_available_device_function(device, name))
+    if (is_available_device_function(device, name))
     {
         func = wine_vk_get_device_proc_addr(name);
         if (func)
@@ -176,7 +188,7 @@ void * WINAPI vk_icdGetPhysicalDeviceProcAddr(VkInstance instance, const char *n
 {
     TRACE("%p, %s\n", instance, debugstr_a(name));
 
-    if (!unix_funcs->p_is_available_instance_function(instance, name))
+    if (!is_available_instance_function(instance, name))
         return NULL;
 
     return wine_vk_get_phys_dev_proc_addr(name);
@@ -219,7 +231,9 @@ static BOOL WINAPI wine_vk_init(INIT_ONCE *once, void *param, void **context)
                              &unix_handle, sizeof(unix_handle), NULL))
         return FALSE;
 
-    return !vk_unix_call(unix_init, &unix_funcs);
+    if (vk_unix_call(unix_init, &p_vk_direct_unix_call)) return FALSE;
+    if (!p_vk_direct_unix_call) p_vk_direct_unix_call = __wine_unix_call;
+    return TRUE;
 }
 
 static BOOL  wine_vk_init_once(void)
@@ -242,7 +256,7 @@ VkResult WINAPI vkCreateInstance(const VkInstanceCreateInfo *create_info,
     params.pCreateInfo = create_info;
     params.pAllocator = allocator;
     params.pInstance = instance;
-    return unix_funcs->p_vk_call(unix_vkCreateInstance, &params);
+    return vk_unix_call(unix_vkCreateInstance, &params);
 }
 
 VkResult WINAPI vkEnumerateInstanceExtensionProperties(const char *layer_name,
@@ -267,7 +281,7 @@ VkResult WINAPI vkEnumerateInstanceExtensionProperties(const char *layer_name,
     params.pLayerName = layer_name;
     params.pPropertyCount = count;
     params.pProperties = properties;
-    return unix_funcs->p_vk_call(unix_vkEnumerateInstanceExtensionProperties, &params);
+    return vk_unix_call(unix_vkEnumerateInstanceExtensionProperties, &params);
 }
 
 VkResult WINAPI vkEnumerateInstanceVersion(uint32_t *version)
@@ -283,7 +297,7 @@ VkResult WINAPI vkEnumerateInstanceVersion(uint32_t *version)
     }
 
     params.pApiVersion = version;
-    return unix_funcs->p_vk_call(unix_vkEnumerateInstanceVersion, &params);
+    return vk_unix_call(unix_vkEnumerateInstanceVersion, &params);
 }
 
 static HANDLE get_display_device_init_mutex(void)

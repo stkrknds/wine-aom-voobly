@@ -15,6 +15,8 @@
 enum unix_call
 {
     unix_init,
+    unix_is_available_instance_function,
+    unix_is_available_device_function,
     unix_vkAcquireNextImage2KHR,
     unix_vkAcquireNextImageKHR,
     unix_vkAcquirePerformanceConfigurationINTEL,
@@ -96,7 +98,10 @@ enum unix_call
     unix_vkCmdDrawIndirectCount,
     unix_vkCmdDrawIndirectCountAMD,
     unix_vkCmdDrawIndirectCountKHR,
+    unix_vkCmdDrawMeshTasksEXT,
+    unix_vkCmdDrawMeshTasksIndirectCountEXT,
     unix_vkCmdDrawMeshTasksIndirectCountNV,
+    unix_vkCmdDrawMeshTasksIndirectEXT,
     unix_vkCmdDrawMeshTasksIndirectNV,
     unix_vkCmdDrawMeshTasksNV,
     unix_vkCmdDrawMultiEXT,
@@ -1140,6 +1145,25 @@ struct vkCmdDrawIndirectCountKHR_params
     uint32_t stride;
 };
 
+struct vkCmdDrawMeshTasksEXT_params
+{
+    VkCommandBuffer commandBuffer;
+    uint32_t groupCountX;
+    uint32_t groupCountY;
+    uint32_t groupCountZ;
+};
+
+struct vkCmdDrawMeshTasksIndirectCountEXT_params
+{
+    VkCommandBuffer commandBuffer;
+    VkBuffer buffer;
+    VkDeviceSize offset;
+    VkBuffer countBuffer;
+    VkDeviceSize countBufferOffset;
+    uint32_t maxDrawCount;
+    uint32_t stride;
+};
+
 struct vkCmdDrawMeshTasksIndirectCountNV_params
 {
     VkCommandBuffer commandBuffer;
@@ -1148,6 +1172,15 @@ struct vkCmdDrawMeshTasksIndirectCountNV_params
     VkBuffer countBuffer;
     VkDeviceSize countBufferOffset;
     uint32_t maxDrawCount;
+    uint32_t stride;
+};
+
+struct vkCmdDrawMeshTasksIndirectEXT_params
+{
+    VkCommandBuffer commandBuffer;
+    VkBuffer buffer;
+    VkDeviceSize offset;
+    uint32_t drawCount;
     uint32_t stride;
 };
 

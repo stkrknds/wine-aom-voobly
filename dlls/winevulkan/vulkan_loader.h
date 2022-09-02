@@ -94,19 +94,25 @@ struct wine_vk_debug_report_params
     const char *message;
 };
 
-extern const struct unix_funcs *unix_funcs;
+struct is_available_instance_function_params
+{
+    VkInstance instance;
+    const char *name;
+};
+
+struct is_available_device_function_params
+{
+    VkDevice device;
+    const char *name;
+};
+
+extern NTSTATUS (WINAPI *p_vk_direct_unix_call)(unixlib_handle_t handle, unsigned int code,
+                                                void *args) DECLSPEC_HIDDEN;
 extern unixlib_handle_t unix_handle DECLSPEC_HIDDEN;
 
 static inline NTSTATUS vk_unix_call(enum unix_call code, void *params)
 {
     return __wine_unix_call(unix_handle, code, params);
 }
-
-struct unix_funcs
-{
-    NTSTATUS (WINAPI *p_vk_call)(enum unix_call, void *);
-    BOOL (WINAPI *p_is_available_instance_function)(VkInstance, const char *);
-    BOOL (WINAPI *p_is_available_device_function)(VkDevice, const char *);
-};
 
 #endif /* __WINE_VULKAN_LOADER_H */
