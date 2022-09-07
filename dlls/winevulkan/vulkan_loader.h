@@ -23,12 +23,14 @@
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 #include <stdarg.h>
+#include <stdlib.h>
 #include "windef.h"
 #include "winbase.h"
 #include "winternl.h"
 #include "wine/debug.h"
 #include "wine/vulkan.h"
 #include "wine/unixlib.h"
+#include "wine/list.h"
 
 #include "loader_thunks.h"
 
@@ -49,13 +51,49 @@ struct wine_vk_base
     /* Special section in each dispatchable object for use by the ICD loader for
      * storing dispatch tables. The start contains a magical value '0x01CDC0DE'.
      */
-    UINT_PTR loader_magic;
+    UINT64 loader_magic;
+    UINT64 unix_handle;
 };
 
-struct wine_vk_device_base
+struct VkPhysicalDevice_T
+{
+    struct wine_vk_base base;
+};
+
+struct VkInstance_T
+{
+    struct wine_vk_base base;
+    uint32_t phys_dev_count;
+    struct VkPhysicalDevice_T phys_devs[1];
+};
+
+struct VkQueue_T
+{
+    struct wine_vk_base base;
+};
+
+struct VkDevice_T
 {
     struct wine_vk_base base;
     unsigned int quirks;
+    struct VkQueue_T queues[1];
+};
+
+struct vk_command_pool
+{
+    UINT64 unix_handle;
+    struct list command_buffers;
+};
+
+static inline struct vk_command_pool *command_pool_from_handle(VkCommandPool handle)
+{
+    return (struct vk_command_pool *)(uintptr_t)handle;
+}
+
+struct VkCommandBuffer_T
+{
+    struct wine_vk_base base;
+    struct list pool_link;
 };
 
 struct vulkan_func

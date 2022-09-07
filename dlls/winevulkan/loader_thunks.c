@@ -51,15 +51,6 @@ VkResult WINAPI vkAcquireProfilingLockKHR(VkDevice device, const VkAcquireProfil
     return vk_unix_call(unix_vkAcquireProfilingLockKHR, &params);
 }
 
-VkResult WINAPI vkAllocateCommandBuffers(VkDevice device, const VkCommandBufferAllocateInfo *pAllocateInfo, VkCommandBuffer *pCommandBuffers)
-{
-    struct vkAllocateCommandBuffers_params params;
-    params.device = device;
-    params.pAllocateInfo = pAllocateInfo;
-    params.pCommandBuffers = pCommandBuffers;
-    return vk_unix_call(unix_vkAllocateCommandBuffers, &params);
-}
-
 VkResult WINAPI vkAllocateDescriptorSets(VkDevice device, const VkDescriptorSetAllocateInfo *pAllocateInfo, VkDescriptorSet *pDescriptorSets)
 {
     struct vkAllocateDescriptorSets_params params;
@@ -1999,16 +1990,6 @@ VkResult WINAPI vkCreateBufferView(VkDevice device, const VkBufferViewCreateInfo
     return vk_unix_call(unix_vkCreateBufferView, &params);
 }
 
-VkResult WINAPI vkCreateCommandPool(VkDevice device, const VkCommandPoolCreateInfo *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkCommandPool *pCommandPool)
-{
-    struct vkCreateCommandPool_params params;
-    params.device = device;
-    params.pCreateInfo = pCreateInfo;
-    params.pAllocator = pAllocator;
-    params.pCommandPool = pCommandPool;
-    return vk_unix_call(unix_vkCreateCommandPool, &params);
-}
-
 VkResult WINAPI vkCreateComputePipelines(VkDevice device, VkPipelineCache pipelineCache, uint32_t createInfoCount, const VkComputePipelineCreateInfo *pCreateInfos, const VkAllocationCallbacks *pAllocator, VkPipeline *pPipelines)
 {
     struct vkCreateComputePipelines_params params;
@@ -2108,16 +2089,6 @@ VkResult WINAPI vkCreateDescriptorUpdateTemplateKHR(VkDevice device, const VkDes
     params.pAllocator = pAllocator;
     params.pDescriptorUpdateTemplate = pDescriptorUpdateTemplate;
     return vk_unix_call(unix_vkCreateDescriptorUpdateTemplateKHR, &params);
-}
-
-VkResult WINAPI vkCreateDevice(VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkDevice *pDevice)
-{
-    struct vkCreateDevice_params params;
-    params.physicalDevice = physicalDevice;
-    params.pCreateInfo = pCreateInfo;
-    params.pAllocator = pAllocator;
-    params.pDevice = pDevice;
-    return vk_unix_call(unix_vkCreateDevice, &params);
 }
 
 VkResult WINAPI vkCreateEvent(VkDevice device, const VkEventCreateInfo *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkEvent *pEvent)
@@ -2451,15 +2422,6 @@ void WINAPI vkDestroyBufferView(VkDevice device, VkBufferView bufferView, const 
     vk_unix_call(unix_vkDestroyBufferView, &params);
 }
 
-void WINAPI vkDestroyCommandPool(VkDevice device, VkCommandPool commandPool, const VkAllocationCallbacks *pAllocator)
-{
-    struct vkDestroyCommandPool_params params;
-    params.device = device;
-    params.commandPool = commandPool;
-    params.pAllocator = pAllocator;
-    vk_unix_call(unix_vkDestroyCommandPool, &params);
-}
-
 void WINAPI vkDestroyCuFunctionNVX(VkDevice device, VkCuFunctionNVX function, const VkAllocationCallbacks *pAllocator)
 {
     struct vkDestroyCuFunctionNVX_params params;
@@ -2541,14 +2503,6 @@ void WINAPI vkDestroyDescriptorUpdateTemplateKHR(VkDevice device, VkDescriptorUp
     vk_unix_call(unix_vkDestroyDescriptorUpdateTemplateKHR, &params);
 }
 
-void WINAPI vkDestroyDevice(VkDevice device, const VkAllocationCallbacks *pAllocator)
-{
-    struct vkDestroyDevice_params params;
-    params.device = device;
-    params.pAllocator = pAllocator;
-    vk_unix_call(unix_vkDestroyDevice, &params);
-}
-
 void WINAPI vkDestroyEvent(VkDevice device, VkEvent event, const VkAllocationCallbacks *pAllocator)
 {
     struct vkDestroyEvent_params params;
@@ -2601,14 +2555,6 @@ void WINAPI vkDestroyIndirectCommandsLayoutNV(VkDevice device, VkIndirectCommand
     params.indirectCommandsLayout = indirectCommandsLayout;
     params.pAllocator = pAllocator;
     vk_unix_call(unix_vkDestroyIndirectCommandsLayoutNV, &params);
-}
-
-void WINAPI vkDestroyInstance(VkInstance instance, const VkAllocationCallbacks *pAllocator)
-{
-    struct vkDestroyInstance_params params;
-    params.instance = instance;
-    params.pAllocator = pAllocator;
-    vk_unix_call(unix_vkDestroyInstance, &params);
 }
 
 void WINAPI vkDestroyPipeline(VkDevice device, VkPipeline pipeline, const VkAllocationCallbacks *pAllocator)
@@ -2824,16 +2770,6 @@ VkResult WINAPI vkFlushMappedMemoryRanges(VkDevice device, uint32_t memoryRangeC
     params.memoryRangeCount = memoryRangeCount;
     params.pMemoryRanges = pMemoryRanges;
     return vk_unix_call(unix_vkFlushMappedMemoryRanges, &params);
-}
-
-void WINAPI vkFreeCommandBuffers(VkDevice device, VkCommandPool commandPool, uint32_t commandBufferCount, const VkCommandBuffer *pCommandBuffers)
-{
-    struct vkFreeCommandBuffers_params params;
-    params.device = device;
-    params.commandPool = commandPool;
-    params.commandBufferCount = commandBufferCount;
-    params.pCommandBuffers = pCommandBuffers;
-    vk_unix_call(unix_vkFreeCommandBuffers, &params);
 }
 
 VkResult WINAPI vkFreeDescriptorSets(VkDevice device, VkDescriptorPool descriptorPool, uint32_t descriptorSetCount, const VkDescriptorSet *pDescriptorSets)
