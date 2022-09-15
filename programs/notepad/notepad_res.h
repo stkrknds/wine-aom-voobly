@@ -52,6 +52,7 @@
 
 #define CMD_WRAP                0x119
 #define CMD_FONT                0x140
+#define CMD_SBAR                0x205
 
 #define CMD_HELP_CONTENTS       0x130
 #define CMD_HELP_ABOUT_NOTEPAD  0x134
@@ -77,6 +78,8 @@
 #define STRING_NOTSAVED 0x17A
 
 #define STRING_NOTFOUND 0x17B
+
+#define STRING_STATUSBAR       0x206
 
 #define STRING_UNICODE_LE      0x180
 #define STRING_UNICODE_BE      0x181

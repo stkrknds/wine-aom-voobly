@@ -7090,33 +7090,25 @@ static void test_set_window_long_size(void)
     retval = GetWindowLongPtrA(hwnd, GWLP_USERDATA);
     ok(retval > 123, "Unexpected user data.\n");
     ret = GetWindowWord(hwnd, GWLP_USERDATA);
-    todo_wine
     ok(ret == 123, "Unexpected user data %#lx.\n", ret);
     ret = SetWindowWord(hwnd, GWLP_USERDATA, 124);
-    todo_wine
     ok(ret == 123, "Unexpected user data %#lx.\n", ret);
     ret = GetWindowLongA(hwnd, GWLP_USERDATA);
-    todo_wine
     ok(ret == 124, "Unexpected user data %#lx.\n", ret);
     retval = GetWindowLongPtrA(hwnd, GWLP_USERDATA);
-    todo_wine
     ok(retval == 124, "Unexpected user data.\n");
 
     SetWindowLongA(hwnd, GWLP_USERDATA, (1 << 16) | 123);
     ret = GetWindowLongA(hwnd, GWLP_USERDATA);
     ok(ret == ((1 << 16) | 123), "Unexpected user data %#lx.\n", ret);
     ret = GetWindowWord(hwnd, GWLP_USERDATA);
-    todo_wine
     ok(ret == 123, "Unexpected user data %#lx.\n", ret);
 
     ret = SetWindowWord(hwnd, GWLP_USERDATA, 124);
-    todo_wine
     ok(ret == 123, "Unexpected user data %#lx.\n", ret);
     ret = GetWindowLongA(hwnd, GWLP_USERDATA);
-    todo_wine
     ok(ret == ((1 << 16) | 124), "Unexpected user data %#lx.\n", ret);
     ret = GetWindowWord(hwnd, GWLP_USERDATA);
-    todo_wine
     ok(ret == 124, "Unexpected user data %#lx.\n", ret);
 
     /* GWLP_ID */
@@ -7138,7 +7130,6 @@ static void test_set_window_long_size(void)
     ok(retval > 123, "Unexpected id.\n");
     SetLastError(0xdeadbeef);
     ret = GetWindowWord(hwnd, GWLP_ID);
-    todo_wine
     ok(!ret && GetLastError() == ERROR_INVALID_INDEX, "Unexpected id %#lx.\n", ret);
 
     /* GWLP_HINSTANCE */
@@ -7155,7 +7146,6 @@ static void test_set_window_long_size(void)
 
     SetLastError(0xdeadbeef);
     ret = GetWindowWord(hwnd, GWLP_HINSTANCE);
-    todo_wine
     ok(!ret && GetLastError() == ERROR_INVALID_INDEX, "Unexpected instance %#lx.\n", ret);
 
     SetLastError(0xdeadbeef);
@@ -7181,7 +7171,6 @@ static void test_set_window_long_size(void)
 
     SetLastError(0xdeadbeef);
     ret = GetWindowWord(hwnd, GWLP_HWNDPARENT);
-    todo_wine
     ok(!ret && GetLastError() == ERROR_INVALID_INDEX, "Unexpected parent window %#lx.\n", ret);
 
     DestroyWindow(hwnd);
@@ -7221,16 +7210,12 @@ static void test_set_window_word_size(void)
     ret = GetWindowLongA(hwnd, GWLP_USERDATA);
     ok(ret > 123, "Unexpected user data %#lx.\n", ret);
     ret = GetWindowWord(hwnd, GWLP_USERDATA);
-    todo_wine
     ok(ret == 123, "Unexpected user data %#lx.\n", ret);
     ret = SetWindowWord(hwnd, GWLP_USERDATA, 124);
-    todo_wine
     ok(ret == 123, "Unexpected user data %#lx.\n", ret);
     ret = GetWindowWord(hwnd, GWLP_USERDATA);
-    todo_wine
     ok(ret == 124, "Unexpected user data %#lx.\n", ret);
     ret = GetWindowLongA(hwnd, GWLP_USERDATA);
-    todo_wine
     ok(ret == ((1 << 16) | 124), "Unexpected user data %#lx.\n", ret);
 
     /* GWLP_ID */
@@ -7241,11 +7226,9 @@ static void test_set_window_word_size(void)
 
     SetLastError(0xdeadbeef);
     ret = GetWindowWord(hwnd, GWLP_ID);
-    todo_wine
     ok(!ret && GetLastError() == ERROR_INVALID_INDEX, "Unexpected id %#lx.\n", ret);
     SetLastError(0xdeadbeef);
     ret = SetWindowWord(hwnd, GWLP_ID, 2);
-    todo_wine
     ok(!ret && GetLastError() == ERROR_INVALID_INDEX, "Unexpected id %#lx.\n", ret);
 
     /* GWLP_HINSTANCE */
@@ -7254,12 +7237,10 @@ static void test_set_window_word_size(void)
 
     SetLastError(0xdeadbeef);
     ret = GetWindowWord(hwnd, GWLP_HINSTANCE);
-    todo_wine
     ok(!ret && GetLastError() == ERROR_INVALID_INDEX, "Unexpected instance %#lx.\n", ret);
 
     SetLastError(0xdeadbeef);
     ret = SetWindowWord(hwnd, GWLP_HINSTANCE, 0xdead);
-    todo_wine
     ok(!ret && GetLastError() == ERROR_INVALID_INDEX, "Unexpected instance %#lx.\n", ret);
 
     /* GWLP_HWNDPARENT */
@@ -7268,7 +7249,6 @@ static void test_set_window_word_size(void)
 
     SetLastError(0xdeadbeef);
     ret = GetWindowWord(hwnd, GWLP_HWNDPARENT);
-    todo_wine
     ok(!ret && GetLastError() == ERROR_INVALID_INDEX, "Unexpected parent window %#lx.\n", ret);
 
     DestroyWindow(hwnd);
@@ -10203,14 +10183,16 @@ static void window_from_point_proc(HWND parent)
     child_static = CreateWindowExA(0, "static", "static", WS_CHILD | WS_VISIBLE,
             0, 0, 100, 100, parent, 0, NULL, NULL);
     ok(child_static != 0, "CreateWindowEx failed\n");
-    pt.x = pt.y = 150;
+    pt.x = pt.y = 50;
+    ClientToScreen( child_static, &pt );
     win = WindowFromPoint(pt);
     ok(win == parent, "WindowFromPoint returned %p, expected %p\n", win, parent);
 
     child_button = CreateWindowExA(0, "button", "button", WS_CHILD | WS_VISIBLE,
             100, 0, 100, 100, parent, 0, NULL, NULL);
     ok(child_button != 0, "CreateWindowEx failed\n");
-    pt.x = 250;
+    pt.x = pt.y = 50;
+    ClientToScreen( child_button, &pt );
     win = WindowFromPoint(pt);
     ok(win == child_button, "WindowFromPoint returned %p, expected %p\n", win, child_button);
 
@@ -10243,7 +10225,7 @@ static void window_from_point_proc(HWND parent)
     CloseHandle(end_event);
 }
 
-static void test_window_from_point(const char *argv0)
+static void test_window_from_point(HWND main_window, const char *argv0)
 {
     HWND hwnd, child, win;
     POINT pt;
@@ -10253,12 +10235,15 @@ static void test_window_from_point(const char *argv0)
     HANDLE start_event, end_event;
 
     hwnd = CreateWindowExA(0, "MainWindowClass", NULL, WS_POPUP | WS_VISIBLE,
-            100, 100, 200, 100, 0, 0, NULL, NULL);
+            100, 100, 200, 100, main_window, 0, NULL, NULL);
     ok(hwnd != 0, "CreateWindowEx failed\n");
 
-    pt.x = pt.y = 150;
+    pt.x = pt.y = 50;
+    ClientToScreen( hwnd, &pt );
     win = WindowFromPoint(pt);
-    pt.x = 250;
+    pt.x = 150;
+    pt.y = 50;
+    ClientToScreen( hwnd, &pt );
     if(win == hwnd)
         win = WindowFromPoint(pt);
     if(win != hwnd) {
@@ -10270,7 +10255,8 @@ static void test_window_from_point(const char *argv0)
     child = CreateWindowExA(0, "static", "static", WS_CHILD | WS_VISIBLE,
             0, 0, 100, 100, hwnd, 0, NULL, NULL);
     ok(child != 0, "CreateWindowEx failed\n");
-    pt.x = pt.y = 150;
+    pt.x = pt.y = 50;
+    ClientToScreen( hwnd, &pt );
     win = WindowFromPoint(pt);
     ok(win == hwnd, "WindowFromPoint returned %p, expected %p\n", win, hwnd);
     DestroyWindow(child);
@@ -10298,11 +10284,13 @@ static void test_window_from_point(const char *argv0)
     win = WindowFromPoint(pt);
     ok(win == child, "WindowFromPoint returned %p, expected %p\n", win, child);
 
-    simulate_click(150, 150);
+    simulate_click(pt.x, pt.y);
     flush_events(TRUE);
 
     child = GetWindow(child, GW_HWNDNEXT);
-    pt.x = 250;
+    pt.x = 150;
+    pt.y = 50;
+    ClientToScreen( hwnd, &pt );
     win = WindowFromPoint(pt);
     ok(win == child, "WindowFromPoint returned %p, expected %p\n", win, child);
 
@@ -13084,7 +13072,7 @@ START_TEST(win)
 
     /* Add the tests below this line */
     test_child_window_from_point();
-    test_window_from_point(argv[0]);
+    test_window_from_point(hwndMain, argv[0]);
     test_thick_child_size(hwndMain);
     test_fullscreen();
     test_hwnd_message();
