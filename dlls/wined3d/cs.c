@@ -2968,13 +2968,13 @@ static bool wined3d_cs_map_upload_bo(struct wined3d_device_context *context, str
         if (!d3d_info->xyzrhw || !d3d_info->vertex_bgra || !d3d_info->ffp_generic_attributes)
         {
             TRACE("Not returning a persistent buffer because we might need to do vertex attribute conversion.\n");
-            return NULL;
+            return false;
         }
 
         if (resource->pin_sysmem)
         {
             TRACE("Not allocating an upload buffer because system memory is pinned for this resource.\n");
-            return NULL;
+            return false;
         }
 
         if ((flags & WINED3D_MAP_NOOVERWRITE) && client->addr.buffer_object == CLIENT_BO_DISCARDED)
@@ -3354,6 +3354,7 @@ static DWORD WINAPI wined3d_cs_run(void *ctx)
     bool run = true;
 
     TRACE("Started.\n");
+    SetThreadDescription(GetCurrentThread(), L"wined3d_cs");
 
     /* Copy the module handle to a local variable to avoid racing with the
      * thread freeing "cs" before the FreeLibraryAndExitThread() call. */

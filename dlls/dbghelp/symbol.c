@@ -228,8 +228,7 @@ struct symt_module* symt_new_module(struct module* module)
     return sym;
 }
 
-struct symt_compiland* symt_new_compiland(struct module* module, 
-                                          ULONG_PTR address, unsigned src_idx)
+struct symt_compiland* symt_new_compiland(struct module* module, unsigned src_idx)
 {
     struct symt_compiland*    sym;
     struct symt_compiland**   p;
@@ -240,7 +239,6 @@ struct symt_compiland* symt_new_compiland(struct module* module,
     {
         sym->symt.tag  = SymTagCompiland;
         sym->container = module->top;
-        sym->address   = address;
         sym->source    = src_idx;
         vector_init(&sym->vchildren, sizeof(struct symt*), 32);
         sym->user      = NULL;
@@ -449,6 +447,7 @@ void symt_add_func_line(struct module* module, struct symt_function* func,
  *
  * Adds a new local/parameter to a given function:
  * In any cases, dt tells whether it's a local variable or a parameter
+ * or a static variable inside the function.
  * If regno it's not 0:
  *      - then variable is stored in a register
  *      - otherwise, value is referenced by register + offset
@@ -470,7 +469,7 @@ struct symt_data* symt_add_func_local(struct module* module,
                          name, type);
 
     assert(symt_check_tag(&func->symt, SymTagFunction) || symt_check_tag(&func->symt, SymTagInlineSite));
-    assert(dt == DataIsParam || dt == DataIsLocal);
+    assert(dt == DataIsParam || dt == DataIsLocal || dt == DataIsStaticLocal);
 
     locsym = pool_alloc(&module->pool, sizeof(*locsym));
     locsym->symt.tag      = SymTagData;
@@ -804,6 +803,7 @@ static void symt_fill_sym_info(struct module_pair* pair,
                 break;
             case DataIsGlobal:
             case DataIsFileStatic:
+            case DataIsStaticLocal:
                 switch (data->u.var.kind)
                 {
                 case loc_tlsrel:
@@ -1651,6 +1651,7 @@ static BOOL find_name(struct process* pcs, struct module* module, const char* na
 BOOL WINAPI SymFromName(HANDLE hProcess, PCSTR Name, PSYMBOL_INFO Symbol)
 {
     struct process*             pcs = process_find_by_handle(hProcess);
+    struct module_pair          pair;
     struct module*              module;
     const char*                 name;
 
@@ -1667,6 +1668,45 @@ BOOL WINAPI SymFromName(HANDLE hProcess, PCSTR Name, PSYMBOL_INFO Symbol)
         module = module_find_by_nameA(pcs, tmp);
         return find_name(pcs, module, name + 1, Symbol);
     }
+
+    /* search first in local context */
+    pair.pcs = pcs;
+    pair.requested = module_find_by_addr(pair.pcs, pcs->localscope_pc, DMT_UNKNOWN);
+    if (module_get_debug(&pair) &&
+        (symt_check_tag(pcs->localscope_symt, SymTagFunction) ||
+         symt_check_tag(pcs->localscope_symt, SymTagInlineSite)))
+    {
+        struct symt_function* func = (struct symt_function*)pcs->localscope_symt;
+        struct vector* v = &func->vchildren;
+        unsigned i;
+
+        for (i = 0; i < vector_length(v); i++)
+        {
+            struct symt* lsym = *(struct symt**)vector_at(v, i);
+            switch (lsym->tag)
+            {
+            case SymTagBlock: /* no recursion */
+                break;
+            case SymTagData:
+                name = symt_get_name(lsym);
+                if (name && !strcmp(name, Name))
+                {
+                    symt_fill_sym_info(&pair, func, lsym, Symbol);
+                    return TRUE;
+                }
+                break;
+            case SymTagLabel: /* not returned here */
+            case SymTagFuncDebugStart:
+            case SymTagFuncDebugEnd:
+            case SymTagCustom:
+            case SymTagInlineSite:
+                break;
+            default:
+                WARN("Unsupported tag: %u (%x)\n", lsym->tag, lsym->tag);
+            }
+        }
+    }
+    /* lookup at global scope */
     for (module = pcs->lmodules; module; module = module->next)
     {
         if (module->type == DMT_PE && find_name(pcs, module, Name, Symbol))
@@ -1684,6 +1724,7 @@ BOOL WINAPI SymFromName(HANDLE hProcess, PCSTR Name, PSYMBOL_INFO Symbol)
                 return TRUE;
         }
     }
+    SetLastError(ERROR_MOD_NOT_FOUND);
     return FALSE;
 }
 

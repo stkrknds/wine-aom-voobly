@@ -1973,21 +1973,63 @@ LONG WINAPI NtUserGetDisplayConfigBufferSizes( UINT32 flags, UINT32 *num_path_in
     return ERROR_SUCCESS;
 }
 
+/* display_lock mutex must be held */
+static struct display_device *find_monitor_device( struct display_device *adapter, DWORD index )
+{
+    struct monitor *monitor;
+
+    LIST_FOR_EACH_ENTRY(monitor, &monitors, struct monitor, entry)
+        if (&monitor->adapter->dev == adapter && index == monitor->id)
+            return &monitor->dev;
+
+    WARN( "Failed to find adapter %s monitor with id %u.\n", debugstr_w(adapter->device_name), index );
+    return NULL;
+}
+
+/* display_lock mutex must be held */
+static struct display_device *find_adapter_device_by_id( DWORD index )
+{
+    struct adapter *adapter;
+
+    LIST_FOR_EACH_ENTRY(adapter, &adapters, struct adapter, entry)
+        if (index == adapter->id) return &adapter->dev;
+
+    WARN( "Failed to find adapter with id %u.\n", index );
+    return NULL;
+}
+
+/* display_lock mutex must be held */
+static struct display_device *find_adapter_device_by_name( UNICODE_STRING *name )
+{
+    SIZE_T len = name->Length / sizeof(WCHAR);
+    struct adapter *adapter;
+
+    LIST_FOR_EACH_ENTRY(adapter, &adapters, struct adapter, entry)
+        if (!wcsnicmp( name->Buffer, adapter->dev.device_name, len ) && !adapter->dev.device_name[len])
+            return &adapter->dev;
+
+    WARN( "Failed to find adapter with name %s.\n", debugstr_us(name) );
+    return NULL;
+}
+
 /* Find and acquire the adapter matching name, or primary adapter if name is NULL.
  * If not NULL, the returned adapter needs to be released with adapter_release.
  */
 static struct adapter *find_adapter( UNICODE_STRING *name )
 {
+    struct display_device *device;
     struct adapter *adapter;
 
-    LIST_FOR_EACH_ENTRY(adapter, &adapters, struct adapter, entry)
-    {
-        if (!name || !name->Length) return adapter_acquire( adapter ); /* use primary adapter */
-        if (!wcsnicmp( name->Buffer, adapter->dev.device_name, name->Length / sizeof(WCHAR) ) &&
-            !adapter->dev.device_name[name->Length / sizeof(WCHAR)])
-            return adapter_acquire( adapter );
-    }
-    return NULL;
+    if (!lock_display_devices()) return NULL;
+
+    if (name && name->Length) device = find_adapter_device_by_name( name );
+    else device = find_adapter_device_by_id( 0 ); /* use primary adapter */
+
+    if (!device) adapter = NULL;
+    else adapter = adapter_acquire( CONTAINING_RECORD( device, struct adapter, dev ) );
+
+    unlock_display_devices();
+    return adapter;
 }
 
 /***********************************************************************
@@ -1997,8 +2039,6 @@ NTSTATUS WINAPI NtUserEnumDisplayDevices( UNICODE_STRING *device, DWORD index,
                                           DISPLAY_DEVICEW *info, DWORD flags )
 {
     struct display_device *found = NULL;
-    struct adapter *adapter;
-    struct monitor *monitor;
 
     TRACE( "%s %u %p %#x\n", debugstr_us( device ), index, info, flags );
 
@@ -2006,31 +2046,8 @@ NTSTATUS WINAPI NtUserEnumDisplayDevices( UNICODE_STRING *device, DWORD index,
 
     if (!lock_display_devices()) return STATUS_UNSUCCESSFUL;
 
-    if (!device || !device->Length)
-    {
-        /* Enumerate adapters */
-        LIST_FOR_EACH_ENTRY(adapter, &adapters, struct adapter, entry)
-        {
-            if (index == adapter->id)
-            {
-                found = &adapter->dev;
-                break;
-            }
-        }
-    }
-    else if ((adapter = find_adapter( device )))
-    {
-        /* Enumerate monitors */
-        LIST_FOR_EACH_ENTRY(monitor, &monitors, struct monitor, entry)
-        {
-            if (monitor->adapter == adapter && index == monitor->id)
-            {
-                found = &monitor->dev;
-                break;
-            }
-        }
-        adapter_release( adapter );
-    }
+    if (!device || !device->Length) found = find_adapter_device_by_id( index );
+    else if ((found = find_adapter_device_by_name( device ))) found = find_monitor_device( found, index );
 
     if (found)
     {
@@ -2443,6 +2460,7 @@ static BOOL all_detached_settings( const DEVMODEW *displays )
 static LONG apply_display_settings( const WCHAR *devname, const DEVMODEW *devmode,
                                     HWND hwnd, DWORD flags, void *lparam )
 {
+    struct adapter *adapter;
     DEVMODEW *displays;
     LONG ret;
 
@@ -2461,6 +2479,19 @@ static LONG apply_display_settings( const WCHAR *devname, const DEVMODEW *devmod
     ret = user_driver->pChangeDisplaySettings( displays, hwnd, flags, lparam );
 
     free( displays );
+    if (ret) return ret;
+
+    if ((adapter = find_adapter( NULL )))
+    {
+        DEVMODEW current_mode = {.dmSize = sizeof(DEVMODEW)};
+        user_driver->pGetCurrentDisplaySettings( adapter->dev.device_name, &current_mode );
+        adapter_release( adapter );
+
+        send_message_timeout( HWND_BROADCAST, WM_DISPLAYCHANGE, current_mode.dmBitsPerPel,
+                              MAKELPARAM( current_mode.dmPelsWidth, current_mode.dmPelsHeight ),
+                              SMTO_ABORTIFHUNG, 2000, FALSE );
+    }
+
     return ret;
 }
 
@@ -2479,14 +2510,7 @@ LONG WINAPI NtUserChangeDisplaySettings( UNICODE_STRING *devname, DEVMODEW *devm
 
     if ((!devname || !devname->Length) && !devmode) return apply_display_settings( NULL, NULL, hwnd, flags, lparam );
 
-    if (!lock_display_devices()) return DISP_CHANGE_FAILED;
-    adapter = find_adapter( devname );
-    unlock_display_devices();
-    if (!adapter)
-    {
-        WARN( "Invalid device name %s.\n", debugstr_us(devname) );
-        return DISP_CHANGE_BADPARAM;
-    }
+    if (!(adapter = find_adapter( devname ))) return DISP_CHANGE_BADPARAM;
 
     if (!adapter_get_full_mode( adapter, devmode, &full_mode )) ret = DISP_CHANGE_BADMODE;
     else if ((flags & CDS_UPDATEREGISTRY) && !adapter_set_registry_settings( adapter, &full_mode )) ret = DISP_CHANGE_NOTUPDATED;
@@ -2496,6 +2520,39 @@ LONG WINAPI NtUserChangeDisplaySettings( UNICODE_STRING *devname, DEVMODEW *devm
 
     if (ret) ERR( "Changing %s display settings returned %d.\n", debugstr_us(devname), ret );
     return ret;
+}
+
+static BOOL adapter_enum_display_settings( const struct adapter *adapter, DWORD index, DEVMODEW *devmode, DWORD flags )
+{
+    DEVMODEW current_mode = {.dmSize = sizeof(DEVMODEW)};
+    const DEVMODEW *adapter_mode;
+
+    if (!(flags & EDS_ROTATEDMODE) && !user_driver->pGetCurrentDisplaySettings( adapter->dev.device_name, &current_mode ))
+    {
+        WARN( "Failed to query current display mode for EDS_ROTATEDMODE flag.\n" );
+        return FALSE;
+    }
+
+    for (adapter_mode = adapter->modes; adapter_mode->dmSize; adapter_mode = NEXT_DEVMODEW(adapter_mode))
+    {
+        if (!(flags & EDS_ROTATEDMODE) && (adapter_mode->dmFields & DM_DISPLAYORIENTATION) &&
+            adapter_mode->dmDisplayOrientation != current_mode.dmDisplayOrientation)
+            continue;
+        if (!(flags & EDS_RAWMODE) && (adapter_mode->dmFields & DM_DISPLAYFLAGS) &&
+            (adapter_mode->dmDisplayFlags & WINE_DM_UNSUPPORTED))
+            continue;
+        if (!index--)
+        {
+            memcpy( &devmode->dmFields, &adapter_mode->dmFields, devmode->dmSize - FIELD_OFFSET(DEVMODEW, dmFields) );
+            devmode->dmDisplayFlags &= ~WINE_DM_UNSUPPORTED;
+            return TRUE;
+        }
+    }
+
+    WARN( "device %s, index %#x, flags %#x display mode not found.\n",
+          debugstr_w( adapter->dev.device_name ), index, flags );
+    RtlSetLastWin32Error( ERROR_NO_MORE_FILES );
+    return FALSE;
 }
 
 /***********************************************************************
@@ -2509,27 +2566,18 @@ BOOL WINAPI NtUserEnumDisplaySettings( UNICODE_STRING *device, DWORD index, DEVM
 
     TRACE( "device %s, index %#x, devmode %p, flags %#x\n", debugstr_us(device), index, devmode, flags );
 
-    if (!lock_display_devices()) return FALSE;
-    adapter = find_adapter( device );
-    unlock_display_devices();
-    if (!adapter)
-    {
-        WARN( "Invalid device name %s.\n", debugstr_us(device) );
-        return FALSE;
-    }
+    if (!(adapter = find_adapter( device ))) return FALSE;
 
     lstrcpynW( devmode->dmDeviceName, wine_display_driverW, ARRAY_SIZE(devmode->dmDeviceName) );
     devmode->dmSpecVersion = DM_SPECVERSION;
     devmode->dmDriverVersion = DM_SPECVERSION;
     devmode->dmSize = offsetof(DEVMODEW, dmICMMethod);
-    memset( &devmode->dmDriverExtra, 0, devmode->dmSize - offsetof(DEVMODEW, dmDriverExtra) );
+    devmode->dmDriverExtra = 0;
 
     if (index == ENUM_REGISTRY_SETTINGS) ret = adapter_get_registry_settings( adapter, devmode );
-    else if (index != ENUM_CURRENT_SETTINGS) ret = user_driver->pEnumDisplaySettingsEx( adapter->dev.device_name, index, devmode, flags );
-    else ret = user_driver->pGetCurrentDisplaySettings( adapter->dev.device_name, devmode );
+    else if (index == ENUM_CURRENT_SETTINGS) ret = user_driver->pGetCurrentDisplaySettings( adapter->dev.device_name, devmode );
+    else ret = adapter_enum_display_settings( adapter, index, devmode, flags );
     adapter_release( adapter );
-
-    devmode->dmDisplayFlags &= ~WINE_DM_UNSUPPORTED;
 
     if (!ret) WARN( "Failed to query %s display settings.\n", debugstr_us(device) );
     else TRACE( "position %dx%d, resolution %ux%u, frequency %u, depth %u, orientation %#x.\n",
