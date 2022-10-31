@@ -34,18 +34,15 @@
 
 #include "cvconst.h"
 
-/* #define USE_STATS */
-
 struct pool /* poor's man */
 {
-    struct list arena_list;
-    struct list arena_full;
-    size_t      arena_size;
+    HANDLE      heap;
 };
 
 void     pool_init(struct pool* a, size_t arena_size) DECLSPEC_HIDDEN;
 void     pool_destroy(struct pool* a) DECLSPEC_HIDDEN;
 void*    pool_alloc(struct pool* a, size_t len) DECLSPEC_HIDDEN;
+void*    pool_realloc(struct pool* a, void* ptr, size_t len) DECLSPEC_HIDDEN;
 char*    pool_strdup(struct pool* a, const char* str) DECLSPEC_HIDDEN;
 
 struct vector
@@ -271,11 +268,11 @@ struct symt_data
  *     address in one of its ranges
  *
  * Notes:
- *   (A): shall evolve but storage is native is awkward: from PGO testing, the
+ *   (A): shall evolve but storage in native is awkward: from PGO testing, the
  *        top function is stored with its first range of address; all the others
  *        are stored as blocks, children of compiland, but which lexical parent
  *        is the top function. This breaks the natural assumption that
- *        children <> lexical parent is symetrical.
+ *        children <> lexical parent is symmetrical.
  *   (B): see dwarf.c for some gory discrepancies between native & builtin
  *        DbgHelp.
  */

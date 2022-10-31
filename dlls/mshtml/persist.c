@@ -302,11 +302,11 @@ void prepare_for_binding(HTMLDocumentObj *This, IMoniker *mon, DWORD flags)
         }
     }
 
-    if(This->basedoc.window->mon) {
+    if(This->window->mon) {
         update_doc(This, UPDATE_TITLE|UPDATE_UI);
     }else {
         update_doc(This, UPDATE_TITLE);
-        set_current_mon(This->basedoc.window, mon, flags);
+        set_current_mon(This->window, mon, flags);
     }
 
     if(This->client) {
@@ -318,7 +318,7 @@ void prepare_for_binding(HTMLDocumentObj *This, IMoniker *mon, DWORD flags)
 
             if(flags & BINDING_NAVIGATED) {
                 V_VT(&var) = VT_UNKNOWN;
-                V_UNKNOWN(&var) = (IUnknown*)&This->basedoc.window->base.IHTMLWindow2_iface;
+                V_UNKNOWN(&var) = (IUnknown*)&This->window->base.IHTMLWindow2_iface;
                 V_VT(&out) = VT_EMPTY;
                 hres = IOleCommandTarget_Exec(cmdtrg, &CGID_ShellDocView, 63, 0, &var, &out);
                 if(SUCCEEDED(hres))
@@ -547,19 +547,19 @@ static inline HTMLDocumentNode *HTMLDocumentNode_from_IPersistMoniker(IPersistMo
 static HRESULT WINAPI DocNodePersistMoniker_QueryInterface(IPersistMoniker *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IPersistMoniker(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IHTMLDOMNode_QueryInterface(&This->node.IHTMLDOMNode_iface, riid, ppv);
 }
 
 static ULONG WINAPI DocNodePersistMoniker_AddRef(IPersistMoniker *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IPersistMoniker(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IHTMLDOMNode_AddRef(&This->node.IHTMLDOMNode_iface);
 }
 
 static ULONG WINAPI DocNodePersistMoniker_Release(IPersistMoniker *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IPersistMoniker(iface);
-    return htmldoc_release(&This->basedoc);
+    return IHTMLDOMNode_Release(&This->node.IHTMLDOMNode_iface);
 }
 
 static HRESULT WINAPI DocNodePersistMoniker_GetClassID(IPersistMoniker *iface, CLSID *pClassID)
@@ -581,7 +581,7 @@ static HRESULT WINAPI DocNodePersistMoniker_Load(IPersistMoniker *iface, BOOL fF
         IMoniker *pimkName, LPBC pibc, DWORD grfMode)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IPersistMoniker(iface);
-    return IPersistMoniker_Load(&This->basedoc.doc_obj->IPersistMoniker_iface, fFullyAvailable, pimkName, pibc, grfMode);
+    return IPersistMoniker_Load(&This->doc_obj->IPersistMoniker_iface, fFullyAvailable, pimkName, pibc, grfMode);
 }
 
 static HRESULT WINAPI DocNodePersistMoniker_Save(IPersistMoniker *iface, IMoniker *pimkName,
@@ -602,7 +602,7 @@ static HRESULT WINAPI DocNodePersistMoniker_SaveCompleted(IPersistMoniker *iface
 static HRESULT WINAPI DocNodePersistMoniker_GetCurMoniker(IPersistMoniker *iface, IMoniker **ppimkName)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IPersistMoniker(iface);
-    return IPersistMoniker_GetCurMoniker(&This->basedoc.doc_obj->IPersistMoniker_iface, ppimkName);
+    return IPersistMoniker_GetCurMoniker(&This->doc_obj->IPersistMoniker_iface, ppimkName);
 }
 
 static const IPersistMonikerVtbl DocNodePersistMonikerVtbl = {
@@ -625,19 +625,19 @@ static inline HTMLDocumentObj *HTMLDocumentObj_from_IPersistMoniker(IPersistMoni
 static HRESULT WINAPI DocObjPersistMoniker_QueryInterface(IPersistMoniker *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IPersistMoniker(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IUnknown_QueryInterface(This->outer_unk, riid, ppv);
 }
 
 static ULONG WINAPI DocObjPersistMoniker_AddRef(IPersistMoniker *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IPersistMoniker(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IUnknown_AddRef(This->outer_unk);
 }
 
 static ULONG WINAPI DocObjPersistMoniker_Release(IPersistMoniker *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IPersistMoniker(iface);
-    return htmldoc_release(&This->basedoc);
+    return IUnknown_Release(This->outer_unk);
 }
 
 static HRESULT WINAPI DocObjPersistMoniker_GetClassID(IPersistMoniker *iface, CLSID *pClassID)
@@ -707,12 +707,12 @@ static HRESULT WINAPI DocObjPersistMoniker_Load(IPersistMoniker *iface, BOOL fFu
 
     prepare_for_binding(This, mon, FALSE);
     call_docview_84(This);
-    hres = set_moniker(This->basedoc.window, mon, NULL, pibc, NULL, TRUE);
+    hres = set_moniker(This->window, mon, NULL, pibc, NULL, TRUE);
     IMoniker_Release(mon);
     if(FAILED(hres))
         return hres;
 
-    return start_binding(This->basedoc.window->pending_window, (BSCallback*)This->basedoc.window->pending_window->bscallback, pibc);
+    return start_binding(This->window->pending_window, (BSCallback*)This->window->pending_window->bscallback, pibc);
 }
 
 static HRESULT WINAPI DocObjPersistMoniker_Save(IPersistMoniker *iface, IMoniker *pimkName,
@@ -736,11 +736,11 @@ static HRESULT WINAPI DocObjPersistMoniker_GetCurMoniker(IPersistMoniker *iface,
 
     TRACE("(%p)->(%p)\n", This, ppimkName);
 
-    if(!This->basedoc.window || !This->basedoc.window->mon)
+    if(!This->window || !This->window->mon)
         return E_UNEXPECTED;
 
-    IMoniker_AddRef(This->basedoc.window->mon);
-    *ppimkName = This->basedoc.window->mon;
+    IMoniker_AddRef(This->window->mon);
+    *ppimkName = This->window->mon;
     return S_OK;
 }
 
@@ -768,25 +768,25 @@ static inline HTMLDocumentNode *HTMLDocumentNode_from_IMonikerProp(IMonikerProp 
 static HRESULT WINAPI DocNodeMonikerProp_QueryInterface(IMonikerProp *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IMonikerProp(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IHTMLDOMNode_QueryInterface(&This->node.IHTMLDOMNode_iface, riid, ppv);
 }
 
 static ULONG WINAPI DocNodeMonikerProp_AddRef(IMonikerProp *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IMonikerProp(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IHTMLDOMNode_AddRef(&This->node.IHTMLDOMNode_iface);
 }
 
 static ULONG WINAPI DocNodeMonikerProp_Release(IMonikerProp *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IMonikerProp(iface);
-    return htmldoc_release(&This->basedoc);
+    return IHTMLDOMNode_Release(&This->node.IHTMLDOMNode_iface);
 }
 
 static HRESULT WINAPI DocNodeMonikerProp_PutProperty(IMonikerProp *iface, MONIKERPROPERTY mkp, LPCWSTR val)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IMonikerProp(iface);
-    return IMonikerProp_PutProperty(&This->basedoc.doc_obj->IMonikerProp_iface, mkp, val);
+    return IMonikerProp_PutProperty(&This->doc_obj->IMonikerProp_iface, mkp, val);
 }
 
 static const IMonikerPropVtbl DocNodeMonikerPropVtbl = {
@@ -804,19 +804,19 @@ static inline HTMLDocumentObj *HTMLDocumentObj_from_IMonikerProp(IMonikerProp *i
 static HRESULT WINAPI DocObjMonikerProp_QueryInterface(IMonikerProp *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IMonikerProp(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IUnknown_QueryInterface(This->outer_unk, riid, ppv);
 }
 
 static ULONG WINAPI DocObjMonikerProp_AddRef(IMonikerProp *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IMonikerProp(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IUnknown_AddRef(This->outer_unk);
 }
 
 static ULONG WINAPI DocObjMonikerProp_Release(IMonikerProp *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IMonikerProp(iface);
-    return htmldoc_release(&This->basedoc);
+    return IUnknown_Release(This->outer_unk);
 }
 
 static HRESULT WINAPI DocObjMonikerProp_PutProperty(IMonikerProp *iface, MONIKERPROPERTY mkp, LPCWSTR val)
@@ -861,25 +861,25 @@ static inline HTMLDocumentNode *HTMLDocumentNode_from_IPersistFile(IPersistFile 
 static HRESULT WINAPI DocNodePersistFile_QueryInterface(IPersistFile *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IPersistFile(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IHTMLDOMNode_QueryInterface(&This->node.IHTMLDOMNode_iface, riid, ppv);
 }
 
 static ULONG WINAPI DocNodePersistFile_AddRef(IPersistFile *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IPersistFile(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IHTMLDOMNode_AddRef(&This->node.IHTMLDOMNode_iface);
 }
 
 static ULONG WINAPI DocNodePersistFile_Release(IPersistFile *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IPersistFile(iface);
-    return htmldoc_release(&This->basedoc);
+    return IHTMLDOMNode_Release(&This->node.IHTMLDOMNode_iface);
 }
 
 static HRESULT WINAPI DocNodePersistFile_GetClassID(IPersistFile *iface, CLSID *pClassID)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IPersistFile(iface);
-    return IPersistFile_GetClassID(&This->basedoc.doc_obj->IPersistFile_iface, pClassID);
+    return IPersistFile_GetClassID(&This->doc_obj->IPersistFile_iface, pClassID);
 }
 
 static HRESULT WINAPI DocNodePersistFile_IsDirty(IPersistFile *iface)
@@ -957,19 +957,19 @@ static inline HTMLDocumentObj *HTMLDocumentObj_from_IPersistFile(IPersistFile *i
 static HRESULT WINAPI DocObjPersistFile_QueryInterface(IPersistFile *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IPersistFile(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IUnknown_QueryInterface(This->outer_unk, riid, ppv);
 }
 
 static ULONG WINAPI DocObjPersistFile_AddRef(IPersistFile *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IPersistFile(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IUnknown_AddRef(This->outer_unk);
 }
 
 static ULONG WINAPI DocObjPersistFile_Release(IPersistFile *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IPersistFile(iface);
-    return htmldoc_release(&This->basedoc);
+    return IUnknown_Release(This->outer_unk);
 }
 
 static HRESULT WINAPI DocObjPersistFile_GetClassID(IPersistFile *iface, CLSID *pClassID)
@@ -1005,11 +1005,11 @@ static HRESULT WINAPI DocObjPersistFile_Save(IPersistFile *iface, LPCOLESTR pszF
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IPersistFile(iface);
 
-    if(!This->basedoc.doc_node) {
+    if(!This->doc_node) {
         FIXME("No doc_node\n");
         return E_UNEXPECTED;
     }
-    return IPersistFile_Save(&This->basedoc.doc_node->IPersistFile_iface, pszFileName, fRemember);
+    return IPersistFile_Save(&This->doc_node->IPersistFile_iface, pszFileName, fRemember);
 }
 
 static HRESULT WINAPI DocObjPersistFile_SaveCompleted(IPersistFile *iface, LPCOLESTR pszFileName)
@@ -1047,19 +1047,19 @@ static HRESULT WINAPI DocNodePersistStreamInit_QueryInterface(IPersistStreamInit
                                                               REFIID riid, void **ppv)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IPersistStreamInit(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IHTMLDOMNode_QueryInterface(&This->node.IHTMLDOMNode_iface, riid, ppv);
 }
 
 static ULONG WINAPI DocNodePersistStreamInit_AddRef(IPersistStreamInit *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IPersistStreamInit(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IHTMLDOMNode_AddRef(&This->node.IHTMLDOMNode_iface);
 }
 
 static ULONG WINAPI DocNodePersistStreamInit_Release(IPersistStreamInit *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IPersistStreamInit(iface);
-    return htmldoc_release(&This->basedoc);
+    return IHTMLDOMNode_Release(&This->node.IHTMLDOMNode_iface);
 }
 
 static HRESULT WINAPI DocNodePersistStreamInit_GetClassID(IPersistStreamInit *iface, CLSID *pClassID)
@@ -1071,13 +1071,13 @@ static HRESULT WINAPI DocNodePersistStreamInit_GetClassID(IPersistStreamInit *if
 static HRESULT WINAPI DocNodePersistStreamInit_IsDirty(IPersistStreamInit *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IPersistStreamInit(iface);
-    return IPersistStreamInit_IsDirty(&This->basedoc.doc_obj->IPersistStreamInit_iface);
+    return IPersistStreamInit_IsDirty(&This->doc_obj->IPersistStreamInit_iface);
 }
 
 static HRESULT WINAPI DocNodePersistStreamInit_Load(IPersistStreamInit *iface, IStream *pStm)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IPersistStreamInit(iface);
-    return IPersistStreamInit_Load(&This->basedoc.doc_obj->IPersistStreamInit_iface, pStm);
+    return IPersistStreamInit_Load(&This->doc_obj->IPersistStreamInit_iface, pStm);
 }
 
 static HRESULT WINAPI DocNodePersistStreamInit_Save(IPersistStreamInit *iface, IStream *pStm,
@@ -1101,7 +1101,7 @@ static HRESULT WINAPI DocNodePersistStreamInit_Save(IPersistStreamInit *iface, I
     heap_free(str);
 
     if(fClearDirty)
-        set_dirty(This->basedoc.doc_obj->nscontainer, VARIANT_FALSE);
+        set_dirty(This->doc_obj->nscontainer, VARIANT_FALSE);
 
     return S_OK;
 }
@@ -1117,7 +1117,7 @@ static HRESULT WINAPI DocNodePersistStreamInit_GetSizeMax(IPersistStreamInit *if
 static HRESULT WINAPI DocNodePersistStreamInit_InitNew(IPersistStreamInit *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IPersistStreamInit(iface);
-    return IPersistStreamInit_InitNew(&This->basedoc.doc_obj->IPersistStreamInit_iface);
+    return IPersistStreamInit_InitNew(&This->doc_obj->IPersistStreamInit_iface);
 }
 
 static const IPersistStreamInitVtbl DocNodePersistStreamInitVtbl = {
@@ -1141,19 +1141,19 @@ static HRESULT WINAPI DocObjPersistStreamInit_QueryInterface(IPersistStreamInit 
                                                              REFIID riid, void **ppv)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IPersistStreamInit(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IUnknown_QueryInterface(This->outer_unk, riid, ppv);
 }
 
 static ULONG WINAPI DocObjPersistStreamInit_AddRef(IPersistStreamInit *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IPersistStreamInit(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IUnknown_AddRef(This->outer_unk);
 }
 
 static ULONG WINAPI DocObjPersistStreamInit_Release(IPersistStreamInit *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IPersistStreamInit(iface);
-    return htmldoc_release(&This->basedoc);
+    return IUnknown_Release(This->outer_unk);
 }
 
 static HRESULT WINAPI DocObjPersistStreamInit_GetClassID(IPersistStreamInit *iface, CLSID *pClassID)
@@ -1186,9 +1186,9 @@ static HRESULT WINAPI DocObjPersistStreamInit_Load(IPersistStreamInit *iface, IS
     }
 
     prepare_for_binding(This, mon, FALSE);
-    hres = set_moniker(This->basedoc.window, mon, NULL, NULL, NULL, TRUE);
+    hres = set_moniker(This->window, mon, NULL, NULL, NULL, TRUE);
     if(SUCCEEDED(hres))
-        hres = channelbsc_load_stream(This->basedoc.window->pending_window, mon, pStm);
+        hres = channelbsc_load_stream(This->window->pending_window, mon, pStm);
 
     IMoniker_Release(mon);
     return hres;
@@ -1199,11 +1199,11 @@ static HRESULT WINAPI DocObjPersistStreamInit_Save(IPersistStreamInit *iface, IS
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IPersistStreamInit(iface);
 
-    if(!This->basedoc.doc_node) {
+    if(!This->doc_node) {
         FIXME("No doc_node\n");
         return E_UNEXPECTED;
     }
-    return IPersistStreamInit_Save(&This->basedoc.doc_node->IPersistStreamInit_iface, pStm, fClearDirty);
+    return IPersistStreamInit_Save(&This->doc_node->IPersistStreamInit_iface, pStm, fClearDirty);
 }
 
 static HRESULT WINAPI DocObjPersistStreamInit_GetSizeMax(IPersistStreamInit *iface,
@@ -1229,9 +1229,9 @@ static HRESULT WINAPI DocObjPersistStreamInit_InitNew(IPersistStreamInit *iface)
     }
 
     prepare_for_binding(This, mon, FALSE);
-    hres = set_moniker(This->basedoc.window, mon, NULL, NULL, NULL, FALSE);
+    hres = set_moniker(This->window, mon, NULL, NULL, NULL, FALSE);
     if(SUCCEEDED(hres))
-        hres = channelbsc_load_stream(This->basedoc.window->pending_window, mon, NULL);
+        hres = channelbsc_load_stream(This->window->pending_window, mon, NULL);
 
     IMoniker_Release(mon);
     return hres;
@@ -1261,19 +1261,19 @@ static inline HTMLDocumentNode *HTMLDocumentNode_from_IPersistHistory(IPersistHi
 static HRESULT WINAPI DocNodePersistHistory_QueryInterface(IPersistHistory *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IPersistHistory(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IHTMLDOMNode_QueryInterface(&This->node.IHTMLDOMNode_iface, riid, ppv);
 }
 
 static ULONG WINAPI DocNodePersistHistory_AddRef(IPersistHistory *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IPersistHistory(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IHTMLDOMNode_AddRef(&This->node.IHTMLDOMNode_iface);
 }
 
 static ULONG WINAPI DocNodePersistHistory_Release(IPersistHistory *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IPersistHistory(iface);
-    return htmldoc_release(&This->basedoc);
+    return IHTMLDOMNode_Release(&This->node.IHTMLDOMNode_iface);
 }
 
 static HRESULT WINAPI DocNodePersistHistory_GetClassID(IPersistHistory *iface, CLSID *pClassID)
@@ -1285,13 +1285,13 @@ static HRESULT WINAPI DocNodePersistHistory_GetClassID(IPersistHistory *iface, C
 static HRESULT WINAPI DocNodePersistHistory_LoadHistory(IPersistHistory *iface, IStream *pStream, IBindCtx *pbc)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IPersistHistory(iface);
-    return IPersistHistory_LoadHistory(&This->basedoc.doc_obj->IPersistHistory_iface, pStream, pbc);
+    return IPersistHistory_LoadHistory(&This->doc_obj->IPersistHistory_iface, pStream, pbc);
 }
 
 static HRESULT WINAPI DocNodePersistHistory_SaveHistory(IPersistHistory *iface, IStream *pStream)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IPersistHistory(iface);
-    return IPersistHistory_SaveHistory(&This->basedoc.doc_obj->IPersistHistory_iface, pStream);
+    return IPersistHistory_SaveHistory(&This->doc_obj->IPersistHistory_iface, pStream);
 }
 
 static HRESULT WINAPI DocNodePersistHistory_SetPositionCookie(IPersistHistory *iface, DWORD dwPositioncookie)
@@ -1327,19 +1327,19 @@ static inline HTMLDocumentObj *HTMLDocumentObj_from_IPersistHistory(IPersistHist
 static HRESULT WINAPI DocObjPersistHistory_QueryInterface(IPersistHistory *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IPersistHistory(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IUnknown_QueryInterface(This->outer_unk, riid, ppv);
 }
 
 static ULONG WINAPI DocObjPersistHistory_AddRef(IPersistHistory *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IPersistHistory(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IUnknown_AddRef(This->outer_unk);
 }
 
 static ULONG WINAPI DocObjPersistHistory_Release(IPersistHistory *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IPersistHistory(iface);
-    return htmldoc_release(&This->basedoc);
+    return IUnknown_Release(This->outer_unk);
 }
 
 static HRESULT WINAPI DocObjPersistHistory_GetClassID(IPersistHistory *iface, CLSID *pClassID)
@@ -1358,7 +1358,7 @@ static HRESULT WINAPI DocObjPersistHistory_LoadHistory(IPersistHistory *iface, I
 
     TRACE("(%p)->(%p %p)\n", This, pStream, pbc);
 
-    if(!This->basedoc.window) {
+    if(!This->window) {
         FIXME("No current window\n");
         return E_UNEXPECTED;
     }
@@ -1397,7 +1397,7 @@ static HRESULT WINAPI DocObjPersistHistory_LoadHistory(IPersistHistory *iface, I
     if(FAILED(hres))
         return hres;
 
-    hres = load_uri(This->basedoc.window, uri, BINDING_FROMHIST);
+    hres = load_uri(This->window, uri, BINDING_FROMHIST);
     IUri_Release(uri);
     return hres;
 }
@@ -1411,14 +1411,14 @@ static HRESULT WINAPI DocObjPersistHistory_SaveHistory(IPersistHistory *iface, I
 
     TRACE("(%p)->(%p)\n", This, pStream);
 
-    if(!This->basedoc.window || !This->basedoc.window->uri) {
+    if(!This->window || !This->window->uri) {
         FIXME("No current URI\n");
         return E_FAIL;
     }
 
     /* NOTE: The format we store is *not* compatible with native MSHTML. We currently
      * store only URI of the page (as a length followed by a string) */
-    hres = IUri_GetDisplayUri(This->basedoc.window->uri, &display_uri);
+    hres = IUri_GetDisplayUri(This->window->uri, &display_uri);
     if(FAILED(hres))
         return hres;
 
@@ -1467,19 +1467,19 @@ static inline HTMLDocumentNode *HTMLDocumentNode_from_IHlinkTarget(IHlinkTarget 
 static HRESULT WINAPI DocNodeHlinkTarget_QueryInterface(IHlinkTarget *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IHlinkTarget(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IHTMLDOMNode_QueryInterface(&This->node.IHTMLDOMNode_iface, riid, ppv);
 }
 
 static ULONG WINAPI DocNodeHlinkTarget_AddRef(IHlinkTarget *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IHlinkTarget(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IHTMLDOMNode_AddRef(&This->node.IHTMLDOMNode_iface);
 }
 
 static ULONG WINAPI DocNodeHlinkTarget_Release(IHlinkTarget *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IHlinkTarget(iface);
-    return htmldoc_release(&This->basedoc);
+    return IHTMLDOMNode_Release(&This->node.IHTMLDOMNode_iface);
 }
 
 static HRESULT WINAPI DocNodeHlinkTarget_SetBrowseContext(IHlinkTarget *iface, IHlinkBrowseContext *pihlbc)
@@ -1507,10 +1507,10 @@ static HRESULT WINAPI DocNodeHlinkTarget_Navigate(IHlinkTarget *iface, DWORD grf
     if(pwzJumpLocation)
         FIXME("JumpLocation not supported\n");
 
-    if(This->basedoc.doc_obj->client)
+    if(This->doc_obj->client)
         return IOleObject_DoVerb(&This->IOleObject_iface, OLEIVERB_SHOW, NULL, NULL, -1, NULL, NULL);
 
-    return IHlinkTarget_Navigate(&This->basedoc.doc_obj->IHlinkTarget_iface, grfHLNF, pwzJumpLocation);
+    return IHlinkTarget_Navigate(&This->doc_obj->IHlinkTarget_iface, grfHLNF, pwzJumpLocation);
 }
 
 static HRESULT WINAPI DocNodeHlinkTarget_GetMoniker(IHlinkTarget *iface, LPCWSTR pwzLocation, DWORD dwAssign,
@@ -1548,19 +1548,19 @@ static inline HTMLDocumentObj *HTMLDocumentObj_from_IHlinkTarget(IHlinkTarget *i
 static HRESULT WINAPI DocObjHlinkTarget_QueryInterface(IHlinkTarget *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IHlinkTarget(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IUnknown_QueryInterface(This->outer_unk, riid, ppv);
 }
 
 static ULONG WINAPI DocObjHlinkTarget_AddRef(IHlinkTarget *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IHlinkTarget(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IUnknown_AddRef(This->outer_unk);
 }
 
 static ULONG WINAPI DocObjHlinkTarget_Release(IHlinkTarget *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IHlinkTarget(iface);
-    return htmldoc_release(&This->basedoc);
+    return IUnknown_Release(This->outer_unk);
 }
 
 static HRESULT WINAPI DocObjHlinkTarget_SetBrowseContext(IHlinkTarget *iface, IHlinkBrowseContext *pihlbc)
@@ -1592,7 +1592,7 @@ static HRESULT WINAPI DocObjHlinkTarget_Navigate(IHlinkTarget *iface, DWORD grfH
         HRESULT hres;
         BSTR uri;
 
-        hres = IUri_GetAbsoluteUri(This->basedoc.window->uri, &uri);
+        hres = IUri_GetAbsoluteUri(This->window->uri, &uri);
         if(FAILED(hres))
             return hres;
 

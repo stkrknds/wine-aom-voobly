@@ -69,7 +69,7 @@ static nsIClipboardCommands *get_clipboard_commands(HTMLDocumentNode *doc)
     nsIDocShell *doc_shell;
     nsresult nsres;
 
-    nsres = get_nsinterface((nsISupports*)doc->basedoc.window->nswindow, &IID_nsIDocShell, (void**)&doc_shell);
+    nsres = get_nsinterface((nsISupports*)doc->outer_window->nswindow, &IID_nsIDocShell, (void**)&doc_shell);
     if(NS_FAILED(nsres)) {
         ERR("Could not get nsIDocShell interface\n");
         return NULL;
@@ -457,7 +457,7 @@ static HRESULT exec_refresh(HTMLDocumentNode *doc, DWORD nCmdexecopt, VARIANT *p
 
     TRACE("(%p)->(%ld %s %p)\n", doc, nCmdexecopt, debugstr_variant(pvaIn), pvaOut);
 
-    if(doc != doc->browser->doc->basedoc.doc_node) {
+    if(doc != doc->browser->doc->doc_node) {
         FIXME("Unsupported on frame documents\n");
         return E_NOTIMPL;
     }
@@ -475,17 +475,17 @@ static HRESULT exec_refresh(HTMLDocumentNode *doc, DWORD nCmdexecopt, VARIANT *p
         }
     }
 
-    if(!doc->basedoc.window)
+    if(!doc->outer_window)
         return E_UNEXPECTED;
 
     task = heap_alloc(sizeof(*task));
     if(!task)
         return E_OUTOFMEMORY;
 
-    IHTMLWindow2_AddRef(&doc->basedoc.window->base.IHTMLWindow2_iface);
-    task->window = doc->basedoc.window;
+    IHTMLWindow2_AddRef(&doc->outer_window->base.IHTMLWindow2_iface);
+    task->window = doc->outer_window;
 
-    return push_task(&task->header, refresh_proc, refresh_destr, doc->basedoc.window->task_magic);
+    return push_task(&task->header, refresh_proc, refresh_destr, doc->outer_window->task_magic);
 }
 
 static HRESULT exec_stop(HTMLDocumentNode *doc, DWORD nCmdexecopt, VARIANT *pvaIn, VARIANT *pvaOut)
@@ -801,19 +801,19 @@ static const cmdtable_t base_cmds[] = {
 static HRESULT WINAPI DocNodeOleCommandTarget_QueryInterface(IOleCommandTarget *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleCommandTarget(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IHTMLDOMNode_QueryInterface(&This->node.IHTMLDOMNode_iface, riid, ppv);
 }
 
 static ULONG WINAPI DocNodeOleCommandTarget_AddRef(IOleCommandTarget *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleCommandTarget(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IHTMLDOMNode_AddRef(&This->node.IHTMLDOMNode_iface);
 }
 
 static ULONG WINAPI DocNodeOleCommandTarget_Release(IOleCommandTarget *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleCommandTarget(iface);
-    return htmldoc_release(&This->basedoc);
+    return IHTMLDOMNode_Release(&This->node.IHTMLDOMNode_iface);
 }
 
 static HRESULT query_from_table(HTMLDocumentNode *doc, const cmdtable_t *cmdtable, OLECMD *cmd)
@@ -859,8 +859,8 @@ static HRESULT WINAPI DocNodeOleCommandTarget_QueryStatus(IOleCommandTarget *ifa
                     OLECMD olecmd;
 
                     prgCmds[i].cmdf = OLECMDF_SUPPORTED;
-                    if(This->basedoc.doc_obj->client) {
-                        hres = IOleClientSite_QueryInterface(This->basedoc.doc_obj->client, &IID_IOleCommandTarget,
+                    if(This->doc_obj->client) {
+                        hres = IOleClientSite_QueryInterface(This->doc_obj->client, &IID_IOleCommandTarget,
                                 (void**)&cmdtrg);
                         if(SUCCEEDED(hres)) {
                             olecmd.cmdID = prgCmds[i].cmdID;
@@ -965,19 +965,19 @@ static const IOleCommandTargetVtbl DocNodeOleCommandTargetVtbl = {
 static HRESULT WINAPI DocObjOleCommandTarget_QueryInterface(IOleCommandTarget *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IOleCommandTarget(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IUnknown_QueryInterface(This->outer_unk, riid, ppv);
 }
 
 static ULONG WINAPI DocObjOleCommandTarget_AddRef(IOleCommandTarget *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IOleCommandTarget(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IUnknown_AddRef(This->outer_unk);
 }
 
 static ULONG WINAPI DocObjOleCommandTarget_Release(IOleCommandTarget *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IOleCommandTarget(iface);
-    return htmldoc_release(&This->basedoc);
+    return IUnknown_Release(This->outer_unk);
 }
 
 static HRESULT WINAPI DocObjOleCommandTarget_QueryStatus(IOleCommandTarget *iface, const GUID *pguidCmdGroup,
@@ -985,9 +985,9 @@ static HRESULT WINAPI DocObjOleCommandTarget_QueryStatus(IOleCommandTarget *ifac
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IOleCommandTarget(iface);
 
-    if(!This->basedoc.doc_node)
+    if(!This->doc_node)
         return E_UNEXPECTED;
-    return IOleCommandTarget_QueryStatus(&This->basedoc.doc_node->IOleCommandTarget_iface,
+    return IOleCommandTarget_QueryStatus(&This->doc_node->IOleCommandTarget_iface,
                                          pguidCmdGroup, cCmds, prgCmds, pCmdText);
 }
 
@@ -996,9 +996,9 @@ static HRESULT WINAPI DocObjOleCommandTarget_Exec(IOleCommandTarget *iface, cons
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IOleCommandTarget(iface);
 
-    if(!This->basedoc.doc_node)
+    if(!This->doc_node)
         return E_UNEXPECTED;
-    return IOleCommandTarget_Exec(&This->basedoc.doc_node->IOleCommandTarget_iface,
+    return IOleCommandTarget_Exec(&This->doc_node->IOleCommandTarget_iface,
                                   pguidCmdGroup, nCmdID, nCmdexecopt, pvaIn, pvaOut);
 }
 

@@ -33,6 +33,7 @@
 #include "wine/debug.h"
 
 #include "mshtml_private.h"
+#include "htmlevent.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(mshtml);
 
@@ -146,31 +147,31 @@ static inline HTMLDocumentNode *HTMLDocumentNode_from_IOleObject(IOleObject *ifa
 static HRESULT WINAPI DocNodeOleObject_QueryInterface(IOleObject *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleObject(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IHTMLDOMNode_QueryInterface(&This->node.IHTMLDOMNode_iface, riid, ppv);
 }
 
 static ULONG WINAPI DocNodeOleObject_AddRef(IOleObject *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleObject(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IHTMLDOMNode_AddRef(&This->node.IHTMLDOMNode_iface);
 }
 
 static ULONG WINAPI DocNodeOleObject_Release(IOleObject *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleObject(iface);
-    return htmldoc_release(&This->basedoc);
+    return IHTMLDOMNode_Release(&This->node.IHTMLDOMNode_iface);
 }
 
 static HRESULT WINAPI DocNodeOleObject_SetClientSite(IOleObject *iface, IOleClientSite *pClientSite)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleObject(iface);
-    return IOleObject_SetClientSite(&This->basedoc.doc_obj->IOleObject_iface, pClientSite);
+    return IOleObject_SetClientSite(&This->doc_obj->IOleObject_iface, pClientSite);
 }
 
 static HRESULT WINAPI DocNodeOleObject_GetClientSite(IOleObject *iface, IOleClientSite **ppClientSite)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleObject(iface);
-    return IOleObject_GetClientSite(&This->basedoc.doc_obj->IOleObject_iface, ppClientSite);
+    return IOleObject_GetClientSite(&This->doc_obj->IOleObject_iface, ppClientSite);
 }
 
 static HRESULT WINAPI DocNodeOleObject_SetHostNames(IOleObject *iface, LPCOLESTR szContainerApp, LPCOLESTR szContainerObj)
@@ -183,7 +184,7 @@ static HRESULT WINAPI DocNodeOleObject_SetHostNames(IOleObject *iface, LPCOLESTR
 static HRESULT WINAPI DocNodeOleObject_Close(IOleObject *iface, DWORD dwSaveOption)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleObject(iface);
-    return IOleObject_Close(&This->basedoc.doc_obj->IOleObject_iface, dwSaveOption);
+    return IOleObject_Close(&This->doc_obj->IOleObject_iface, dwSaveOption);
 }
 
 static HRESULT WINAPI DocNodeOleObject_SetMoniker(IOleObject *iface, DWORD dwWhichMoniker, IMoniker *pmk)
@@ -219,7 +220,7 @@ static HRESULT WINAPI DocNodeOleObject_DoVerb(IOleObject *iface, LONG iVerb, LPM
                                               LONG lindex, HWND hwndParent, LPCRECT lprcPosRect)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleObject(iface);
-    return IOleObject_DoVerb(&This->basedoc.doc_obj->IOleObject_iface, iVerb, lpmsg, pActiveSite, lindex, hwndParent, lprcPosRect);
+    return IOleObject_DoVerb(&This->doc_obj->IOleObject_iface, iVerb, lpmsg, pActiveSite, lindex, hwndParent, lprcPosRect);
 }
 
 static HRESULT WINAPI DocNodeOleObject_EnumVerbs(IOleObject *iface, IEnumOLEVERB **ppEnumOleVerb)
@@ -246,7 +247,7 @@ static HRESULT WINAPI DocNodeOleObject_IsUpToDate(IOleObject *iface)
 static HRESULT WINAPI DocNodeOleObject_GetUserClassID(IOleObject *iface, CLSID *pClsid)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleObject(iface);
-    return IOleObject_GetUserClassID(&This->basedoc.doc_obj->IOleObject_iface, pClsid);
+    return IOleObject_GetUserClassID(&This->doc_obj->IOleObject_iface, pClsid);
 }
 
 static HRESULT WINAPI DocNodeOleObject_GetUserType(IOleObject *iface, DWORD dwFormOfType, LPOLESTR *pszUserType)
@@ -259,31 +260,31 @@ static HRESULT WINAPI DocNodeOleObject_GetUserType(IOleObject *iface, DWORD dwFo
 static HRESULT WINAPI DocNodeOleObject_SetExtent(IOleObject *iface, DWORD dwDrawAspect, SIZEL *psizel)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleObject(iface);
-    return IOleObject_SetExtent(&This->basedoc.doc_obj->IOleObject_iface, dwDrawAspect, psizel);
+    return IOleObject_SetExtent(&This->doc_obj->IOleObject_iface, dwDrawAspect, psizel);
 }
 
 static HRESULT WINAPI DocNodeOleObject_GetExtent(IOleObject *iface, DWORD dwDrawAspect, SIZEL *psizel)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleObject(iface);
-    return IOleObject_GetExtent(&This->basedoc.doc_obj->IOleObject_iface, dwDrawAspect, psizel);
+    return IOleObject_GetExtent(&This->doc_obj->IOleObject_iface, dwDrawAspect, psizel);
 }
 
 static HRESULT WINAPI DocNodeOleObject_Advise(IOleObject *iface, IAdviseSink *pAdvSink, DWORD *pdwConnection)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleObject(iface);
-    return IOleObject_Advise(&This->basedoc.doc_obj->IOleObject_iface, pAdvSink, pdwConnection);
+    return IOleObject_Advise(&This->doc_obj->IOleObject_iface, pAdvSink, pdwConnection);
 }
 
 static HRESULT WINAPI DocNodeOleObject_Unadvise(IOleObject *iface, DWORD dwConnection)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleObject(iface);
-    return IOleObject_Unadvise(&This->basedoc.doc_obj->IOleObject_iface, dwConnection);
+    return IOleObject_Unadvise(&This->doc_obj->IOleObject_iface, dwConnection);
 }
 
 static HRESULT WINAPI DocNodeOleObject_EnumAdvise(IOleObject *iface, IEnumSTATDATA **ppenumAdvise)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleObject(iface);
-    return IOleObject_EnumAdvise(&This->basedoc.doc_obj->IOleObject_iface, ppenumAdvise);
+    return IOleObject_EnumAdvise(&This->doc_obj->IOleObject_iface, ppenumAdvise);
 }
 
 static HRESULT WINAPI DocNodeOleObject_GetMiscStatus(IOleObject *iface, DWORD dwAspect, DWORD *pdwStatus)
@@ -335,19 +336,19 @@ static inline HTMLDocumentObj *HTMLDocumentObj_from_IOleObject(IOleObject *iface
 static HRESULT WINAPI DocObjOleObject_QueryInterface(IOleObject *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IOleObject(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IUnknown_QueryInterface(This->outer_unk, riid, ppv);
 }
 
 static ULONG WINAPI DocObjOleObject_AddRef(IOleObject *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IOleObject(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IUnknown_AddRef(This->outer_unk);
 }
 
 static ULONG WINAPI DocObjOleObject_Release(IOleObject *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IOleObject(iface);
-    return htmldoc_release(&This->basedoc);
+    return IUnknown_Release(This->outer_unk);
 }
 
 static void update_hostinfo(HTMLDocumentObj *This, DOCHOSTUIINFO *hostinfo)
@@ -406,7 +407,7 @@ void set_document_navigation(HTMLDocumentObj *doc, BOOL doc_can_navigate)
 
     if(doc_can_navigate) {
         V_VT(&var) = VT_UNKNOWN;
-        V_UNKNOWN(&var) = (IUnknown*)&doc->basedoc.window->base.IHTMLWindow2_iface;
+        V_UNKNOWN(&var) = (IUnknown*)&doc->window->base.IHTMLWindow2_iface;
     }
 
     IOleCommandTarget_Exec(doc->client_cmdtrg, &CGID_DocHostCmdPriv, DOCHOST_DOCCANNAVIGATE, 0,
@@ -908,26 +909,26 @@ static inline HTMLDocumentNode *HTMLDocumentNode_from_IOleDocument(IOleDocument 
 static HRESULT WINAPI DocNodeOleDocument_QueryInterface(IOleDocument *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleDocument(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IHTMLDOMNode_QueryInterface(&This->node.IHTMLDOMNode_iface, riid, ppv);
 }
 
 static ULONG WINAPI DocNodeOleDocument_AddRef(IOleDocument *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleDocument(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IHTMLDOMNode_AddRef(&This->node.IHTMLDOMNode_iface);
 }
 
 static ULONG WINAPI DocNodeOleDocument_Release(IOleDocument *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleDocument(iface);
-    return htmldoc_release(&This->basedoc);
+    return IHTMLDOMNode_Release(&This->node.IHTMLDOMNode_iface);
 }
 
 static HRESULT WINAPI DocNodeOleDocument_CreateView(IOleDocument *iface, IOleInPlaceSite *pIPSite, IStream *pstm,
                                                     DWORD dwReserved, IOleDocumentView **ppView)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleDocument(iface);
-    return IOleDocument_CreateView(&This->basedoc.doc_obj->IOleDocument_iface, pIPSite, pstm, dwReserved, ppView);
+    return IOleDocument_CreateView(&This->doc_obj->IOleDocument_iface, pIPSite, pstm, dwReserved, ppView);
 }
 
 static HRESULT WINAPI DocNodeOleDocument_GetDocMiscStatus(IOleDocument *iface, DWORD *pdwStatus)
@@ -962,19 +963,19 @@ static inline HTMLDocumentObj *HTMLDocumentObj_from_IOleDocument(IOleDocument *i
 static HRESULT WINAPI DocObjOleDocument_QueryInterface(IOleDocument *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IOleDocument(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IUnknown_QueryInterface(This->outer_unk, riid, ppv);
 }
 
 static ULONG WINAPI DocObjOleDocument_AddRef(IOleDocument *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IOleDocument(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IUnknown_AddRef(This->outer_unk);
 }
 
 static ULONG WINAPI DocObjOleDocument_Release(IOleDocument *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IOleDocument(iface);
-    return htmldoc_release(&This->basedoc);
+    return IUnknown_Release(This->outer_unk);
 }
 
 static HRESULT WINAPI DocObjOleDocument_CreateView(IOleDocument *iface, IOleInPlaceSite *pIPSite, IStream *pstm,
@@ -1045,19 +1046,19 @@ static inline HTMLDocumentNode *HTMLDocumentNode_from_IOleControl(IOleControl *i
 static HRESULT WINAPI DocNodeOleControl_QueryInterface(IOleControl *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleControl(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IHTMLDOMNode_QueryInterface(&This->node.IHTMLDOMNode_iface, riid, ppv);
 }
 
 static ULONG WINAPI DocNodeOleControl_AddRef(IOleControl *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleControl(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IHTMLDOMNode_AddRef(&This->node.IHTMLDOMNode_iface);
 }
 
 static ULONG WINAPI DocNodeOleControl_Release(IOleControl *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleControl(iface);
-    return htmldoc_release(&This->basedoc);
+    return IHTMLDOMNode_Release(&This->node.IHTMLDOMNode_iface);
 }
 
 static HRESULT WINAPI DocNodeOleControl_GetControlInfo(IOleControl *iface, CONTROLINFO *pCI)
@@ -1077,7 +1078,7 @@ static HRESULT WINAPI DocNodeOleControl_OnMnemonic(IOleControl *iface, MSG *pMsg
 static HRESULT WINAPI DocNodeOleControl_OnAmbientPropertyChange(IOleControl *iface, DISPID dispID)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleControl(iface);
-    return IOleControl_OnAmbientPropertyChange(&This->basedoc.doc_obj->IOleControl_iface, dispID);
+    return IOleControl_OnAmbientPropertyChange(&This->doc_obj->IOleControl_iface, dispID);
 }
 
 static HRESULT WINAPI DocNodeOleControl_FreezeEvents(IOleControl *iface, BOOL bFreeze)
@@ -1105,19 +1106,19 @@ static inline HTMLDocumentObj *HTMLDocumentObj_from_IOleControl(IOleControl *ifa
 static HRESULT WINAPI DocObjOleControl_QueryInterface(IOleControl *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IOleControl(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IUnknown_QueryInterface(This->outer_unk, riid, ppv);
 }
 
 static ULONG WINAPI DocObjOleControl_AddRef(IOleControl *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IOleControl(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IUnknown_AddRef(This->outer_unk);
 }
 
 static ULONG WINAPI DocObjOleControl_Release(IOleControl *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IOleControl(iface);
-    return htmldoc_release(&This->basedoc);
+    return IUnknown_Release(This->outer_unk);
 }
 
 static HRESULT WINAPI DocObjOleControl_GetControlInfo(IOleControl *iface, CONTROLINFO *pCI)
@@ -1285,25 +1286,25 @@ static inline HTMLDocumentNode *HTMLDocumentNode_from_IOleInPlaceActiveObject(IO
 static HRESULT WINAPI DocNodeOleInPlaceActiveObject_QueryInterface(IOleInPlaceActiveObject *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleInPlaceActiveObject(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IHTMLDOMNode_QueryInterface(&This->node.IHTMLDOMNode_iface, riid, ppv);
 }
 
 static ULONG WINAPI DocNodeOleInPlaceActiveObject_AddRef(IOleInPlaceActiveObject *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleInPlaceActiveObject(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IHTMLDOMNode_AddRef(&This->node.IHTMLDOMNode_iface);
 }
 
 static ULONG WINAPI DocNodeOleInPlaceActiveObject_Release(IOleInPlaceActiveObject *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleInPlaceActiveObject(iface);
-    return htmldoc_release(&This->basedoc);
+    return IHTMLDOMNode_Release(&This->node.IHTMLDOMNode_iface);
 }
 
 static HRESULT WINAPI DocNodeOleInPlaceActiveObject_GetWindow(IOleInPlaceActiveObject *iface, HWND *phwnd)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleInPlaceActiveObject(iface);
-    return IOleInPlaceActiveObject_GetWindow(&This->basedoc.doc_obj->IOleInPlaceActiveObject_iface, phwnd);
+    return IOleInPlaceActiveObject_GetWindow(&This->doc_obj->IOleInPlaceActiveObject_iface, phwnd);
 }
 
 static HRESULT WINAPI DocNodeOleInPlaceActiveObject_ContextSensitiveHelp(IOleInPlaceActiveObject *iface, BOOL fEnterMode)
@@ -1324,7 +1325,7 @@ static HRESULT WINAPI DocNodeOleInPlaceActiveObject_OnFrameWindowActivate(IOleIn
         BOOL fActivate)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleInPlaceActiveObject(iface);
-    return IOleInPlaceActiveObject_OnFrameWindowActivate(&This->basedoc.doc_obj->IOleInPlaceActiveObject_iface, fActivate);
+    return IOleInPlaceActiveObject_OnFrameWindowActivate(&This->doc_obj->IOleInPlaceActiveObject_iface, fActivate);
 }
 
 static HRESULT WINAPI DocNodeOleInPlaceActiveObject_OnDocWindowActivate(IOleInPlaceActiveObject *iface, BOOL fActivate)
@@ -1370,19 +1371,19 @@ static inline HTMLDocumentObj *HTMLDocumentObj_from_IOleInPlaceActiveObject(IOle
 static HRESULT WINAPI DocObjOleInPlaceActiveObject_QueryInterface(IOleInPlaceActiveObject *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IOleInPlaceActiveObject(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IUnknown_QueryInterface(This->outer_unk, riid, ppv);
 }
 
 static ULONG WINAPI DocObjOleInPlaceActiveObject_AddRef(IOleInPlaceActiveObject *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IOleInPlaceActiveObject(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IUnknown_AddRef(This->outer_unk);
 }
 
 static ULONG WINAPI DocObjOleInPlaceActiveObject_Release(IOleInPlaceActiveObject *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IOleInPlaceActiveObject(iface);
-    return htmldoc_release(&This->basedoc);
+    return IUnknown_Release(This->outer_unk);
 }
 
 static HRESULT WINAPI DocObjOleInPlaceActiveObject_GetWindow(IOleInPlaceActiveObject *iface, HWND *phwnd)
@@ -1478,19 +1479,19 @@ static HRESULT WINAPI DocNodeOleInPlaceObjectWindowless_QueryInterface(IOleInPla
         REFIID riid, void **ppv)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleInPlaceObjectWindowless(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IHTMLDOMNode_QueryInterface(&This->node.IHTMLDOMNode_iface, riid, ppv);
 }
 
 static ULONG WINAPI DocNodeOleInPlaceObjectWindowless_AddRef(IOleInPlaceObjectWindowless *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleInPlaceObjectWindowless(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IHTMLDOMNode_AddRef(&This->node.IHTMLDOMNode_iface);
 }
 
 static ULONG WINAPI DocNodeOleInPlaceObjectWindowless_Release(IOleInPlaceObjectWindowless *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleInPlaceObjectWindowless(iface);
-    return htmldoc_release(&This->basedoc);
+    return IHTMLDOMNode_Release(&This->node.IHTMLDOMNode_iface);
 }
 
 static HRESULT WINAPI DocNodeOleInPlaceObjectWindowless_GetWindow(IOleInPlaceObjectWindowless *iface,
@@ -1510,7 +1511,7 @@ static HRESULT WINAPI DocNodeOleInPlaceObjectWindowless_ContextSensitiveHelp(IOl
 static HRESULT WINAPI DocNodeOleInPlaceObjectWindowless_InPlaceDeactivate(IOleInPlaceObjectWindowless *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleInPlaceObjectWindowless(iface);
-    return IOleInPlaceObjectWindowless_InPlaceDeactivate(&This->basedoc.doc_obj->IOleInPlaceObjectWindowless_iface);
+    return IOleInPlaceObjectWindowless_InPlaceDeactivate(&This->doc_obj->IOleInPlaceObjectWindowless_iface);
 }
 
 static HRESULT WINAPI DocNodeOleInPlaceObjectWindowless_UIDeactivate(IOleInPlaceObjectWindowless *iface)
@@ -1524,7 +1525,7 @@ static HRESULT WINAPI DocNodeOleInPlaceObjectWindowless_SetObjectRects(IOleInPla
         const RECT *pos, const RECT *clip)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleInPlaceObjectWindowless(iface);
-    return IOleInPlaceObjectWindowless_SetObjectRects(&This->basedoc.doc_obj->IOleInPlaceObjectWindowless_iface, pos, clip);
+    return IOleInPlaceObjectWindowless_SetObjectRects(&This->doc_obj->IOleInPlaceObjectWindowless_iface, pos, clip);
 }
 
 static HRESULT WINAPI DocNodeOleInPlaceObjectWindowless_ReactivateAndUndo(IOleInPlaceObjectWindowless *iface)
@@ -1573,19 +1574,19 @@ static HRESULT WINAPI DocObjOleInPlaceObjectWindowless_QueryInterface(IOleInPlac
         REFIID riid, void **ppv)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IOleInPlaceObjectWindowless(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IUnknown_QueryInterface(This->outer_unk, riid, ppv);
 }
 
 static ULONG WINAPI DocObjOleInPlaceObjectWindowless_AddRef(IOleInPlaceObjectWindowless *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IOleInPlaceObjectWindowless(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IUnknown_AddRef(This->outer_unk);
 }
 
 static ULONG WINAPI DocObjOleInPlaceObjectWindowless_Release(IOleInPlaceObjectWindowless *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IOleInPlaceObjectWindowless(iface);
-    return htmldoc_release(&This->basedoc);
+    return IUnknown_Release(This->outer_unk);
 }
 
 static HRESULT WINAPI DocObjOleInPlaceObjectWindowless_GetWindow(IOleInPlaceObjectWindowless *iface,
@@ -1716,19 +1717,19 @@ static inline HTMLDocumentNode *HTMLDocumentNode_from_IObjectWithSite(IObjectWit
 static HRESULT WINAPI DocNodeObjectWithSite_QueryInterface(IObjectWithSite *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IObjectWithSite(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IHTMLDOMNode_QueryInterface(&This->node.IHTMLDOMNode_iface, riid, ppv);
 }
 
 static ULONG WINAPI DocNodeObjectWithSite_AddRef(IObjectWithSite *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IObjectWithSite(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IHTMLDOMNode_AddRef(&This->node.IHTMLDOMNode_iface);
 }
 
 static ULONG WINAPI DocNodeObjectWithSite_Release(IObjectWithSite *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IObjectWithSite(iface);
-    return htmldoc_release(&This->basedoc);
+    return IHTMLDOMNode_Release(&This->node.IHTMLDOMNode_iface);
 }
 
 static HRESULT WINAPI DocNodeObjectWithSite_SetSite(IObjectWithSite *iface, IUnknown *pUnkSite)
@@ -1761,19 +1762,19 @@ static inline HTMLDocumentObj *HTMLDocumentObj_from_IObjectWithSite(IObjectWithS
 static HRESULT WINAPI DocObjObjectWithSite_QueryInterface(IObjectWithSite *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IObjectWithSite(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IUnknown_QueryInterface(This->outer_unk, riid, ppv);
 }
 
 static ULONG WINAPI DocObjObjectWithSite_AddRef(IObjectWithSite *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IObjectWithSite(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IUnknown_AddRef(This->outer_unk);
 }
 
 static ULONG WINAPI DocObjObjectWithSite_Release(IObjectWithSite *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IObjectWithSite(iface);
-    return htmldoc_release(&This->basedoc);
+    return IUnknown_Release(This->outer_unk);
 }
 
 static HRESULT WINAPI DocObjObjectWithSite_SetSite(IObjectWithSite *iface, IUnknown *pUnkSite)
@@ -1810,19 +1811,19 @@ static inline HTMLDocumentNode *HTMLDocumentNode_from_IOleContainer(IOleContaine
 static HRESULT WINAPI DocNodeOleContainer_QueryInterface(IOleContainer *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleContainer(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IHTMLDOMNode_QueryInterface(&This->node.IHTMLDOMNode_iface, riid, ppv);
 }
 
 static ULONG WINAPI DocNodeOleContainer_AddRef(IOleContainer *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleContainer(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IHTMLDOMNode_AddRef(&This->node.IHTMLDOMNode_iface);
 }
 
 static ULONG WINAPI DocNodeOleContainer_Release(IOleContainer *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleContainer(iface);
-    return htmldoc_release(&This->basedoc);
+    return IHTMLDOMNode_Release(&This->node.IHTMLDOMNode_iface);
 }
 
 static HRESULT WINAPI DocNodeOleContainer_ParseDisplayName(IOleContainer *iface, IBindCtx *pbc, LPOLESTR pszDisplayName,
@@ -1836,7 +1837,7 @@ static HRESULT WINAPI DocNodeOleContainer_ParseDisplayName(IOleContainer *iface,
 static HRESULT WINAPI DocNodeOleContainer_EnumObjects(IOleContainer *iface, DWORD grfFlags, IEnumUnknown **ppenum)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IOleContainer(iface);
-    return IOleContainer_EnumObjects(&This->basedoc.doc_obj->IOleContainer_iface, grfFlags, ppenum);
+    return IOleContainer_EnumObjects(&This->doc_obj->IOleContainer_iface, grfFlags, ppenum);
 }
 
 static HRESULT WINAPI DocNodeOleContainer_LockContainer(IOleContainer *iface, BOOL fLock)
@@ -1863,19 +1864,19 @@ static inline HTMLDocumentObj *HTMLDocumentObj_from_IOleContainer(IOleContainer 
 static HRESULT WINAPI DocObjOleContainer_QueryInterface(IOleContainer *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IOleContainer(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IUnknown_QueryInterface(This->outer_unk, riid, ppv);
 }
 
 static ULONG WINAPI DocObjOleContainer_AddRef(IOleContainer *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IOleContainer(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IUnknown_AddRef(This->outer_unk);
 }
 
 static ULONG WINAPI DocObjOleContainer_Release(IOleContainer *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IOleContainer(iface);
-    return htmldoc_release(&This->basedoc);
+    return IUnknown_Release(This->outer_unk);
 }
 
 static HRESULT WINAPI DocObjOleContainer_ParseDisplayName(IOleContainer *iface, IBindCtx *pbc, LPOLESTR pszDisplayName,
@@ -1987,19 +1988,19 @@ static inline HTMLDocumentNode *HTMLDocumentNode_from_IObjectSafety(IObjectSafet
 static HRESULT WINAPI DocNodeObjectSafety_QueryInterface(IObjectSafety *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IObjectSafety(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IHTMLDOMNode_QueryInterface(&This->node.IHTMLDOMNode_iface, riid, ppv);
 }
 
 static ULONG WINAPI DocNodeObjectSafety_AddRef(IObjectSafety *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IObjectSafety(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IHTMLDOMNode_AddRef(&This->node.IHTMLDOMNode_iface);
 }
 
 static ULONG WINAPI DocNodeObjectSafety_Release(IObjectSafety *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IObjectSafety(iface);
-    return htmldoc_release(&This->basedoc);
+    return IHTMLDOMNode_Release(&This->node.IHTMLDOMNode_iface);
 }
 
 static HRESULT WINAPI DocNodeObjectSafety_GetInterfaceSafetyOptions(IObjectSafety *iface,
@@ -2014,7 +2015,7 @@ static HRESULT WINAPI DocNodeObjectSafety_SetInterfaceSafetyOptions(IObjectSafet
         REFIID riid, DWORD dwOptionSetMask, DWORD dwEnabledOptions)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IObjectSafety(iface);
-    return IObjectSafety_SetInterfaceSafetyOptions(&This->basedoc.doc_obj->IObjectSafety_iface,
+    return IObjectSafety_SetInterfaceSafetyOptions(&This->doc_obj->IObjectSafety_iface,
                                                    riid, dwOptionSetMask, dwEnabledOptions);
 }
 
@@ -2034,19 +2035,19 @@ static inline HTMLDocumentObj *HTMLDocumentObj_from_IObjectSafety(IObjectSafety 
 static HRESULT WINAPI DocObjObjectSafety_QueryInterface(IObjectSafety *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IObjectSafety(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IUnknown_QueryInterface(This->outer_unk, riid, ppv);
 }
 
 static ULONG WINAPI DocObjObjectSafety_AddRef(IObjectSafety *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IObjectSafety(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IUnknown_AddRef(This->outer_unk);
 }
 
 static ULONG WINAPI DocObjObjectSafety_Release(IObjectSafety *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IObjectSafety(iface);
-    return htmldoc_release(&This->basedoc);
+    return IUnknown_Release(This->outer_unk);
 }
 
 static HRESULT WINAPI DocObjObjectSafety_GetInterfaceSafetyOptions(IObjectSafety *iface,
@@ -2105,11 +2106,11 @@ void HTMLDocumentNode_OleObj_Init(HTMLDocumentNode *This)
     This->IObjectWithSite_iface.lpVtbl = &DocNodeObjectWithSiteVtbl;
     This->IOleContainer_iface.lpVtbl = &DocNodeOleContainerVtbl;
     This->IObjectSafety_iface.lpVtbl = &DocNodeObjectSafetyVtbl;
-    This->basedoc.doc_obj->extent.cx = 1;
-    This->basedoc.doc_obj->extent.cy = 1;
+    This->doc_obj->extent.cx = 1;
+    This->doc_obj->extent.cy = 1;
 }
 
-void HTMLDocumentObj_OleObj_Init(HTMLDocumentObj *This)
+static void HTMLDocumentObj_OleObj_Init(HTMLDocumentObj *This)
 {
     This->IOleObject_iface.lpVtbl = &DocObjOleObjectVtbl;
     This->IOleDocument_iface.lpVtbl = &DocObjOleDocumentVtbl;
@@ -2121,4 +2122,1671 @@ void HTMLDocumentObj_OleObj_Init(HTMLDocumentObj *This)
     This->IObjectSafety_iface.lpVtbl = &DocObjObjectSafetyVtbl;
     This->extent.cx = 1;
     This->extent.cy = 1;
+}
+
+#define HTMLDOCUMENTOBJ_IUNKNOWN_METHODS(iface) \
+static HRESULT WINAPI DocObj##iface##_QueryInterface(I##iface *_0, REFIID riid, void **ppv) \
+{ \
+    HTMLDocumentObj *This = CONTAINING_RECORD(_0, HTMLDocumentObj, I##iface##_iface); \
+    return IUnknown_QueryInterface(This->outer_unk, riid, ppv); \
+} \
+static ULONG WINAPI DocObj##iface##_AddRef(I##iface *_0) \
+{ \
+    HTMLDocumentObj *This = CONTAINING_RECORD(_0, HTMLDocumentObj, I##iface##_iface); \
+    return IUnknown_AddRef(This->outer_unk); \
+} \
+static ULONG WINAPI DocObj##iface##_Release(I##iface *_0) \
+{ \
+    HTMLDocumentObj *This = CONTAINING_RECORD(_0, HTMLDocumentObj, I##iface##_iface); \
+    return IUnknown_Release(This->outer_unk); \
+}
+
+#define HTMLDOCUMENTOBJ_IDISPATCH_METHODS(iface) HTMLDOCUMENTOBJ_IUNKNOWN_METHODS(iface) \
+static HRESULT WINAPI DocObj##iface##_GetTypeInfoCount(I##iface *_0, UINT *pctinfo) \
+{ \
+    HTMLDocumentObj *This = CONTAINING_RECORD(_0, HTMLDocumentObj, I##iface##_iface); \
+    return IDispatchEx_GetTypeInfoCount(&This->IDispatchEx_iface, pctinfo); \
+} \
+static HRESULT WINAPI DocObj##iface##_GetTypeInfo(I##iface *_0, UINT iTInfo, LCID lcid, ITypeInfo **ppTInfo) \
+{ \
+    HTMLDocumentObj *This = CONTAINING_RECORD(_0, HTMLDocumentObj, I##iface##_iface); \
+    return IDispatchEx_GetTypeInfo(&This->IDispatchEx_iface, iTInfo, lcid, ppTInfo); \
+} \
+static HRESULT WINAPI DocObj##iface##_GetIDsOfNames(I##iface *_0, REFIID riid, LPOLESTR *rgszNames, UINT cNames, \
+        LCID lcid, DISPID *rgDispId) \
+{ \
+    HTMLDocumentObj *This = CONTAINING_RECORD(_0, HTMLDocumentObj, I##iface##_iface); \
+    return IDispatchEx_GetIDsOfNames(&This->IDispatchEx_iface, riid, rgszNames, cNames, lcid, rgDispId); \
+} \
+static HRESULT WINAPI DocObj##iface##_Invoke(I##iface *_0, DISPID dispIdMember, REFIID riid, LCID lcid, \
+        WORD wFlags, DISPPARAMS *pDispParams, VARIANT *pVarResult, EXCEPINFO *pExcepInfo, UINT *puArgErr) \
+{ \
+    HTMLDocumentObj *This = CONTAINING_RECORD(_0, HTMLDocumentObj, I##iface##_iface); \
+    return IDispatchEx_Invoke(&This->IDispatchEx_iface, dispIdMember, riid, lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr); \
+}
+
+#define HTMLDOCUMENTOBJ_FWD_TO_NODE_0(iface, method) static HRESULT WINAPI DocObj##iface##_##method(I##iface *_0) \
+{ \
+    HTMLDocumentObj *This = CONTAINING_RECORD(_0, HTMLDocumentObj, I##iface##_iface); \
+    return This->doc_node ? This->doc_node->I##iface##_iface.lpVtbl->method(&This->doc_node->I##iface##_iface) : E_UNEXPECTED; \
+}
+
+#define HTMLDOCUMENTOBJ_FWD_TO_NODE_1(iface, method, a) static HRESULT WINAPI DocObj##iface##_##method(I##iface *_0, a _1) \
+{ \
+    HTMLDocumentObj *This = CONTAINING_RECORD(_0, HTMLDocumentObj, I##iface##_iface); \
+    return This->doc_node ? This->doc_node->I##iface##_iface.lpVtbl->method(&This->doc_node->I##iface##_iface, _1) : E_UNEXPECTED; \
+}
+
+#define HTMLDOCUMENTOBJ_FWD_TO_NODE_2(iface, method, a,b) static HRESULT WINAPI DocObj##iface##_##method(I##iface *_0, a _1, b _2) \
+{ \
+    HTMLDocumentObj *This = CONTAINING_RECORD(_0, HTMLDocumentObj, I##iface##_iface); \
+    return This->doc_node ? This->doc_node->I##iface##_iface.lpVtbl->method(&This->doc_node->I##iface##_iface, _1, _2) : E_UNEXPECTED; \
+}
+
+#define HTMLDOCUMENTOBJ_FWD_TO_NODE_3(iface, method, a,b,c) static HRESULT WINAPI DocObj##iface##_##method(I##iface *_0, a _1, b _2, c _3) \
+{ \
+    HTMLDocumentObj *This = CONTAINING_RECORD(_0, HTMLDocumentObj, I##iface##_iface); \
+    return This->doc_node ? This->doc_node->I##iface##_iface.lpVtbl->method(&This->doc_node->I##iface##_iface, _1, _2, _3) : E_UNEXPECTED; \
+}
+
+#define HTMLDOCUMENTOBJ_FWD_TO_NODE_4(iface, method, a,b,c,d) static HRESULT WINAPI DocObj##iface##_##method(I##iface *_0, a _1, b _2, c _3, d _4) \
+{ \
+    HTMLDocumentObj *This = CONTAINING_RECORD(_0, HTMLDocumentObj, I##iface##_iface); \
+    return This->doc_node ? This->doc_node->I##iface##_iface.lpVtbl->method(&This->doc_node->I##iface##_iface, _1, _2, _3, _4) : E_UNEXPECTED; \
+}
+
+#define HTMLDOCUMENTOBJ_FWD_TO_NODE_5(iface, method, a,b,c,d,e) static HRESULT WINAPI DocObj##iface##_##method(I##iface *_0, a _1, b _2, c _3, d _4, e _5) \
+{ \
+    HTMLDocumentObj *This = CONTAINING_RECORD(_0, HTMLDocumentObj, I##iface##_iface); \
+    return This->doc_node ? This->doc_node->I##iface##_iface.lpVtbl->method(&This->doc_node->I##iface##_iface, _1, _2, _3, _4, _5) : E_UNEXPECTED; \
+}
+
+/**********************************************************
+ * IHTMLDocument2 implementation
+ */
+static inline HTMLDocumentObj *impl_from_IHTMLDocument2(IHTMLDocument2 *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLDocumentObj, IHTMLDocument2_iface);
+}
+
+HTMLDOCUMENTOBJ_IDISPATCH_METHODS(HTMLDocument2)
+
+static HRESULT WINAPI DocObjHTMLDocument2_get_Script(IHTMLDocument2 *iface, IDispatch **p)
+{
+    HTMLDocumentObj *This = impl_from_IHTMLDocument2(iface);
+    HRESULT hres;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    hres = IHTMLDocument7_get_parentWindow(&This->IHTMLDocument7_iface, (IHTMLWindow2**)p);
+    return hres == S_OK && !*p ? E_PENDING : hres;
+}
+
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_all, IHTMLElementCollection**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_body, IHTMLElement**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_activeElement, IHTMLElement**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_images, IHTMLElementCollection**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_applets, IHTMLElementCollection**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_links, IHTMLElementCollection**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_forms, IHTMLElementCollection**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_anchors, IHTMLElementCollection**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_title, BSTR)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_title, BSTR*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_scripts, IHTMLElementCollection**)
+
+static HRESULT WINAPI DocObjHTMLDocument2_put_designMode(IHTMLDocument2 *iface, BSTR v)
+{
+    HTMLDocumentObj *This = impl_from_IHTMLDocument2(iface);
+    HRESULT hres;
+
+    TRACE("(%p)->(%s)\n", This, debugstr_w(v));
+
+    if(wcsicmp(v, L"on")) {
+        FIXME("Unsupported arg %s\n", debugstr_w(v));
+        return E_NOTIMPL;
+    }
+
+    hres = setup_edit_mode(This);
+    if(FAILED(hres))
+        return hres;
+
+    call_property_onchanged(&This->cp_container, DISPID_IHTMLDOCUMENT2_DESIGNMODE);
+    return S_OK;
+}
+
+static HRESULT WINAPI DocObjHTMLDocument2_get_designMode(IHTMLDocument2 *iface, BSTR *p)
+{
+    HTMLDocumentObj *This = impl_from_IHTMLDocument2(iface);
+
+    FIXME("(%p)->(%p) always returning Off\n", This, p);
+
+    if(!p)
+        return E_INVALIDARG;
+
+    *p = SysAllocString(L"Off");
+    return S_OK;
+}
+
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_selection, IHTMLSelectionObject**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_readyState, BSTR*)
+
+static HRESULT WINAPI DocObjHTMLDocument2_get_frames(IHTMLDocument2 *iface, IHTMLFramesCollection2 **p)
+{
+    HTMLDocumentObj *This = impl_from_IHTMLDocument2(iface);
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    if(!This->window) {
+        /* Not implemented by IE */
+        return E_NOTIMPL;
+    }
+    return IHTMLWindow2_get_frames(&This->window->base.IHTMLWindow2_iface, p);
+}
+
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_embeds, IHTMLElementCollection**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_plugins, IHTMLElementCollection**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_alinkColor, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_alinkColor, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_bgColor, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_bgColor, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_fgColor, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_fgColor, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_linkColor, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_linkColor, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_vlinkColor, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_vlinkColor, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_referrer, BSTR*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_location, IHTMLLocation**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_lastModified, BSTR*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_URL, BSTR)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_URL, BSTR*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_domain, BSTR)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_domain, BSTR*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_cookie, BSTR)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_cookie, BSTR*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_expando, VARIANT_BOOL)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_expando, VARIANT_BOOL*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_charset, BSTR)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_charset, BSTR*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_defaultCharset, BSTR)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_defaultCharset, BSTR*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_mimeType, BSTR*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_fileSize, BSTR*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_fileCreatedDate, BSTR*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_fileModifiedDate, BSTR*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_fileUpdatedDate, BSTR*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_security, BSTR*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_protocol, BSTR*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_nameProp, BSTR*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, write, SAFEARRAY*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, writeln, SAFEARRAY*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_5(HTMLDocument2, open, BSTR,VARIANT,VARIANT,VARIANT,IDispatch**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_0(HTMLDocument2, close)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_0(HTMLDocument2, clear)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(HTMLDocument2, queryCommandSupported, BSTR,VARIANT_BOOL*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(HTMLDocument2, queryCommandEnabled, BSTR,VARIANT_BOOL*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(HTMLDocument2, queryCommandState, BSTR,VARIANT_BOOL*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(HTMLDocument2, queryCommandIndeterm, BSTR,VARIANT_BOOL*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(HTMLDocument2, queryCommandText, BSTR,BSTR*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(HTMLDocument2, queryCommandValue, BSTR,VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_4(HTMLDocument2, execCommand, BSTR,VARIANT_BOOL,VARIANT,VARIANT_BOOL*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(HTMLDocument2, execCommandShowHelp, BSTR,VARIANT_BOOL*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(HTMLDocument2, createElement, BSTR,IHTMLElement**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_onhelp, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_onhelp, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_onclick, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_onclick, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_ondblclick, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_ondblclick, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_onkeyup, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_onkeyup, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_onkeydown, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_onkeydown, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_onkeypress, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_onkeypress, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_onmouseup, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_onmouseup, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_onmousedown, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_onmousedown, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_onmousemove, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_onmousemove, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_onmouseout, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_onmouseout, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_onmouseover, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_onmouseover, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_onreadystatechange, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_onreadystatechange, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_onafterupdate, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_onafterupdate, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_onrowexit, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_onrowexit, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_onrowenter, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_onrowenter, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_ondragstart, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_ondragstart, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_onselectstart, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_onselectstart, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_3(HTMLDocument2, elementFromPoint, LONG,LONG,IHTMLElement**)
+
+static HRESULT WINAPI DocObjHTMLDocument2_get_parentWindow(IHTMLDocument2 *iface, IHTMLWindow2 **p)
+{
+    HTMLDocumentObj *This = impl_from_IHTMLDocument2(iface);
+    HRESULT hres;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    hres = IHTMLDocument7_get_defaultView(&This->IHTMLDocument7_iface, p);
+    return hres == S_OK && !*p ? E_FAIL : hres;
+}
+
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_styleSheets, IHTMLStyleSheetsCollection**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_onbeforeupdate, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_onbeforeupdate, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, put_onerrorupdate, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument2, get_onerrorupdate, VARIANT*)
+
+static HRESULT WINAPI DocObjHTMLDocument2_toString(IHTMLDocument2 *iface, BSTR *String)
+{
+    HTMLDocumentObj *This = impl_from_IHTMLDocument2(iface);
+
+    TRACE("(%p)->(%p)\n", This, String);
+
+    return dispex_to_string(&This->dispex, String);
+}
+
+HTMLDOCUMENTOBJ_FWD_TO_NODE_3(HTMLDocument2, createStyleSheet, BSTR,LONG,IHTMLStyleSheet**)
+
+static const IHTMLDocument2Vtbl DocObjHTMLDocument2Vtbl = {
+    DocObjHTMLDocument2_QueryInterface,
+    DocObjHTMLDocument2_AddRef,
+    DocObjHTMLDocument2_Release,
+    DocObjHTMLDocument2_GetTypeInfoCount,
+    DocObjHTMLDocument2_GetTypeInfo,
+    DocObjHTMLDocument2_GetIDsOfNames,
+    DocObjHTMLDocument2_Invoke,
+    DocObjHTMLDocument2_get_Script,
+    DocObjHTMLDocument2_get_all,
+    DocObjHTMLDocument2_get_body,
+    DocObjHTMLDocument2_get_activeElement,
+    DocObjHTMLDocument2_get_images,
+    DocObjHTMLDocument2_get_applets,
+    DocObjHTMLDocument2_get_links,
+    DocObjHTMLDocument2_get_forms,
+    DocObjHTMLDocument2_get_anchors,
+    DocObjHTMLDocument2_put_title,
+    DocObjHTMLDocument2_get_title,
+    DocObjHTMLDocument2_get_scripts,
+    DocObjHTMLDocument2_put_designMode,
+    DocObjHTMLDocument2_get_designMode,
+    DocObjHTMLDocument2_get_selection,
+    DocObjHTMLDocument2_get_readyState,
+    DocObjHTMLDocument2_get_frames,
+    DocObjHTMLDocument2_get_embeds,
+    DocObjHTMLDocument2_get_plugins,
+    DocObjHTMLDocument2_put_alinkColor,
+    DocObjHTMLDocument2_get_alinkColor,
+    DocObjHTMLDocument2_put_bgColor,
+    DocObjHTMLDocument2_get_bgColor,
+    DocObjHTMLDocument2_put_fgColor,
+    DocObjHTMLDocument2_get_fgColor,
+    DocObjHTMLDocument2_put_linkColor,
+    DocObjHTMLDocument2_get_linkColor,
+    DocObjHTMLDocument2_put_vlinkColor,
+    DocObjHTMLDocument2_get_vlinkColor,
+    DocObjHTMLDocument2_get_referrer,
+    DocObjHTMLDocument2_get_location,
+    DocObjHTMLDocument2_get_lastModified,
+    DocObjHTMLDocument2_put_URL,
+    DocObjHTMLDocument2_get_URL,
+    DocObjHTMLDocument2_put_domain,
+    DocObjHTMLDocument2_get_domain,
+    DocObjHTMLDocument2_put_cookie,
+    DocObjHTMLDocument2_get_cookie,
+    DocObjHTMLDocument2_put_expando,
+    DocObjHTMLDocument2_get_expando,
+    DocObjHTMLDocument2_put_charset,
+    DocObjHTMLDocument2_get_charset,
+    DocObjHTMLDocument2_put_defaultCharset,
+    DocObjHTMLDocument2_get_defaultCharset,
+    DocObjHTMLDocument2_get_mimeType,
+    DocObjHTMLDocument2_get_fileSize,
+    DocObjHTMLDocument2_get_fileCreatedDate,
+    DocObjHTMLDocument2_get_fileModifiedDate,
+    DocObjHTMLDocument2_get_fileUpdatedDate,
+    DocObjHTMLDocument2_get_security,
+    DocObjHTMLDocument2_get_protocol,
+    DocObjHTMLDocument2_get_nameProp,
+    DocObjHTMLDocument2_write,
+    DocObjHTMLDocument2_writeln,
+    DocObjHTMLDocument2_open,
+    DocObjHTMLDocument2_close,
+    DocObjHTMLDocument2_clear,
+    DocObjHTMLDocument2_queryCommandSupported,
+    DocObjHTMLDocument2_queryCommandEnabled,
+    DocObjHTMLDocument2_queryCommandState,
+    DocObjHTMLDocument2_queryCommandIndeterm,
+    DocObjHTMLDocument2_queryCommandText,
+    DocObjHTMLDocument2_queryCommandValue,
+    DocObjHTMLDocument2_execCommand,
+    DocObjHTMLDocument2_execCommandShowHelp,
+    DocObjHTMLDocument2_createElement,
+    DocObjHTMLDocument2_put_onhelp,
+    DocObjHTMLDocument2_get_onhelp,
+    DocObjHTMLDocument2_put_onclick,
+    DocObjHTMLDocument2_get_onclick,
+    DocObjHTMLDocument2_put_ondblclick,
+    DocObjHTMLDocument2_get_ondblclick,
+    DocObjHTMLDocument2_put_onkeyup,
+    DocObjHTMLDocument2_get_onkeyup,
+    DocObjHTMLDocument2_put_onkeydown,
+    DocObjHTMLDocument2_get_onkeydown,
+    DocObjHTMLDocument2_put_onkeypress,
+    DocObjHTMLDocument2_get_onkeypress,
+    DocObjHTMLDocument2_put_onmouseup,
+    DocObjHTMLDocument2_get_onmouseup,
+    DocObjHTMLDocument2_put_onmousedown,
+    DocObjHTMLDocument2_get_onmousedown,
+    DocObjHTMLDocument2_put_onmousemove,
+    DocObjHTMLDocument2_get_onmousemove,
+    DocObjHTMLDocument2_put_onmouseout,
+    DocObjHTMLDocument2_get_onmouseout,
+    DocObjHTMLDocument2_put_onmouseover,
+    DocObjHTMLDocument2_get_onmouseover,
+    DocObjHTMLDocument2_put_onreadystatechange,
+    DocObjHTMLDocument2_get_onreadystatechange,
+    DocObjHTMLDocument2_put_onafterupdate,
+    DocObjHTMLDocument2_get_onafterupdate,
+    DocObjHTMLDocument2_put_onrowexit,
+    DocObjHTMLDocument2_get_onrowexit,
+    DocObjHTMLDocument2_put_onrowenter,
+    DocObjHTMLDocument2_get_onrowenter,
+    DocObjHTMLDocument2_put_ondragstart,
+    DocObjHTMLDocument2_get_ondragstart,
+    DocObjHTMLDocument2_put_onselectstart,
+    DocObjHTMLDocument2_get_onselectstart,
+    DocObjHTMLDocument2_elementFromPoint,
+    DocObjHTMLDocument2_get_parentWindow,
+    DocObjHTMLDocument2_get_styleSheets,
+    DocObjHTMLDocument2_put_onbeforeupdate,
+    DocObjHTMLDocument2_get_onbeforeupdate,
+    DocObjHTMLDocument2_put_onerrorupdate,
+    DocObjHTMLDocument2_get_onerrorupdate,
+    DocObjHTMLDocument2_toString,
+    DocObjHTMLDocument2_createStyleSheet
+};
+
+/**********************************************************
+ * IHTMLDocument3 implementation
+ */
+static inline HTMLDocumentObj *impl_from_IHTMLDocument3(IHTMLDocument3 *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLDocumentObj, IHTMLDocument3_iface);
+}
+
+HTMLDOCUMENTOBJ_IDISPATCH_METHODS(HTMLDocument3)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_0(HTMLDocument3, releaseCapture)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, recalc, VARIANT_BOOL)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(HTMLDocument3, createTextNode, BSTR,IHTMLDOMNode**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, get_documentElement, IHTMLElement**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, get_uniqueID, BSTR*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_3(HTMLDocument3, attachEvent, BSTR,IDispatch*,VARIANT_BOOL*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(HTMLDocument3, detachEvent, BSTR,IDispatch*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, put_onrowsdelete, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, get_onrowsdelete, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, put_onrowsinserted, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, get_onrowsinserted, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, put_oncellchange, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, get_oncellchange, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, put_ondatasetchanged, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, get_ondatasetchanged, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, put_ondataavailable, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, get_ondataavailable, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, put_ondatasetcomplete, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, get_ondatasetcomplete, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, put_onpropertychange, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, get_onpropertychange, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, put_dir, BSTR)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, get_dir, BSTR*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, put_oncontextmenu, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, get_oncontextmenu, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, put_onstop, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, get_onstop, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, createDocumentFragment, IHTMLDocument2**)
+
+static HRESULT WINAPI DocObjHTMLDocument3_get_parentDocument(IHTMLDocument3 *iface, IHTMLDocument2 **p)
+{
+    HTMLDocumentObj *This = impl_from_IHTMLDocument3(iface);
+    FIXME("(%p)->(%p)\n", This, p);
+    return E_NOTIMPL;
+}
+
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, put_enableDownload, VARIANT_BOOL)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, get_enableDownload, VARIANT_BOOL*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, put_baseUrl, BSTR)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, get_baseUrl, BSTR*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, get_childNodes, IDispatch**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, put_inheritStyleSheets, VARIANT_BOOL)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, get_inheritStyleSheets, VARIANT_BOOL*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, put_onbeforeeditfocus, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument3, get_onbeforeeditfocus, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(HTMLDocument3, getElementsByName, BSTR,IHTMLElementCollection**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(HTMLDocument3, getElementById, BSTR,IHTMLElement**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(HTMLDocument3, getElementsByTagName, BSTR,IHTMLElementCollection**)
+
+static const IHTMLDocument3Vtbl DocObjHTMLDocument3Vtbl = {
+    DocObjHTMLDocument3_QueryInterface,
+    DocObjHTMLDocument3_AddRef,
+    DocObjHTMLDocument3_Release,
+    DocObjHTMLDocument3_GetTypeInfoCount,
+    DocObjHTMLDocument3_GetTypeInfo,
+    DocObjHTMLDocument3_GetIDsOfNames,
+    DocObjHTMLDocument3_Invoke,
+    DocObjHTMLDocument3_releaseCapture,
+    DocObjHTMLDocument3_recalc,
+    DocObjHTMLDocument3_createTextNode,
+    DocObjHTMLDocument3_get_documentElement,
+    DocObjHTMLDocument3_get_uniqueID,
+    DocObjHTMLDocument3_attachEvent,
+    DocObjHTMLDocument3_detachEvent,
+    DocObjHTMLDocument3_put_onrowsdelete,
+    DocObjHTMLDocument3_get_onrowsdelete,
+    DocObjHTMLDocument3_put_onrowsinserted,
+    DocObjHTMLDocument3_get_onrowsinserted,
+    DocObjHTMLDocument3_put_oncellchange,
+    DocObjHTMLDocument3_get_oncellchange,
+    DocObjHTMLDocument3_put_ondatasetchanged,
+    DocObjHTMLDocument3_get_ondatasetchanged,
+    DocObjHTMLDocument3_put_ondataavailable,
+    DocObjHTMLDocument3_get_ondataavailable,
+    DocObjHTMLDocument3_put_ondatasetcomplete,
+    DocObjHTMLDocument3_get_ondatasetcomplete,
+    DocObjHTMLDocument3_put_onpropertychange,
+    DocObjHTMLDocument3_get_onpropertychange,
+    DocObjHTMLDocument3_put_dir,
+    DocObjHTMLDocument3_get_dir,
+    DocObjHTMLDocument3_put_oncontextmenu,
+    DocObjHTMLDocument3_get_oncontextmenu,
+    DocObjHTMLDocument3_put_onstop,
+    DocObjHTMLDocument3_get_onstop,
+    DocObjHTMLDocument3_createDocumentFragment,
+    DocObjHTMLDocument3_get_parentDocument,
+    DocObjHTMLDocument3_put_enableDownload,
+    DocObjHTMLDocument3_get_enableDownload,
+    DocObjHTMLDocument3_put_baseUrl,
+    DocObjHTMLDocument3_get_baseUrl,
+    DocObjHTMLDocument3_get_childNodes,
+    DocObjHTMLDocument3_put_inheritStyleSheets,
+    DocObjHTMLDocument3_get_inheritStyleSheets,
+    DocObjHTMLDocument3_put_onbeforeeditfocus,
+    DocObjHTMLDocument3_get_onbeforeeditfocus,
+    DocObjHTMLDocument3_getElementsByName,
+    DocObjHTMLDocument3_getElementById,
+    DocObjHTMLDocument3_getElementsByTagName
+};
+
+/**********************************************************
+ * IHTMLDocument4 implementation
+ */
+HTMLDOCUMENTOBJ_IDISPATCH_METHODS(HTMLDocument4)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_0(HTMLDocument4, focus)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument4, hasFocus, VARIANT_BOOL*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument4, put_onselectionchange, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument4, get_onselectionchange, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument4, get_namespaces, IDispatch**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_3(HTMLDocument4, createDocumentFromUrl, BSTR,BSTR,IHTMLDocument2**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument4, put_media, BSTR)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument4, get_media, BSTR*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(HTMLDocument4, createEventObject, VARIANT*,IHTMLEventObj**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_3(HTMLDocument4, fireEvent, BSTR,VARIANT*,VARIANT_BOOL*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(HTMLDocument4, createRenderStyle, BSTR,IHTMLRenderStyle**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument4, put_oncontrolselect, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument4, get_oncontrolselect, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument4, get_URLUnencoded, BSTR*)
+
+static const IHTMLDocument4Vtbl DocObjHTMLDocument4Vtbl = {
+    DocObjHTMLDocument4_QueryInterface,
+    DocObjHTMLDocument4_AddRef,
+    DocObjHTMLDocument4_Release,
+    DocObjHTMLDocument4_GetTypeInfoCount,
+    DocObjHTMLDocument4_GetTypeInfo,
+    DocObjHTMLDocument4_GetIDsOfNames,
+    DocObjHTMLDocument4_Invoke,
+    DocObjHTMLDocument4_focus,
+    DocObjHTMLDocument4_hasFocus,
+    DocObjHTMLDocument4_put_onselectionchange,
+    DocObjHTMLDocument4_get_onselectionchange,
+    DocObjHTMLDocument4_get_namespaces,
+    DocObjHTMLDocument4_createDocumentFromUrl,
+    DocObjHTMLDocument4_put_media,
+    DocObjHTMLDocument4_get_media,
+    DocObjHTMLDocument4_createEventObject,
+    DocObjHTMLDocument4_fireEvent,
+    DocObjHTMLDocument4_createRenderStyle,
+    DocObjHTMLDocument4_put_oncontrolselect,
+    DocObjHTMLDocument4_get_oncontrolselect,
+    DocObjHTMLDocument4_get_URLUnencoded
+};
+
+/**********************************************************
+ * IHTMLDocument5 implementation
+ */
+HTMLDOCUMENTOBJ_IDISPATCH_METHODS(HTMLDocument5)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument5, put_onmousewheel, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument5, get_onmousewheel, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument5, get_doctype, IHTMLDOMNode**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument5, get_implementation, IHTMLDOMImplementation**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(HTMLDocument5, createAttribute, BSTR,IHTMLDOMAttribute**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(HTMLDocument5, createComment, BSTR,IHTMLDOMNode**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument5, put_onfocusin, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument5, get_onfocusin, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument5, put_onfocusout, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument5, get_onfocusout, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument5, put_onactivate, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument5, get_onactivate, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument5, put_ondeactivate, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument5, get_ondeactivate, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument5, put_onbeforeactivate, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument5, get_onbeforeactivate, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument5, put_onbeforedeactivate, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument5, get_onbeforedeactivate, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument5, get_compatMode, BSTR*)
+
+static const IHTMLDocument5Vtbl DocObjHTMLDocument5Vtbl = {
+    DocObjHTMLDocument5_QueryInterface,
+    DocObjHTMLDocument5_AddRef,
+    DocObjHTMLDocument5_Release,
+    DocObjHTMLDocument5_GetTypeInfoCount,
+    DocObjHTMLDocument5_GetTypeInfo,
+    DocObjHTMLDocument5_GetIDsOfNames,
+    DocObjHTMLDocument5_Invoke,
+    DocObjHTMLDocument5_put_onmousewheel,
+    DocObjHTMLDocument5_get_onmousewheel,
+    DocObjHTMLDocument5_get_doctype,
+    DocObjHTMLDocument5_get_implementation,
+    DocObjHTMLDocument5_createAttribute,
+    DocObjHTMLDocument5_createComment,
+    DocObjHTMLDocument5_put_onfocusin,
+    DocObjHTMLDocument5_get_onfocusin,
+    DocObjHTMLDocument5_put_onfocusout,
+    DocObjHTMLDocument5_get_onfocusout,
+    DocObjHTMLDocument5_put_onactivate,
+    DocObjHTMLDocument5_get_onactivate,
+    DocObjHTMLDocument5_put_ondeactivate,
+    DocObjHTMLDocument5_get_ondeactivate,
+    DocObjHTMLDocument5_put_onbeforeactivate,
+    DocObjHTMLDocument5_get_onbeforeactivate,
+    DocObjHTMLDocument5_put_onbeforedeactivate,
+    DocObjHTMLDocument5_get_onbeforedeactivate,
+    DocObjHTMLDocument5_get_compatMode
+};
+
+/**********************************************************
+ * IHTMLDocument6 implementation
+ */
+HTMLDOCUMENTOBJ_IDISPATCH_METHODS(HTMLDocument6)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument6, get_compatible, IHTMLDocumentCompatibleInfoCollection**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument6, get_documentMode, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument6, put_onstorage, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument6, get_onstorage, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument6, put_onstoragecommit, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument6, get_onstoragecommit, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(HTMLDocument6, getElementById, BSTR,IHTMLElement2**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_0(HTMLDocument6, updateSettings)
+
+static const IHTMLDocument6Vtbl DocObjHTMLDocument6Vtbl = {
+    DocObjHTMLDocument6_QueryInterface,
+    DocObjHTMLDocument6_AddRef,
+    DocObjHTMLDocument6_Release,
+    DocObjHTMLDocument6_GetTypeInfoCount,
+    DocObjHTMLDocument6_GetTypeInfo,
+    DocObjHTMLDocument6_GetIDsOfNames,
+    DocObjHTMLDocument6_Invoke,
+    DocObjHTMLDocument6_get_compatible,
+    DocObjHTMLDocument6_get_documentMode,
+    DocObjHTMLDocument6_put_onstorage,
+    DocObjHTMLDocument6_get_onstorage,
+    DocObjHTMLDocument6_put_onstoragecommit,
+    DocObjHTMLDocument6_get_onstoragecommit,
+    DocObjHTMLDocument6_getElementById,
+    DocObjHTMLDocument6_updateSettings
+};
+
+/**********************************************************
+ * IHTMLDocument7 implementation
+ */
+static inline HTMLDocumentObj *impl_from_IHTMLDocument7(IHTMLDocument7 *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLDocumentObj, IHTMLDocument7_iface);
+}
+
+HTMLDOCUMENTOBJ_IDISPATCH_METHODS(HTMLDocument7)
+
+static HRESULT WINAPI DocObjHTMLDocument7_get_defaultView(IHTMLDocument7 *iface, IHTMLWindow2 **p)
+{
+    HTMLDocumentObj *This = impl_from_IHTMLDocument7(iface);
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    if(This->window) {
+        *p = &This->window->base.IHTMLWindow2_iface;
+        IHTMLWindow2_AddRef(*p);
+    }else {
+        *p = NULL;
+    }
+    return S_OK;
+}
+
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(HTMLDocument7, createCDATASection, BSTR,IHTMLDOMNode**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, getSelection, IHTMLSelection**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_3(HTMLDocument7, getElementsByTagNameNS, VARIANT*,BSTR,IHTMLElementCollection**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_3(HTMLDocument7, createElementNS, VARIANT*,BSTR,IHTMLElement**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_3(HTMLDocument7, createAttributeNS, VARIANT*,BSTR,IHTMLDOMAttribute**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onmsthumbnailclick, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onmsthumbnailclick, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_characterSet, BSTR*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(HTMLDocument7, createElement, BSTR,IHTMLElement**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(HTMLDocument7, createAttribute, BSTR,IHTMLDOMAttribute**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(HTMLDocument7, getElementsByClassName, BSTR,IHTMLElementCollection**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_3(HTMLDocument7, createProcessingInstruction, BSTR,BSTR,IDOMProcessingInstruction**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(HTMLDocument7, adoptNode, IHTMLDOMNode*,IHTMLDOMNode3**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onmssitemodejumplistitemremoved, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onmssitemodejumplistitemremoved, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_all, IHTMLElementCollection**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_inputEncoding, BSTR*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_xmlEncoding, BSTR*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_xmlStandalone, VARIANT_BOOL)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_xmlStandalone, VARIANT_BOOL*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_xmlVersion, BSTR)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_xmlVersion, BSTR*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, hasAttributes, VARIANT_BOOL*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onabort, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onabort, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onblur, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onblur, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_oncanplay, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_oncanplay, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_oncanplaythrough, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_oncanplaythrough, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onchange, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onchange, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_ondrag, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_ondrag, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_ondragend, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_ondragend, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_ondragenter, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_ondragenter, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_ondragleave, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_ondragleave, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_ondragover, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_ondragover, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_ondrop, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_ondrop, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_ondurationchange, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_ondurationchange, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onemptied, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onemptied, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onended, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onended, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onerror, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onerror, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onfocus, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onfocus, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_oninput, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_oninput, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onload, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onload, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onloadeddata, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onloadeddata, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onloadedmetadata, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onloadedmetadata, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onloadstart, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onloadstart, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onpause, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onpause, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onplay, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onplay, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onplaying, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onplaying, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onprogress, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onprogress, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onratechange, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onratechange, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onreset, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onreset, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onscroll, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onscroll, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onseeked, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onseeked, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onseeking, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onseeking, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onselect, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onselect, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onstalled, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onstalled, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onsubmit, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onsubmit, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onsuspend, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onsuspend, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_ontimeupdate, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_ontimeupdate, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onvolumechange, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onvolumechange, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, put_onwaiting, VARIANT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_onwaiting, VARIANT*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_0(HTMLDocument7, normalize)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_3(HTMLDocument7, importNode, IHTMLDOMNode*,VARIANT_BOOL,IHTMLDOMNode3**)
+
+static HRESULT WINAPI DocObjHTMLDocument7_get_parentWindow(IHTMLDocument7 *iface, IHTMLWindow2 **p)
+{
+    HTMLDocumentObj *This = impl_from_IHTMLDocument7(iface);
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    return IHTMLDocument7_get_defaultView(&This->IHTMLDocument7_iface, p);
+}
+
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, putref_body, IHTMLElement*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_body, IHTMLElement**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(HTMLDocument7, get_head, IHTMLElement**)
+
+static const IHTMLDocument7Vtbl DocObjHTMLDocument7Vtbl = {
+    DocObjHTMLDocument7_QueryInterface,
+    DocObjHTMLDocument7_AddRef,
+    DocObjHTMLDocument7_Release,
+    DocObjHTMLDocument7_GetTypeInfoCount,
+    DocObjHTMLDocument7_GetTypeInfo,
+    DocObjHTMLDocument7_GetIDsOfNames,
+    DocObjHTMLDocument7_Invoke,
+    DocObjHTMLDocument7_get_defaultView,
+    DocObjHTMLDocument7_createCDATASection,
+    DocObjHTMLDocument7_getSelection,
+    DocObjHTMLDocument7_getElementsByTagNameNS,
+    DocObjHTMLDocument7_createElementNS,
+    DocObjHTMLDocument7_createAttributeNS,
+    DocObjHTMLDocument7_put_onmsthumbnailclick,
+    DocObjHTMLDocument7_get_onmsthumbnailclick,
+    DocObjHTMLDocument7_get_characterSet,
+    DocObjHTMLDocument7_createElement,
+    DocObjHTMLDocument7_createAttribute,
+    DocObjHTMLDocument7_getElementsByClassName,
+    DocObjHTMLDocument7_createProcessingInstruction,
+    DocObjHTMLDocument7_adoptNode,
+    DocObjHTMLDocument7_put_onmssitemodejumplistitemremoved,
+    DocObjHTMLDocument7_get_onmssitemodejumplistitemremoved,
+    DocObjHTMLDocument7_get_all,
+    DocObjHTMLDocument7_get_inputEncoding,
+    DocObjHTMLDocument7_get_xmlEncoding,
+    DocObjHTMLDocument7_put_xmlStandalone,
+    DocObjHTMLDocument7_get_xmlStandalone,
+    DocObjHTMLDocument7_put_xmlVersion,
+    DocObjHTMLDocument7_get_xmlVersion,
+    DocObjHTMLDocument7_hasAttributes,
+    DocObjHTMLDocument7_put_onabort,
+    DocObjHTMLDocument7_get_onabort,
+    DocObjHTMLDocument7_put_onblur,
+    DocObjHTMLDocument7_get_onblur,
+    DocObjHTMLDocument7_put_oncanplay,
+    DocObjHTMLDocument7_get_oncanplay,
+    DocObjHTMLDocument7_put_oncanplaythrough,
+    DocObjHTMLDocument7_get_oncanplaythrough,
+    DocObjHTMLDocument7_put_onchange,
+    DocObjHTMLDocument7_get_onchange,
+    DocObjHTMLDocument7_put_ondrag,
+    DocObjHTMLDocument7_get_ondrag,
+    DocObjHTMLDocument7_put_ondragend,
+    DocObjHTMLDocument7_get_ondragend,
+    DocObjHTMLDocument7_put_ondragenter,
+    DocObjHTMLDocument7_get_ondragenter,
+    DocObjHTMLDocument7_put_ondragleave,
+    DocObjHTMLDocument7_get_ondragleave,
+    DocObjHTMLDocument7_put_ondragover,
+    DocObjHTMLDocument7_get_ondragover,
+    DocObjHTMLDocument7_put_ondrop,
+    DocObjHTMLDocument7_get_ondrop,
+    DocObjHTMLDocument7_put_ondurationchange,
+    DocObjHTMLDocument7_get_ondurationchange,
+    DocObjHTMLDocument7_put_onemptied,
+    DocObjHTMLDocument7_get_onemptied,
+    DocObjHTMLDocument7_put_onended,
+    DocObjHTMLDocument7_get_onended,
+    DocObjHTMLDocument7_put_onerror,
+    DocObjHTMLDocument7_get_onerror,
+    DocObjHTMLDocument7_put_onfocus,
+    DocObjHTMLDocument7_get_onfocus,
+    DocObjHTMLDocument7_put_oninput,
+    DocObjHTMLDocument7_get_oninput,
+    DocObjHTMLDocument7_put_onload,
+    DocObjHTMLDocument7_get_onload,
+    DocObjHTMLDocument7_put_onloadeddata,
+    DocObjHTMLDocument7_get_onloadeddata,
+    DocObjHTMLDocument7_put_onloadedmetadata,
+    DocObjHTMLDocument7_get_onloadedmetadata,
+    DocObjHTMLDocument7_put_onloadstart,
+    DocObjHTMLDocument7_get_onloadstart,
+    DocObjHTMLDocument7_put_onpause,
+    DocObjHTMLDocument7_get_onpause,
+    DocObjHTMLDocument7_put_onplay,
+    DocObjHTMLDocument7_get_onplay,
+    DocObjHTMLDocument7_put_onplaying,
+    DocObjHTMLDocument7_get_onplaying,
+    DocObjHTMLDocument7_put_onprogress,
+    DocObjHTMLDocument7_get_onprogress,
+    DocObjHTMLDocument7_put_onratechange,
+    DocObjHTMLDocument7_get_onratechange,
+    DocObjHTMLDocument7_put_onreset,
+    DocObjHTMLDocument7_get_onreset,
+    DocObjHTMLDocument7_put_onscroll,
+    DocObjHTMLDocument7_get_onscroll,
+    DocObjHTMLDocument7_put_onseeked,
+    DocObjHTMLDocument7_get_onseeked,
+    DocObjHTMLDocument7_put_onseeking,
+    DocObjHTMLDocument7_get_onseeking,
+    DocObjHTMLDocument7_put_onselect,
+    DocObjHTMLDocument7_get_onselect,
+    DocObjHTMLDocument7_put_onstalled,
+    DocObjHTMLDocument7_get_onstalled,
+    DocObjHTMLDocument7_put_onsubmit,
+    DocObjHTMLDocument7_get_onsubmit,
+    DocObjHTMLDocument7_put_onsuspend,
+    DocObjHTMLDocument7_get_onsuspend,
+    DocObjHTMLDocument7_put_ontimeupdate,
+    DocObjHTMLDocument7_get_ontimeupdate,
+    DocObjHTMLDocument7_put_onvolumechange,
+    DocObjHTMLDocument7_get_onvolumechange,
+    DocObjHTMLDocument7_put_onwaiting,
+    DocObjHTMLDocument7_get_onwaiting,
+    DocObjHTMLDocument7_normalize,
+    DocObjHTMLDocument7_importNode,
+    DocObjHTMLDocument7_get_parentWindow,
+    DocObjHTMLDocument7_putref_body,
+    DocObjHTMLDocument7_get_body,
+    DocObjHTMLDocument7_get_head
+};
+
+/**********************************************************
+ * ISupportErrorInfo implementation
+ */
+HTMLDOCUMENTOBJ_IUNKNOWN_METHODS(SupportErrorInfo)
+
+static HRESULT WINAPI DocObjSupportErrorInfo_InterfaceSupportsErrorInfo(ISupportErrorInfo *iface, REFIID riid)
+{
+    FIXME("(%p)->(%s)\n", iface, debugstr_mshtml_guid(riid));
+    return S_FALSE;
+}
+
+static const ISupportErrorInfoVtbl DocObjSupportErrorInfoVtbl = {
+    DocObjSupportErrorInfo_QueryInterface,
+    DocObjSupportErrorInfo_AddRef,
+    DocObjSupportErrorInfo_Release,
+    DocObjSupportErrorInfo_InterfaceSupportsErrorInfo
+};
+
+/**********************************************************
+ * IProvideMultipleClassInfo implementation
+ */
+static inline HTMLDocumentObj *impl_from_IProvideMultipleClassInfo(IProvideMultipleClassInfo *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLDocumentObj, IProvideMultipleClassInfo_iface);
+}
+
+HTMLDOCUMENTOBJ_IUNKNOWN_METHODS(ProvideMultipleClassInfo)
+
+static HRESULT WINAPI DocObjProvideMultipleClassInfo_GetClassInfo(IProvideMultipleClassInfo *iface, ITypeInfo **ppTI)
+{
+    HTMLDocumentObj *This = impl_from_IProvideMultipleClassInfo(iface);
+    TRACE("(%p)->(%p)\n", This, ppTI);
+    return get_class_typeinfo(&CLSID_HTMLDocument, ppTI);
+}
+
+static HRESULT WINAPI DocObjProvideMultipleClassInfo_GetGUID(IProvideMultipleClassInfo *iface, DWORD dwGuidKind, GUID *pGUID)
+{
+    HTMLDocumentObj *This = impl_from_IProvideMultipleClassInfo(iface);
+    FIXME("(%p)->(%lu %p)\n", This, dwGuidKind, pGUID);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI DocObjProvideMultipleClassInfo_GetMultiTypeInfoCount(IProvideMultipleClassInfo *iface, ULONG *pcti)
+{
+    HTMLDocumentObj *This = impl_from_IProvideMultipleClassInfo(iface);
+    FIXME("(%p)->(%p)\n", This, pcti);
+    *pcti = 1;
+    return S_OK;
+}
+
+static HRESULT WINAPI DocObjProvideMultipleClassInfo_GetInfoOfIndex(IProvideMultipleClassInfo *iface, ULONG iti,
+        DWORD dwFlags, ITypeInfo **pptiCoClass, DWORD *pdwTIFlags, ULONG *pcdispidReserved, IID *piidPrimary, IID *piidSource)
+{
+    HTMLDocumentObj *This = impl_from_IProvideMultipleClassInfo(iface);
+    FIXME("(%p)->(%lu %lx %p %p %p %p %p)\n", This, iti, dwFlags, pptiCoClass, pdwTIFlags, pcdispidReserved, piidPrimary, piidSource);
+    return E_NOTIMPL;
+}
+
+static const IProvideMultipleClassInfoVtbl DocObjProvideMultipleClassInfoVtbl = {
+    DocObjProvideMultipleClassInfo_QueryInterface,
+    DocObjProvideMultipleClassInfo_AddRef,
+    DocObjProvideMultipleClassInfo_Release,
+    DocObjProvideMultipleClassInfo_GetClassInfo,
+    DocObjProvideMultipleClassInfo_GetGUID,
+    DocObjProvideMultipleClassInfo_GetMultiTypeInfoCount,
+    DocObjProvideMultipleClassInfo_GetInfoOfIndex
+};
+
+/**********************************************************
+ * IMarkupServices implementation
+ */
+static inline HTMLDocumentObj *impl_from_IMarkupServices(IMarkupServices *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLDocumentObj, IMarkupServices_iface);
+}
+
+HTMLDOCUMENTOBJ_IUNKNOWN_METHODS(MarkupServices)
+
+static HRESULT WINAPI DocObjMarkupServices_CreateMarkupPointer(IMarkupServices *iface, IMarkupPointer **ppPointer)
+{
+    HTMLDocumentObj *This = impl_from_IMarkupServices(iface);
+
+    TRACE("(%p)->(%p)\n", This, ppPointer);
+
+    return create_markup_pointer(ppPointer);
+}
+
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(MarkupServices, CreateMarkupContainer, IMarkupContainer**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_3(MarkupServices, CreateElement, ELEMENT_TAG_ID,OLECHAR*,IHTMLElement**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(MarkupServices, CloneElement, IHTMLElement*,IHTMLElement**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_3(MarkupServices, InsertElement, IHTMLElement*,IMarkupPointer*,IMarkupPointer*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(MarkupServices, RemoveElement, IHTMLElement*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(MarkupServices, Remove, IMarkupPointer*,IMarkupPointer*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_3(MarkupServices, Copy, IMarkupPointer*,IMarkupPointer*,IMarkupPointer*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_3(MarkupServices, Move, IMarkupPointer*,IMarkupPointer*,IMarkupPointer*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_3(MarkupServices, InsertText, OLECHAR*,LONG,IMarkupPointer*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_5(MarkupServices, ParseString, OLECHAR*,DWORD,IMarkupContainer**,IMarkupPointer*,IMarkupPointer*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_5(MarkupServices, ParseGlobal, HGLOBAL,DWORD,IMarkupContainer**,IMarkupPointer*,IMarkupPointer*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(MarkupServices, IsScopedElement, IHTMLElement*,BOOL*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(MarkupServices, GetElementTagId, IHTMLElement*,ELEMENT_TAG_ID*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(MarkupServices, GetTagIDForName, BSTR,ELEMENT_TAG_ID*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(MarkupServices, GetNameForTagID, ELEMENT_TAG_ID,BSTR*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_3(MarkupServices, MovePointersToRange, IHTMLTxtRange*,IMarkupPointer*,IMarkupPointer*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_3(MarkupServices, MoveRangeToPointers, IMarkupPointer*,IMarkupPointer*,IHTMLTxtRange*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(MarkupServices, BeginUndoUnit, OLECHAR*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_0(MarkupServices, EndUndoUnit)
+
+static const IMarkupServicesVtbl DocObjMarkupServicesVtbl = {
+    DocObjMarkupServices_QueryInterface,
+    DocObjMarkupServices_AddRef,
+    DocObjMarkupServices_Release,
+    DocObjMarkupServices_CreateMarkupPointer,
+    DocObjMarkupServices_CreateMarkupContainer,
+    DocObjMarkupServices_CreateElement,
+    DocObjMarkupServices_CloneElement,
+    DocObjMarkupServices_InsertElement,
+    DocObjMarkupServices_RemoveElement,
+    DocObjMarkupServices_Remove,
+    DocObjMarkupServices_Copy,
+    DocObjMarkupServices_Move,
+    DocObjMarkupServices_InsertText,
+    DocObjMarkupServices_ParseString,
+    DocObjMarkupServices_ParseGlobal,
+    DocObjMarkupServices_IsScopedElement,
+    DocObjMarkupServices_GetElementTagId,
+    DocObjMarkupServices_GetTagIDForName,
+    DocObjMarkupServices_GetNameForTagID,
+    DocObjMarkupServices_MovePointersToRange,
+    DocObjMarkupServices_MoveRangeToPointers,
+    DocObjMarkupServices_BeginUndoUnit,
+    DocObjMarkupServices_EndUndoUnit
+};
+
+/**********************************************************
+ * IMarkupContainer implementation
+ */
+static inline HTMLDocumentObj *impl_from_IMarkupContainer(IMarkupContainer *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLDocumentObj, IMarkupContainer_iface);
+}
+
+HTMLDOCUMENTOBJ_IUNKNOWN_METHODS(MarkupContainer)
+
+static HRESULT WINAPI DocObjMarkupContainer_OwningDoc(IMarkupContainer *iface, IHTMLDocument2 **ppDoc)
+{
+    HTMLDocumentObj *This = impl_from_IMarkupContainer(iface);
+    FIXME("(%p)->(%p)\n", This, ppDoc);
+    return E_NOTIMPL;
+}
+
+static const IMarkupContainerVtbl DocObjMarkupContainerVtbl = {
+    DocObjMarkupContainer_QueryInterface,
+    DocObjMarkupContainer_AddRef,
+    DocObjMarkupContainer_Release,
+    DocObjMarkupContainer_OwningDoc
+};
+
+/**********************************************************
+ * IDisplayServices implementation
+ */
+HTMLDOCUMENTOBJ_IUNKNOWN_METHODS(DisplayServices)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(DisplayServices, CreateDisplayPointer, IDisplayPointer**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_4(DisplayServices, TransformRect, RECT*,COORD_SYSTEM,COORD_SYSTEM,IHTMLElement*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_4(DisplayServices, TransformPoint, POINT*,COORD_SYSTEM,COORD_SYSTEM,IHTMLElement*)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(DisplayServices, GetCaret, IHTMLCaret**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(DisplayServices, GetComputedStyle, IMarkupPointer*,IHTMLComputedStyle**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(DisplayServices, ScrollRectIntoView, IHTMLElement*,RECT)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(DisplayServices, HasFlowLayout, IHTMLElement*,BOOL*)
+
+static const IDisplayServicesVtbl DocObjDisplayServicesVtbl = {
+    DocObjDisplayServices_QueryInterface,
+    DocObjDisplayServices_AddRef,
+    DocObjDisplayServices_Release,
+    DocObjDisplayServices_CreateDisplayPointer,
+    DocObjDisplayServices_TransformRect,
+    DocObjDisplayServices_TransformPoint,
+    DocObjDisplayServices_GetCaret,
+    DocObjDisplayServices_GetComputedStyle,
+    DocObjDisplayServices_ScrollRectIntoView,
+    DocObjDisplayServices_HasFlowLayout
+};
+
+/**********************************************************
+ * IDocumentSelector implementation
+ */
+HTMLDOCUMENTOBJ_IDISPATCH_METHODS(DocumentSelector)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(DocumentSelector, querySelector, BSTR,IHTMLElement**)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(DocumentSelector, querySelectorAll, BSTR,IHTMLDOMChildrenCollection**)
+
+static const IDocumentSelectorVtbl DocObjDocumentSelectorVtbl = {
+    DocObjDocumentSelector_QueryInterface,
+    DocObjDocumentSelector_AddRef,
+    DocObjDocumentSelector_Release,
+    DocObjDocumentSelector_GetTypeInfoCount,
+    DocObjDocumentSelector_GetTypeInfo,
+    DocObjDocumentSelector_GetIDsOfNames,
+    DocObjDocumentSelector_Invoke,
+    DocObjDocumentSelector_querySelector,
+    DocObjDocumentSelector_querySelectorAll
+};
+
+/**********************************************************
+ * IDocumentEvent implementation
+ */
+HTMLDOCUMENTOBJ_IDISPATCH_METHODS(DocumentEvent)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_2(DocumentEvent, createEvent, BSTR,IDOMEvent**)
+
+static const IDocumentEventVtbl DocObjDocumentEventVtbl = {
+    DocObjDocumentEvent_QueryInterface,
+    DocObjDocumentEvent_AddRef,
+    DocObjDocumentEvent_Release,
+    DocObjDocumentEvent_GetTypeInfoCount,
+    DocObjDocumentEvent_GetTypeInfo,
+    DocObjDocumentEvent_GetIDsOfNames,
+    DocObjDocumentEvent_Invoke,
+    DocObjDocumentEvent_createEvent
+};
+
+/**********************************************************
+ * IDocumentRange implementation
+ */
+HTMLDOCUMENTOBJ_IDISPATCH_METHODS(DocumentRange)
+HTMLDOCUMENTOBJ_FWD_TO_NODE_1(DocumentRange, createRange, IHTMLDOMRange**)
+
+static const IDocumentRangeVtbl DocObjDocumentRangeVtbl = {
+    DocObjDocumentRange_QueryInterface,
+    DocObjDocumentRange_AddRef,
+    DocObjDocumentRange_Release,
+    DocObjDocumentRange_GetTypeInfoCount,
+    DocObjDocumentRange_GetTypeInfo,
+    DocObjDocumentRange_GetIDsOfNames,
+    DocObjDocumentRange_Invoke,
+    DocObjDocumentRange_createRange
+};
+
+static inline HTMLDocumentObj *impl_from_IUnknown(IUnknown *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLDocumentObj, IUnknown_inner);
+}
+
+static HRESULT WINAPI HTMLDocumentObj_QueryInterface(IUnknown *iface, REFIID riid, void **ppv)
+{
+    HTMLDocumentObj *This = impl_from_IUnknown(iface);
+
+    TRACE("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
+
+    if(IsEqualGUID(&IID_IUnknown, riid)) {
+        *ppv = &This->IUnknown_inner;
+    }else if(IsEqualGUID(&IID_IDispatch, riid) || IsEqualGUID(&IID_IDispatchEx, riid)) {
+        *ppv = &This->IDispatchEx_iface;
+    }else if(IsEqualGUID(&IID_IHTMLDocument, riid) || IsEqualGUID(&IID_IHTMLDocument2, riid)) {
+        *ppv = &This->IHTMLDocument2_iface;
+    }else if(IsEqualGUID(&IID_IHTMLDocument3, riid)) {
+        *ppv = &This->IHTMLDocument3_iface;
+    }else if(IsEqualGUID(&IID_IHTMLDocument4, riid)) {
+        *ppv = &This->IHTMLDocument4_iface;
+    }else if(IsEqualGUID(&IID_IHTMLDocument5, riid)) {
+        *ppv = &This->IHTMLDocument5_iface;
+    }else if(IsEqualGUID(&IID_IHTMLDocument6, riid)) {
+        *ppv = &This->IHTMLDocument6_iface;
+    }else if(IsEqualGUID(&IID_IHTMLDocument7, riid)) {
+        *ppv = &This->IHTMLDocument7_iface;
+    }else if(IsEqualGUID(&IID_ICustomDoc, riid)) {
+        *ppv = &This->ICustomDoc_iface;
+    }else if(IsEqualGUID(&IID_IDocumentSelector, riid)) {
+        *ppv = &This->IDocumentSelector_iface;
+    }else if(IsEqualGUID(&IID_IDocumentEvent, riid)) {
+        *ppv = &This->IDocumentEvent_iface;
+    }else if(IsEqualGUID(&DIID_DispHTMLDocument, riid)) {
+        *ppv = &This->IHTMLDocument2_iface;
+    }else if(IsEqualGUID(&IID_ISupportErrorInfo, riid)) {
+        *ppv = &This->ISupportErrorInfo_iface;
+    }else if(IsEqualGUID(&IID_IProvideClassInfo, riid)) {
+        *ppv = &This->IProvideMultipleClassInfo_iface;
+    }else if(IsEqualGUID(&IID_IProvideClassInfo2, riid)) {
+        *ppv = &This->IProvideMultipleClassInfo_iface;
+    }else if(IsEqualGUID(&IID_IProvideMultipleClassInfo, riid)) {
+        *ppv = &This->IProvideMultipleClassInfo_iface;
+    }else if(IsEqualGUID(&IID_IMarkupServices, riid)) {
+        *ppv = &This->IMarkupServices_iface;
+    }else if(IsEqualGUID(&IID_IMarkupContainer, riid)) {
+        *ppv = &This->IMarkupContainer_iface;
+    }else if(IsEqualGUID(&IID_IDisplayServices, riid)) {
+        *ppv = &This->IDisplayServices_iface;
+    }else if(IsEqualGUID(&IID_IDocumentRange, riid)) {
+        *ppv = &This->IDocumentRange_iface;
+    }else if(IsEqualGUID(&IID_IOleDocumentView, riid)) {
+        *ppv = &This->IOleDocumentView_iface;
+    }else if(IsEqualGUID(&IID_IViewObject, riid)) {
+        *ppv = &This->IViewObjectEx_iface;
+    }else if(IsEqualGUID(&IID_IViewObject2, riid)) {
+        *ppv = &This->IViewObjectEx_iface;
+    }else if(IsEqualGUID(&IID_IViewObjectEx, riid)) {
+        *ppv = &This->IViewObjectEx_iface;
+    }else if(IsEqualGUID(&IID_IPersist, riid)) {
+        *ppv = &This->IPersistFile_iface;
+    }else if(IsEqualGUID(&IID_IPersistMoniker, riid)) {
+        *ppv = &This->IPersistMoniker_iface;
+    }else if(IsEqualGUID(&IID_IPersistFile, riid)) {
+        *ppv = &This->IPersistFile_iface;
+    }else if(IsEqualGUID(&IID_IMonikerProp, riid)) {
+        *ppv = &This->IMonikerProp_iface;
+    }else if(IsEqualGUID(&IID_IPersistStreamInit, riid)) {
+        *ppv = &This->IPersistStreamInit_iface;
+    }else if(IsEqualGUID(&IID_IPersistHistory, riid)) {
+        *ppv = &This->IPersistHistory_iface;
+    }else if(IsEqualGUID(&IID_IHlinkTarget, riid)) {
+        *ppv = &This->IHlinkTarget_iface;
+    }else if(IsEqualGUID(&IID_IOleCommandTarget, riid)) {
+        *ppv = &This->IOleCommandTarget_iface;
+    }else if(IsEqualGUID(&IID_IOleObject, riid)) {
+        *ppv = &This->IOleObject_iface;
+    }else if(IsEqualGUID(&IID_IOleDocument, riid)) {
+        *ppv = &This->IOleDocument_iface;
+    }else if(IsEqualGUID(&IID_IOleInPlaceActiveObject, riid)) {
+        *ppv = &This->IOleInPlaceActiveObject_iface;
+    }else if(IsEqualGUID(&IID_IOleWindow, riid)) {
+        *ppv = &This->IOleInPlaceActiveObject_iface;
+    }else if(IsEqualGUID(&IID_IOleInPlaceObject, riid)) {
+        *ppv = &This->IOleInPlaceObjectWindowless_iface;
+    }else if(IsEqualGUID(&IID_IOleInPlaceObjectWindowless, riid)) {
+        *ppv = &This->IOleInPlaceObjectWindowless_iface;
+    }else if(IsEqualGUID(&IID_IOleControl, riid)) {
+        *ppv = &This->IOleControl_iface;
+    }else if(IsEqualGUID(&IID_IObjectWithSite, riid)) {
+        *ppv = &This->IObjectWithSite_iface;
+    }else if(IsEqualGUID(&IID_IOleContainer, riid)) {
+        *ppv = &This->IOleContainer_iface;
+    }else if(IsEqualGUID(&IID_IObjectSafety, riid)) {
+        *ppv = &This->IObjectSafety_iface;
+    }else if(IsEqualGUID(&IID_IServiceProvider, riid)) {
+        *ppv = &This->IServiceProvider_iface;
+    }else if(IsEqualGUID(&IID_ITargetContainer, riid)) {
+        *ppv = &This->ITargetContainer_iface;
+    }else if(IsEqualGUID(&IID_IConnectionPointContainer, riid)) {
+        *ppv = &This->cp_container.IConnectionPointContainer_iface;
+    }else if(IsEqualGUID(&CLSID_CMarkup, riid)) {
+        FIXME("(%p)->(CLSID_CMarkup %p)\n", This, ppv);
+        *ppv = NULL;
+        return E_NOINTERFACE;
+    }else if(IsEqualGUID(&IID_IRunnableObject, riid)) {
+        TRACE("(%p)->(IID_IRunnableObject %p) returning NULL\n", This, ppv);
+        *ppv = NULL;
+        return E_NOINTERFACE;
+    }else if(IsEqualGUID(&IID_IPersistPropertyBag, riid)) {
+        TRACE("(%p)->(IID_IPersistPropertyBag %p) returning NULL\n", This, ppv);
+        *ppv = NULL;
+        return E_NOINTERFACE;
+    }else if(IsEqualGUID(&IID_IExternalConnection, riid)) {
+        TRACE("(%p)->(IID_IExternalConnection %p) returning NULL\n", This, ppv);
+        *ppv = NULL;
+        return E_NOINTERFACE;
+    }else if(IsEqualGUID(&IID_IStdMarshalInfo, riid)) {
+        TRACE("(%p)->(IID_IStdMarshalInfo %p) returning NULL\n", This, ppv);
+        *ppv = NULL;
+        return E_NOINTERFACE;
+    }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
+        return *ppv ? S_OK : E_NOINTERFACE;
+    }else {
+        FIXME("Unimplemented interface %s\n", debugstr_mshtml_guid(riid));
+        *ppv = NULL;
+        return E_NOINTERFACE;
+    }
+
+    IUnknown_AddRef((IUnknown*)*ppv);
+    return S_OK;
+}
+
+static ULONG WINAPI HTMLDocumentObj_AddRef(IUnknown *iface)
+{
+    HTMLDocumentObj *This = impl_from_IUnknown(iface);
+    ULONG ref = InterlockedIncrement(&This->ref);
+
+    TRACE("(%p) ref = %lu\n", This, ref);
+
+    return ref;
+}
+
+static ULONG WINAPI HTMLDocumentObj_Release(IUnknown *iface)
+{
+    HTMLDocumentObj *This = impl_from_IUnknown(iface);
+    ULONG ref = InterlockedDecrement(&This->ref);
+
+    TRACE("(%p) ref = %lu\n", This, ref);
+
+    if(!ref) {
+        if(This->doc_node) {
+            This->doc_node->doc_obj = NULL;
+            IHTMLDOMNode_Release(&This->doc_node->node.IHTMLDOMNode_iface);
+        }
+        if(This->window)
+            IHTMLWindow2_Release(&This->window->base.IHTMLWindow2_iface);
+        if(This->advise_holder)
+            IOleAdviseHolder_Release(This->advise_holder);
+
+        if(This->view_sink)
+            IAdviseSink_Release(This->view_sink);
+        if(This->client)
+            IOleObject_SetClientSite(&This->IOleObject_iface, NULL);
+        if(This->hostui)
+            ICustomDoc_SetUIHandler(&This->ICustomDoc_iface, NULL);
+        if(This->in_place_active)
+            IOleInPlaceObjectWindowless_InPlaceDeactivate(&This->IOleInPlaceObjectWindowless_iface);
+        if(This->ipsite)
+            IOleDocumentView_SetInPlaceSite(&This->IOleDocumentView_iface, NULL);
+        if(This->undomgr)
+            IOleUndoManager_Release(This->undomgr);
+        if(This->editsvcs)
+            IHTMLEditServices_Release(This->editsvcs);
+        if(This->tooltips_hwnd)
+            DestroyWindow(This->tooltips_hwnd);
+
+        if(This->hwnd)
+            DestroyWindow(This->hwnd);
+        heap_free(This->mime);
+
+        remove_target_tasks(This->task_magic);
+        ConnectionPointContainer_Destroy(&This->cp_container);
+        release_dispex(&This->dispex);
+
+        if(This->nscontainer)
+            detach_gecko_browser(This->nscontainer);
+        heap_free(This);
+    }
+
+    return ref;
+}
+
+static const IUnknownVtbl HTMLDocumentObjVtbl = {
+    HTMLDocumentObj_QueryInterface,
+    HTMLDocumentObj_AddRef,
+    HTMLDocumentObj_Release
+};
+
+/**********************************************************
+ * IDispatchEx implementation
+ */
+static inline HTMLDocumentObj *impl_from_IDispatchEx(IDispatchEx *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLDocumentObj, IDispatchEx_iface);
+}
+
+static HRESULT WINAPI DocObjDispatchEx_QueryInterface(IDispatchEx *iface, REFIID riid, void **ppv)
+{
+    HTMLDocumentObj *This = impl_from_IDispatchEx(iface);
+    return IUnknown_QueryInterface(This->outer_unk, riid, ppv);
+}
+
+static ULONG WINAPI DocObjDispatchEx_AddRef(IDispatchEx *iface)
+{
+    HTMLDocumentObj *This = impl_from_IDispatchEx(iface);
+    return IUnknown_AddRef(This->outer_unk);
+}
+
+static ULONG WINAPI DocObjDispatchEx_Release(IDispatchEx *iface)
+{
+    HTMLDocumentObj *This = impl_from_IDispatchEx(iface);
+    return IUnknown_Release(This->outer_unk);
+}
+
+static HRESULT WINAPI DocObjDispatchEx_GetTypeInfoCount(IDispatchEx *iface, UINT *pctinfo)
+{
+    HTMLDocumentObj *This = impl_from_IDispatchEx(iface);
+    return IDispatchEx_GetTypeInfoCount(&This->dispex.IDispatchEx_iface, pctinfo);
+}
+
+static HRESULT WINAPI DocObjDispatchEx_GetTypeInfo(IDispatchEx *iface, UINT iTInfo, LCID lcid,
+        ITypeInfo **ppTInfo)
+{
+    HTMLDocumentObj *This = impl_from_IDispatchEx(iface);
+    return IDispatchEx_GetTypeInfo(&This->dispex.IDispatchEx_iface, iTInfo, lcid, ppTInfo);
+}
+
+static HRESULT WINAPI DocObjDispatchEx_GetIDsOfNames(IDispatchEx *iface, REFIID riid, LPOLESTR *rgszNames,
+        UINT cNames, LCID lcid, DISPID *rgDispId)
+{
+    HTMLDocumentObj *This = impl_from_IDispatchEx(iface);
+    return IDispatchEx_GetIDsOfNames(&This->dispex.IDispatchEx_iface, riid, rgszNames, cNames, lcid, rgDispId);
+}
+
+static HRESULT WINAPI DocObjDispatchEx_Invoke(IDispatchEx *iface, DISPID dispIdMember, REFIID riid, LCID lcid,
+        WORD wFlags, DISPPARAMS *pDispParams, VARIANT *pVarResult, EXCEPINFO *pExcepInfo, UINT *puArgErr)
+{
+    HTMLDocumentObj *This = impl_from_IDispatchEx(iface);
+    return IDispatchEx_InvokeEx(&This->IDispatchEx_iface, dispIdMember, lcid, wFlags, pDispParams,
+            pVarResult, pExcepInfo, NULL);
+}
+
+static HRESULT WINAPI DocObjDispatchEx_GetDispID(IDispatchEx *iface, BSTR bstrName, DWORD grfdex, DISPID *pid)
+{
+    HTMLDocumentObj *This = impl_from_IDispatchEx(iface);
+    return IDispatchEx_GetDispID(&This->dispex.IDispatchEx_iface, bstrName, grfdex, pid);
+}
+
+static HRESULT WINAPI DocObjDispatchEx_InvokeEx(IDispatchEx *iface, DISPID id, LCID lcid, WORD wFlags, DISPPARAMS *pdp,
+        VARIANT *pvarRes, EXCEPINFO *pei, IServiceProvider *pspCaller)
+{
+    HTMLDocumentObj *This = impl_from_IDispatchEx(iface);
+
+    if(This->window) {
+        switch(id) {
+        case DISPID_READYSTATE:
+            TRACE("DISPID_READYSTATE\n");
+
+            if(!(wFlags & DISPATCH_PROPERTYGET))
+                return E_INVALIDARG;
+
+            V_VT(pvarRes) = VT_I4;
+            V_I4(pvarRes) = This->window->readystate;
+            return S_OK;
+        default:
+            break;
+        }
+    }
+
+    return IDispatchEx_InvokeEx(&This->dispex.IDispatchEx_iface, id, lcid, wFlags, pdp, pvarRes, pei, pspCaller);
+}
+
+static HRESULT WINAPI DocObjDispatchEx_DeleteMemberByName(IDispatchEx *iface, BSTR bstrName, DWORD grfdex)
+{
+    HTMLDocumentObj *This = impl_from_IDispatchEx(iface);
+    return IDispatchEx_DeleteMemberByName(&This->dispex.IDispatchEx_iface, bstrName, grfdex);
+}
+
+static HRESULT WINAPI DocObjDispatchEx_DeleteMemberByDispID(IDispatchEx *iface, DISPID id)
+{
+    HTMLDocumentObj *This = impl_from_IDispatchEx(iface);
+    return IDispatchEx_DeleteMemberByDispID(&This->dispex.IDispatchEx_iface, id);
+}
+
+static HRESULT WINAPI DocObjDispatchEx_GetMemberProperties(IDispatchEx *iface, DISPID id, DWORD grfdexFetch, DWORD *pgrfdex)
+{
+    HTMLDocumentObj *This = impl_from_IDispatchEx(iface);
+    return IDispatchEx_GetMemberProperties(&This->dispex.IDispatchEx_iface, id, grfdexFetch, pgrfdex);
+}
+
+static HRESULT WINAPI DocObjDispatchEx_GetMemberName(IDispatchEx *iface, DISPID id, BSTR *pbstrName)
+{
+    HTMLDocumentObj *This = impl_from_IDispatchEx(iface);
+    return IDispatchEx_GetMemberName(&This->dispex.IDispatchEx_iface, id, pbstrName);
+}
+
+static HRESULT WINAPI DocObjDispatchEx_GetNextDispID(IDispatchEx *iface, DWORD grfdex, DISPID id, DISPID *pid)
+{
+    HTMLDocumentObj *This = impl_from_IDispatchEx(iface);
+    return IDispatchEx_GetNextDispID(&This->dispex.IDispatchEx_iface, grfdex, id, pid);
+}
+
+static HRESULT WINAPI DocObjDispatchEx_GetNameSpaceParent(IDispatchEx *iface, IUnknown **ppunk)
+{
+    HTMLDocumentObj *This = impl_from_IDispatchEx(iface);
+    return IDispatchEx_GetNameSpaceParent(&This->dispex.IDispatchEx_iface, ppunk);
+}
+
+static const IDispatchExVtbl DocObjDispatchExVtbl = {
+    DocObjDispatchEx_QueryInterface,
+    DocObjDispatchEx_AddRef,
+    DocObjDispatchEx_Release,
+    DocObjDispatchEx_GetTypeInfoCount,
+    DocObjDispatchEx_GetTypeInfo,
+    DocObjDispatchEx_GetIDsOfNames,
+    DocObjDispatchEx_Invoke,
+    DocObjDispatchEx_GetDispID,
+    DocObjDispatchEx_InvokeEx,
+    DocObjDispatchEx_DeleteMemberByName,
+    DocObjDispatchEx_DeleteMemberByDispID,
+    DocObjDispatchEx_GetMemberProperties,
+    DocObjDispatchEx_GetMemberName,
+    DocObjDispatchEx_GetNextDispID,
+    DocObjDispatchEx_GetNameSpaceParent
+};
+
+/**********************************************************
+ * ICustomDoc implementation
+ */
+
+static inline HTMLDocumentObj *impl_from_ICustomDoc(ICustomDoc *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLDocumentObj, ICustomDoc_iface);
+}
+
+static HRESULT WINAPI CustomDoc_QueryInterface(ICustomDoc *iface, REFIID riid, void **ppv)
+{
+    HTMLDocumentObj *This = impl_from_ICustomDoc(iface);
+
+    return IUnknown_QueryInterface(This->outer_unk, riid, ppv);
+}
+
+static ULONG WINAPI CustomDoc_AddRef(ICustomDoc *iface)
+{
+    HTMLDocumentObj *This = impl_from_ICustomDoc(iface);
+
+    return IUnknown_AddRef(This->outer_unk);
+}
+
+static ULONG WINAPI CustomDoc_Release(ICustomDoc *iface)
+{
+    HTMLDocumentObj *This = impl_from_ICustomDoc(iface);
+
+    return IUnknown_Release(This->outer_unk);
+}
+
+static HRESULT WINAPI CustomDoc_SetUIHandler(ICustomDoc *iface, IDocHostUIHandler *pUIHandler)
+{
+    HTMLDocumentObj *This = impl_from_ICustomDoc(iface);
+    IOleCommandTarget *cmdtrg;
+    HRESULT hres;
+
+    TRACE("(%p)->(%p)\n", This, pUIHandler);
+
+    if(This->custom_hostui && This->hostui == pUIHandler)
+        return S_OK;
+
+    This->custom_hostui = TRUE;
+
+    if(This->hostui)
+        IDocHostUIHandler_Release(This->hostui);
+    if(pUIHandler)
+        IDocHostUIHandler_AddRef(pUIHandler);
+    This->hostui = pUIHandler;
+    if(!pUIHandler)
+        return S_OK;
+
+    hres = IDocHostUIHandler_QueryInterface(pUIHandler, &IID_IOleCommandTarget, (void**)&cmdtrg);
+    if(SUCCEEDED(hres)) {
+        FIXME("custom UI handler supports IOleCommandTarget\n");
+        IOleCommandTarget_Release(cmdtrg);
+    }
+
+    return S_OK;
+}
+
+static const ICustomDocVtbl CustomDocVtbl = {
+    CustomDoc_QueryInterface,
+    CustomDoc_AddRef,
+    CustomDoc_Release,
+    CustomDoc_SetUIHandler
+};
+
+static void HTMLDocumentObj_on_advise(IUnknown *iface, cp_static_data_t *cp)
+{
+    HTMLDocumentObj *This = impl_from_IUnknown(iface);
+
+    if(This->window && This->doc_node)
+        update_doc_cp_events(This->doc_node, cp);
+}
+
+static cp_static_data_t HTMLDocumentObjEvents_data = { HTMLDocumentEvents_tid, HTMLDocumentObj_on_advise };
+static cp_static_data_t HTMLDocumentObjEvents2_data = { HTMLDocumentEvents2_tid, HTMLDocumentObj_on_advise, TRUE };
+
+static const cpc_entry_t HTMLDocumentObj_cpc[] = {
+    {&IID_IDispatch, &HTMLDocumentObjEvents_data},
+    {&IID_IPropertyNotifySink},
+    {&DIID_HTMLDocumentEvents, &HTMLDocumentObjEvents_data},
+    {&DIID_HTMLDocumentEvents2, &HTMLDocumentObjEvents2_data},
+    {NULL}
+};
+
+static HRESULT HTMLDocumentObj_location_hook(DispatchEx *dispex, WORD flags, DISPPARAMS *dp, VARIANT *res,
+        EXCEPINFO *ei, IServiceProvider *caller)
+{
+    HTMLDocumentObj *This = CONTAINING_RECORD(dispex, HTMLDocumentObj, dispex);
+
+    if(!(flags & DISPATCH_PROPERTYPUT) || !This->window)
+        return S_FALSE;
+
+    return IDispatchEx_InvokeEx(&This->window->base.IDispatchEx_iface, DISPID_IHTMLWINDOW2_LOCATION,
+                                0, flags, dp, res, ei, caller);
+}
+
+static const tid_t HTMLDocumentObj_iface_tids[] = {
+    IHTMLDocument3_tid,
+    IHTMLDocument4_tid,
+    IHTMLDocument5_tid,
+    0
+};
+
+static void HTMLDocumentObj_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
+{
+    static const dispex_hook_t document2_hooks[] = {
+        {DISPID_IHTMLDOCUMENT2_URL,      NULL, L"URL"},
+        {DISPID_IHTMLDOCUMENT2_LOCATION, HTMLDocumentObj_location_hook},
+        {DISPID_UNKNOWN}
+    };
+    dispex_info_add_interface(info, IHTMLDocument2_tid, document2_hooks);
+}
+
+static dispex_static_data_t HTMLDocumentObj_dispex = {
+    L"HTMLDocumentObj",
+    NULL,
+    DispHTMLDocument_tid,
+    HTMLDocumentObj_iface_tids,
+    HTMLDocumentObj_init_dispex_info
+};
+
+static HRESULT create_document_object(BOOL is_mhtml, IUnknown *outer, REFIID riid, void **ppv)
+{
+    HTMLDocumentObj *doc;
+    HRESULT hres;
+
+    if(outer && !IsEqualGUID(&IID_IUnknown, riid)) {
+        *ppv = NULL;
+        return E_INVALIDARG;
+    }
+
+    /* ensure that security manager is initialized */
+    if(!get_security_manager())
+        return E_OUTOFMEMORY;
+
+    doc = heap_alloc_zero(sizeof(HTMLDocumentObj));
+    if(!doc)
+        return E_OUTOFMEMORY;
+
+    doc->ref = 1;
+    doc->IUnknown_inner.lpVtbl = &HTMLDocumentObjVtbl;
+    doc->IDispatchEx_iface.lpVtbl = &DocObjDispatchExVtbl;
+    doc->ICustomDoc_iface.lpVtbl = &CustomDocVtbl;
+    doc->IHTMLDocument2_iface.lpVtbl = &DocObjHTMLDocument2Vtbl;
+    doc->IHTMLDocument3_iface.lpVtbl = &DocObjHTMLDocument3Vtbl;
+    doc->IHTMLDocument4_iface.lpVtbl = &DocObjHTMLDocument4Vtbl;
+    doc->IHTMLDocument5_iface.lpVtbl = &DocObjHTMLDocument5Vtbl;
+    doc->IHTMLDocument6_iface.lpVtbl = &DocObjHTMLDocument6Vtbl;
+    doc->IHTMLDocument7_iface.lpVtbl = &DocObjHTMLDocument7Vtbl;
+    doc->IDocumentSelector_iface.lpVtbl = &DocObjDocumentSelectorVtbl;
+    doc->IDocumentEvent_iface.lpVtbl = &DocObjDocumentEventVtbl;
+    doc->ISupportErrorInfo_iface.lpVtbl = &DocObjSupportErrorInfoVtbl;
+    doc->IProvideMultipleClassInfo_iface.lpVtbl = &DocObjProvideMultipleClassInfoVtbl;
+    doc->IMarkupServices_iface.lpVtbl = &DocObjMarkupServicesVtbl;
+    doc->IMarkupContainer_iface.lpVtbl = &DocObjMarkupContainerVtbl;
+    doc->IDisplayServices_iface.lpVtbl = &DocObjDisplayServicesVtbl;
+    doc->IDocumentRange_iface.lpVtbl = &DocObjDocumentRangeVtbl;
+
+    doc->outer_unk = outer ? outer : &doc->IUnknown_inner;
+
+    init_dispatch(&doc->dispex, (IUnknown*)&doc->ICustomDoc_iface, &HTMLDocumentObj_dispex, COMPAT_MODE_QUIRKS);
+    ConnectionPointContainer_Init(&doc->cp_container, &doc->IUnknown_inner, HTMLDocumentObj_cpc);
+    HTMLDocumentObj_Persist_Init(doc);
+    HTMLDocumentObj_Service_Init(doc);
+    HTMLDocumentObj_OleCmd_Init(doc);
+    HTMLDocumentObj_OleObj_Init(doc);
+    TargetContainer_Init(doc);
+    doc->is_mhtml = is_mhtml;
+
+    doc->task_magic = get_task_target_magic();
+
+    HTMLDocument_View_Init(doc);
+
+    hres = create_gecko_browser(doc, &doc->nscontainer);
+    if(FAILED(hres)) {
+        ERR("Failed to init Gecko, returning CLASS_E_CLASSNOTAVAILABLE\n");
+        IUnknown_Release(&doc->IUnknown_inner);
+        return hres;
+    }
+
+    if(IsEqualGUID(&IID_IUnknown, riid)) {
+        *ppv = &doc->IUnknown_inner;
+    }else {
+        hres = IUnknown_QueryInterface(doc->outer_unk, riid, ppv);
+        IUnknown_Release(doc->outer_unk);
+        if(FAILED(hres))
+            return hres;
+    }
+
+    doc->window = doc->nscontainer->content_window;
+    IHTMLWindow2_AddRef(&doc->window->base.IHTMLWindow2_iface);
+
+    if(!doc->doc_node && doc->window->base.inner_window->doc) {
+        doc->doc_node = doc->window->base.inner_window->doc;
+        IHTMLDOMNode_AddRef(&doc->doc_node->node.IHTMLDOMNode_iface);
+    }
+
+    get_thread_hwnd();
+
+    return S_OK;
+}
+
+HRESULT HTMLDocument_Create(IUnknown *outer, REFIID riid, void **ppv)
+{
+    TRACE("(%p %s %p)\n", outer, debugstr_mshtml_guid(riid), ppv);
+    return create_document_object(FALSE, outer, riid, ppv);
+}
+
+HRESULT MHTMLDocument_Create(IUnknown *outer, REFIID riid, void **ppv)
+{
+    TRACE("(%p %s %p)\n", outer, debugstr_mshtml_guid(riid), ppv);
+    return create_document_object(TRUE, outer, riid, ppv);
 }

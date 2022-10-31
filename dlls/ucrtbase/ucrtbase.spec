@@ -495,13 +495,13 @@
 @ cdecl _ismbcspace(long)
 @ cdecl _ismbcspace_l(long ptr)
 @ cdecl _ismbcsymbol(long)
-@ stub _ismbcsymbol_l
+@ cdecl _ismbcsymbol_l(long ptr)
 @ cdecl _ismbcupper(long)
 @ cdecl _ismbcupper_l(long ptr)
 @ cdecl _ismbslead(ptr ptr)
-@ stub _ismbslead_l
+@ cdecl _ismbslead_l(ptr ptr ptr)
 @ cdecl _ismbstrail(ptr ptr)
-@ stub _ismbstrail_l
+@ cdecl _ismbstrail_l(ptr ptr ptr)
 @ cdecl _isnan(double)
 @ cdecl -arch=x86_64 _isnanf(float)
 @ cdecl _isprint_l(long ptr)
@@ -597,7 +597,7 @@
 @ cdecl _mbcjmstojis(long)
 @ stub _mbcjmstojis_l
 @ cdecl _mbclen(ptr)
-@ stub _mbclen_l
+@ cdecl _mbclen_l(ptr ptr)
 @ cdecl _mbctohira(long)
 @ stub _mbctohira_l
 @ cdecl _mbctokata(long)
@@ -614,7 +614,7 @@
 @ cdecl _mbscat_s(ptr long str)
 @ cdecl _mbscat_s_l(ptr long str ptr)
 @ cdecl _mbschr(str long)
-@ stub _mbschr_l
+@ cdecl _mbschr_l(str long ptr)
 @ cdecl _mbscmp(str str)
 @ cdecl _mbscmp_l(str str ptr)
 @ cdecl _mbscoll(str str)
@@ -627,11 +627,11 @@
 @ stub _mbsdec_l
 @ cdecl _mbsdup(str) _strdup
 @ cdecl _mbsicmp(str str)
-@ stub _mbsicmp_l
+@ cdecl _mbsicmp_l(str str ptr)
 @ cdecl _mbsicoll(str str)
 @ cdecl _mbsicoll_l(str str ptr)
 @ cdecl _mbsinc(str)
-@ stub _mbsinc_l
+@ cdecl _mbsinc_l(str ptr)
 @ cdecl _mbslen(str)
 @ cdecl _mbslen_l(str ptr)
 @ cdecl _mbslwr(str)
@@ -1094,13 +1094,13 @@
 @ cdecl _o__ismbcspace(long) _ismbcspace
 @ cdecl _o__ismbcspace_l(long ptr) _ismbcspace_l
 @ cdecl _o__ismbcsymbol(long) _ismbcsymbol
-@ stub _o__ismbcsymbol_l
+@ cdecl _o__ismbcsymbol_l(long ptr) _ismbcsymbol_l
 @ cdecl _o__ismbcupper(long) _ismbcupper
 @ cdecl _o__ismbcupper_l(long ptr) _ismbcupper_l
 @ cdecl _o__ismbslead(ptr ptr) _ismbslead
-@ stub _o__ismbslead_l
+@ cdecl _o__ismbslead_l(ptr ptr ptr) _ismbslead_l
 @ cdecl _o__ismbstrail(ptr ptr) _ismbstrail
-@ stub _o__ismbstrail_l
+@ cdecl _o__ismbstrail_l(ptr ptr ptr) _ismbstrail_l
 @ cdecl _o__iswctype_l(long long ptr) _iswctype_l
 @ cdecl _o__itoa(long ptr long) _itoa
 @ cdecl _o__itoa_s(long ptr long long) _itoa_s
@@ -1167,7 +1167,7 @@
 @ cdecl _o__mbcjmstojis(long) _mbcjmstojis
 @ stub _o__mbcjmstojis_l
 @ cdecl _o__mbclen(ptr) _mbclen
-@ stub _o__mbclen_l
+@ cdecl _o__mbclen_l(ptr ptr) _mbclen_l
 @ cdecl _o__mbctohira(long) _mbctohira
 @ stub _o__mbctohira_l
 @ cdecl _o__mbctokata(long) _mbctokata
@@ -1184,7 +1184,7 @@
 @ cdecl _o__mbscat_s(ptr long str) _mbscat_s
 @ cdecl _o__mbscat_s_l(ptr long str ptr) _mbscat_s_l
 @ cdecl _o__mbschr(str long) _mbschr
-@ stub _o__mbschr_l
+@ cdecl _o__mbschr_l(str long ptr) _mbschr_l
 @ cdecl _o__mbscmp(str str) _mbscmp
 @ cdecl _o__mbscmp_l(str str ptr) _mbscmp_l
 @ cdecl _o__mbscoll(str str) _mbscoll
@@ -1196,11 +1196,11 @@
 @ cdecl _o__mbsdec(ptr ptr) _mbsdec
 @ stub _o__mbsdec_l
 @ cdecl _o__mbsicmp(str str) _mbsicmp
-@ stub _o__mbsicmp_l
+@ cdecl _o__mbsicmp_l(str str ptr) _mbsicmp_l
 @ cdecl _o__mbsicoll(str str) _mbsicoll
 @ cdecl _o__mbsicoll_l(str str ptr) _mbsicoll_l
 @ cdecl _o__mbsinc(str) _mbsinc
-@ stub _o__mbsinc_l
+@ cdecl _o__mbsinc_l(str ptr) _mbsinc_l
 @ cdecl _o__mbslen(str) _mbslen
 @ cdecl _o__mbslen_l(str ptr) _mbslen_l
 @ cdecl _o__mbslwr(str) _mbslwr

@@ -340,19 +340,19 @@ static inline HTMLDocumentNode *HTMLDocumentNode_from_IServiceProvider(IServiceP
 static HRESULT WINAPI DocNodeServiceProvider_QueryInterface(IServiceProvider *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IServiceProvider(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IHTMLDOMNode_QueryInterface(&This->node.IHTMLDOMNode_iface, riid, ppv);
 }
 
 static ULONG WINAPI DocNodeServiceProvider_AddRef(IServiceProvider *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IServiceProvider(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IHTMLDOMNode_AddRef(&This->node.IHTMLDOMNode_iface);
 }
 
 static ULONG WINAPI DocNodeServiceProvider_Release(IServiceProvider *iface)
 {
     HTMLDocumentNode *This = HTMLDocumentNode_from_IServiceProvider(iface);
-    return htmldoc_release(&This->basedoc);
+    return IHTMLDOMNode_Release(&This->node.IHTMLDOMNode_iface);
 }
 
 static HRESULT WINAPI DocNodeServiceProvider_QueryService(IServiceProvider *iface, REFGUID guidService,
@@ -362,10 +362,10 @@ static HRESULT WINAPI DocNodeServiceProvider_QueryService(IServiceProvider *ifac
 
     if(IsEqualGUID(&SID_SContainerDispatch, guidService)) {
         TRACE("SID_SContainerDispatch\n");
-        return IHTMLDocument2_QueryInterface(&This->basedoc.IHTMLDocument2_iface, riid, ppv);
+        return IHTMLDocument2_QueryInterface(&This->IHTMLDocument2_iface, riid, ppv);
     }
 
-    return IServiceProvider_QueryService(&This->basedoc.doc_obj->IServiceProvider_iface, guidService, riid, ppv);
+    return IServiceProvider_QueryService(&This->doc_obj->IServiceProvider_iface, guidService, riid, ppv);
 }
 
 static const IServiceProviderVtbl DocNodeServiceProviderVtbl = {
@@ -383,19 +383,19 @@ static inline HTMLDocumentObj *HTMLDocumentObj_from_IServiceProvider(IServicePro
 static HRESULT WINAPI DocObjServiceProvider_QueryInterface(IServiceProvider *iface, REFIID riid, void **ppv)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IServiceProvider(iface);
-    return htmldoc_query_interface(&This->basedoc, riid, ppv);
+    return IUnknown_QueryInterface(This->outer_unk, riid, ppv);
 }
 
 static ULONG WINAPI DocObjServiceProvider_AddRef(IServiceProvider *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IServiceProvider(iface);
-    return htmldoc_addref(&This->basedoc);
+    return IUnknown_AddRef(This->outer_unk);
 }
 
 static ULONG WINAPI DocObjServiceProvider_Release(IServiceProvider *iface)
 {
     HTMLDocumentObj *This = HTMLDocumentObj_from_IServiceProvider(iface);
-    return htmldoc_release(&This->basedoc);
+    return IUnknown_Release(This->outer_unk);
 }
 
 static HRESULT WINAPI DocObjServiceProvider_QueryService(IServiceProvider *iface, REFGUID guidService,
@@ -422,7 +422,7 @@ static HRESULT WINAPI DocObjServiceProvider_QueryService(IServiceProvider *iface
 
     if(IsEqualGUID(&SID_SContainerDispatch, guidService)) {
         TRACE("SID_SContainerDispatch\n");
-        return IHTMLDocument2_QueryInterface(&This->basedoc.IHTMLDocument2_iface, riid, ppv);
+        return IHTMLDocument2_QueryInterface(&This->IHTMLDocument2_iface, riid, ppv);
     }
 
     if(IsEqualGUID(&IID_IWindowForBindingUI, guidService)) {

@@ -49,7 +49,7 @@ static HRESULT get_safearray_bounds(SAFEARRAY *sa, LONG *lbound, LONG *elems)
     return S_OK;
 }
 
-int uia_compare_runtime_ids(SAFEARRAY *sa1, SAFEARRAY *sa2)
+int uia_compare_safearrays(SAFEARRAY *sa1, SAFEARRAY *sa2, int prop_type)
 {
     LONG i, idx, lbound[2], elems[2];
     int val[2];
@@ -71,6 +71,12 @@ int uia_compare_runtime_ids(SAFEARRAY *sa1, SAFEARRAY *sa2)
 
     if (elems[0] != elems[1])
         return (elems[0] > elems[1]) - (elems[0] < elems[1]);
+
+    if (prop_type != UIAutomationType_IntArray)
+    {
+        FIXME("Array type %#x value comparsion currently unimplemented.\n", prop_type);
+        return -1;
+    }
 
     for (i = 0; i < elems[0]; i++)
     {
@@ -909,7 +915,7 @@ static HRESULT create_wine_uia_provider(struct uia_node *node, IRawElementProvid
     return S_OK;
 }
 
-static HRESULT uia_get_provider_from_hwnd(struct uia_node *node);
+static HRESULT uia_get_providers_for_hwnd(struct uia_node *node);
 HRESULT create_uia_node_from_elprov(IRawElementProviderSimple *elprov, HUIANODE *out_node,
         BOOL get_hwnd_providers)
 {
@@ -958,7 +964,11 @@ HRESULT create_uia_node_from_elprov(IRawElementProviderSimple *elprov, HUIANODE 
     }
 
     if (node->hwnd && get_hwnd_providers)
-        uia_get_provider_from_hwnd(node);
+    {
+        hr = uia_get_providers_for_hwnd(node);
+        if (FAILED(hr))
+            WARN("uia_get_providers_for_hwnd failed with hr %#lx\n", hr);
+    }
 
     hr = prepare_uia_node(node);
     if (FAILED(hr))
@@ -1406,9 +1416,9 @@ static HRESULT uia_node_from_lresult(LRESULT lr, HUIANODE *huianode)
 
     if (node->hwnd)
     {
-        hr = uia_get_provider_from_hwnd(node);
+        hr = uia_get_providers_for_hwnd(node);
         if (FAILED(hr))
-            WARN("uia_get_provider_from_hwnd failed with hr %#lx\n", hr);
+            WARN("uia_get_providers_for_hwnd failed with hr %#lx\n", hr);
     }
 
     hr = prepare_uia_node(node);
@@ -1445,9 +1455,8 @@ static HRESULT uia_get_provider_from_hwnd(struct uia_node *node)
 
     if (!args.lr)
     {
-        FIXME("No native UIA provider for hwnd %p, MSAA proxy currently unimplemented.\n", node->hwnd);
         uia_stop_client_thread();
-        return E_NOTIMPL;
+        return S_FALSE;
     }
 
     args.unwrap = GetCurrentThreadId() == GetWindowThreadProcessId(node->hwnd, NULL);
@@ -1482,7 +1491,7 @@ HRESULT WINAPI UiaNodeFromHandle(HWND hwnd, HUIANODE *huianode)
     list_init(&node->node_map_list_entry);
     node->ref = 1;
 
-    hr = uia_get_provider_from_hwnd(node);
+    hr = uia_get_providers_for_hwnd(node);
     if (FAILED(hr))
     {
         heap_free(node);
@@ -1773,6 +1782,348 @@ HRESULT WINAPI UiaHUiaNodeFromVariant(VARIANT *in_val, HUIANODE *huianode)
         *huianode = (HUIANODE)V_I4(in_val);
 #endif
     }
+
+    return S_OK;
+}
+
+static SAFEARRAY WINAPI *default_uia_provider_callback(HWND hwnd, enum ProviderType prov_type)
+{
+    switch (prov_type)
+    {
+    case ProviderType_Proxy:
+        FIXME("Default ProviderType_Proxy MSAA provider unimplemented.\n");
+        break;
+
+    case ProviderType_NonClientArea:
+        FIXME("Default ProviderType_NonClientArea provider unimplemented.\n");
+        break;
+
+    case ProviderType_BaseHwnd:
+        FIXME("Default ProviderType_BaseHwnd provider unimplemented.\n");
+        break;
+
+    default:
+        break;
+    }
+
+    return NULL;
+}
+
+static UiaProviderCallback *uia_provider_callback = default_uia_provider_callback;
+
+static HRESULT uia_get_clientside_provider(struct uia_node *node, int prov_type,
+        int node_prov_type)
+{
+    IRawElementProviderSimple *elprov;
+    LONG lbound, elems;
+    SAFEARRAY *sa;
+    IUnknown *unk;
+    VARTYPE vt;
+    HRESULT hr;
+
+    if (!(sa = uia_provider_callback(node->hwnd, prov_type)))
+        return S_OK;
+
+    hr = SafeArrayGetVartype(sa, &vt);
+    if (FAILED(hr) || (vt != VT_UNKNOWN))
+        goto exit;
+
+    hr = get_safearray_bounds(sa, &lbound, &elems);
+    if (FAILED(hr))
+        goto exit;
+
+    /* Returned SAFEARRAY can only have 1 element. */
+    if (elems != 1)
+    {
+        WARN("Invalid element count %ld for returned SAFEARRAY\n", elems);
+        goto exit;
+    }
+
+    hr = SafeArrayGetElement(sa, &lbound, &unk);
+    if (FAILED(hr))
+        goto exit;
+
+    hr = IUnknown_QueryInterface(unk, &IID_IRawElementProviderSimple, (void **)&elprov);
+    IUnknown_Release(unk);
+    if (FAILED(hr) || !elprov)
+    {
+        WARN("Failed to get IRawElementProviderSimple from returned SAFEARRAY.\n");
+        hr = S_OK;
+        goto exit;
+    }
+
+    hr = create_wine_uia_provider(node, elprov, node_prov_type);
+    IRawElementProviderSimple_Release(elprov);
+
+exit:
+    if (FAILED(hr))
+        WARN("Failed to get clientside provider, hr %#lx\n", hr);
+    SafeArrayDestroy(sa);
+    return hr;
+}
+
+static HRESULT uia_get_providers_for_hwnd(struct uia_node *node)
+{
+    HRESULT hr;
+
+    hr = uia_get_provider_from_hwnd(node);
+    if (FAILED(hr))
+        return hr;
+
+    if (!node->prov[PROV_TYPE_MAIN])
+    {
+        hr = uia_get_clientside_provider(node, ProviderType_Proxy, PROV_TYPE_MAIN);
+        if (FAILED(hr))
+            return hr;
+    }
+
+    if (!node->prov[PROV_TYPE_OVERRIDE])
+        FIXME("Override provider callback currently unimplemented.\n");
+
+    if (!node->prov[PROV_TYPE_NONCLIENT])
+    {
+        hr = uia_get_clientside_provider(node, ProviderType_NonClientArea, PROV_TYPE_NONCLIENT);
+        if (FAILED(hr))
+            return hr;
+    }
+
+    if (!node->prov[PROV_TYPE_HWND])
+    {
+        hr = uia_get_clientside_provider(node, ProviderType_BaseHwnd, PROV_TYPE_HWND);
+        if (FAILED(hr))
+            return hr;
+    }
+
+    if (!node->prov_count)
+    {
+        if (uia_provider_callback == default_uia_provider_callback)
+            return E_NOTIMPL;
+        else
+            return E_FAIL;
+    }
+
+    return S_OK;
+}
+
+/***********************************************************************
+ *          UiaRegisterProviderCallback (uiautomationcore.@)
+ */
+void WINAPI UiaRegisterProviderCallback(UiaProviderCallback *callback)
+{
+    TRACE("(%p)\n", callback);
+
+    if (callback)
+        uia_provider_callback = callback;
+    else
+        uia_provider_callback = default_uia_provider_callback;
+}
+
+static BOOL uia_condition_matched(HRESULT hr)
+{
+    if (hr == S_FALSE)
+        return FALSE;
+    else
+        return TRUE;
+}
+
+static HRESULT uia_property_condition_check(HUIANODE node, struct UiaPropertyCondition *prop_cond)
+{
+    const struct uia_prop_info *prop_info = uia_prop_info_from_id(prop_cond->PropertyId);
+    HRESULT hr;
+    VARIANT v;
+
+    if (!prop_info)
+        return E_INVALIDARG;
+
+    switch (prop_info->type)
+    {
+    case UIAutomationType_Bool:
+    case UIAutomationType_IntArray:
+        break;
+
+    default:
+        FIXME("PropertyCondition comparison unimplemented for type %#x\n", prop_info->type);
+        return E_NOTIMPL;
+    }
+
+    hr = UiaGetPropertyValue(node, prop_info->prop_id, &v);
+    if (FAILED(hr) || V_VT(&v) == VT_UNKNOWN)
+        return S_FALSE;
+
+    if (V_VT(&v) == V_VT(&prop_cond->Value))
+    {
+        switch (prop_info->type)
+        {
+        case UIAutomationType_Bool:
+            if (V_BOOL(&v) == V_BOOL(&prop_cond->Value))
+                hr = S_OK;
+            else
+                hr = S_FALSE;
+            break;
+
+        case UIAutomationType_IntArray:
+            if (!uia_compare_safearrays(V_ARRAY(&v), V_ARRAY(&prop_cond->Value), prop_info->type))
+                hr = S_OK;
+            else
+                hr = S_FALSE;
+            break;
+
+        default:
+            break;
+        }
+    }
+    else
+        hr = S_FALSE;
+
+    VariantClear(&v);
+    return hr;
+}
+
+static HRESULT uia_condition_check(HUIANODE node, struct UiaCondition *condition)
+{
+    HRESULT hr;
+
+    switch (condition->ConditionType)
+    {
+    case ConditionType_True:
+        return S_OK;
+
+    case ConditionType_False:
+        return S_FALSE;
+
+    case ConditionType_Not:
+    {
+        struct UiaNotCondition *not_cond = (struct UiaNotCondition *)condition;
+
+        hr = uia_condition_check(node, not_cond->pConditions);
+        if (FAILED(hr))
+            return hr;
+
+        if (uia_condition_matched(hr))
+            return S_FALSE;
+        else
+            return S_OK;
+    }
+
+    case ConditionType_And:
+    case ConditionType_Or:
+    {
+        struct UiaAndOrCondition *and_or_cond = (struct UiaAndOrCondition *)condition;
+        int i;
+
+        for (i = 0; i < and_or_cond->cConditions; i++)
+        {
+            hr = uia_condition_check(node, and_or_cond->ppConditions[i]);
+            if (FAILED(hr))
+                return hr;
+
+            if (condition->ConditionType == ConditionType_And && !uia_condition_matched(hr))
+                return S_FALSE;
+            else if (condition->ConditionType == ConditionType_Or && uia_condition_matched(hr))
+                return S_OK;
+        }
+
+        if (condition->ConditionType == ConditionType_Or)
+            return S_FALSE;
+        else
+            return S_OK;
+    }
+
+    case ConditionType_Property:
+        return uia_property_condition_check(node, (struct UiaPropertyCondition *)condition);
+
+    default:
+        WARN("Invalid condition type %d\n", condition->ConditionType);
+        return E_INVALIDARG;
+    }
+}
+
+/***********************************************************************
+ *          UiaGetUpdatedCache (uiautomationcore.@)
+ */
+HRESULT WINAPI UiaGetUpdatedCache(HUIANODE huianode, struct UiaCacheRequest *cache_req, enum NormalizeState normalize_state,
+        struct UiaCondition *normalize_cond, SAFEARRAY **out_req, BSTR *tree_struct)
+{
+    struct uia_node *node = unsafe_impl_from_IWineUiaNode((IWineUiaNode *)huianode);
+    struct UiaCondition *cond;
+    SAFEARRAYBOUND sabound[2];
+    SAFEARRAY *sa;
+    LONG idx[2];
+    HRESULT hr;
+    VARIANT v;
+
+    TRACE("(%p, %p, %u, %p, %p, %p)\n", huianode, cache_req, normalize_state, normalize_cond, out_req, tree_struct);
+
+    if (!node || !out_req || !tree_struct || !cache_req)
+        return E_INVALIDARG;
+
+    *tree_struct = NULL;
+    *out_req = NULL;
+
+    if (cache_req->Scope != TreeScope_Element)
+    {
+        FIXME("Unsupported cache request scope %#x\n", cache_req->Scope);
+        return E_NOTIMPL;
+    }
+
+    switch (normalize_state)
+    {
+    case NormalizeState_None:
+        cond = NULL;
+        break;
+
+    case NormalizeState_View:
+        cond = cache_req->pViewCondition;
+        break;
+
+    case NormalizeState_Custom:
+        cond = normalize_cond;
+        break;
+
+    default:
+        WARN("Invalid normalize_state %d\n", normalize_state);
+        return E_INVALIDARG;
+    }
+
+    if (cond)
+    {
+        hr = uia_condition_check(huianode, cond);
+        if (FAILED(hr))
+            return hr;
+
+        if (!uia_condition_matched(hr))
+        {
+            *tree_struct = SysAllocString(L"");
+            return S_OK;
+        }
+    }
+
+    sabound[0].cElements = sabound[1].cElements = 1;
+    sabound[0].lLbound = sabound[1].lLbound = 0;
+    if (!(sa = SafeArrayCreate(VT_VARIANT, 2, sabound)))
+    {
+        WARN("Failed to create safearray\n");
+        return E_FAIL;
+    }
+
+    get_variant_for_node(huianode, &v);
+    idx[0] = idx[1] = 0;
+
+    hr = SafeArrayPutElement(sa, idx, &v);
+    if (FAILED(hr))
+    {
+        SafeArrayDestroy(sa);
+        return hr;
+    }
+
+    /*
+     * AddRef huianode since we're returning a reference to the same node we
+     * passed in, rather than creating a new one.
+     */
+    IWineUiaNode_AddRef(&node->IWineUiaNode_iface);
+
+    *out_req = sa;
+    *tree_struct = SysAllocString(L"P)");
 
     return S_OK;
 }

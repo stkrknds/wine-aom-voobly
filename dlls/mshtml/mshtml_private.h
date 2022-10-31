@@ -406,7 +406,7 @@ HRESULT change_type(VARIANT*,VARIANT*,VARTYPE,IServiceProvider*) DECLSPEC_HIDDEN
 HRESULT dispex_get_dprop_ref(DispatchEx*,const WCHAR*,BOOL,VARIANT**) DECLSPEC_HIDDEN;
 HRESULT get_dispids(tid_t,DWORD*,DISPID**) DECLSPEC_HIDDEN;
 HRESULT remove_attribute(DispatchEx*,DISPID,VARIANT_BOOL*) DECLSPEC_HIDDEN;
-HRESULT dispex_get_dynid(DispatchEx*,const WCHAR*,DISPID*) DECLSPEC_HIDDEN;
+HRESULT dispex_get_dynid(DispatchEx*,const WCHAR*,BOOL,DISPID*) DECLSPEC_HIDDEN;
 void dispex_traverse(DispatchEx*,nsCycleCollectionTraversalCallback*) DECLSPEC_HIDDEN;
 void dispex_unlink(DispatchEx*) DECLSPEC_HIDDEN;
 void release_typelib(void) DECLSPEC_HIDDEN;
@@ -639,52 +639,25 @@ struct  ConnectionPoint {
     cp_static_data_t *data;
 };
 
-struct HTMLDocument {
-    IHTMLDocument2              IHTMLDocument2_iface;
-    IHTMLDocument3              IHTMLDocument3_iface;
-    IHTMLDocument4              IHTMLDocument4_iface;
-    IHTMLDocument5              IHTMLDocument5_iface;
-    IHTMLDocument6              IHTMLDocument6_iface;
-    IHTMLDocument7              IHTMLDocument7_iface;
-    IDocumentSelector           IDocumentSelector_iface;
-    IDocumentEvent              IDocumentEvent_iface;
-    IDispatchEx                 IDispatchEx_iface;
-    ISupportErrorInfo           ISupportErrorInfo_iface;
-    IProvideMultipleClassInfo   IProvideMultipleClassInfo_iface;
-    IMarkupServices             IMarkupServices_iface;
-    IMarkupContainer            IMarkupContainer_iface;
-    IDisplayServices            IDisplayServices_iface;
-    IDocumentRange              IDocumentRange_iface;
-
-    IUnknown *outer_unk;
-    IDispatchEx *dispex;
-
-    HTMLDocumentObj *doc_obj;
-    HTMLDocumentNode *doc_node;
-
-    HTMLOuterWindow *window;
-};
-
-static inline HRESULT htmldoc_query_interface(HTMLDocument *This, REFIID riid, void **ppv)
-{
-    return IUnknown_QueryInterface(This->outer_unk, riid, ppv);
-}
-
-static inline ULONG htmldoc_addref(HTMLDocument *This)
-{
-    return IUnknown_AddRef(This->outer_unk);
-}
-
-static inline ULONG htmldoc_release(HTMLDocument *This)
-{
-    return IUnknown_Release(This->outer_unk);
-}
-
 struct HTMLDocumentObj {
-    HTMLDocument basedoc;
     DispatchEx dispex;
     IUnknown IUnknown_inner;
+    IDispatchEx IDispatchEx_iface;
     ICustomDoc ICustomDoc_iface;
+    IHTMLDocument2 IHTMLDocument2_iface;
+    IHTMLDocument3 IHTMLDocument3_iface;
+    IHTMLDocument4 IHTMLDocument4_iface;
+    IHTMLDocument5 IHTMLDocument5_iface;
+    IHTMLDocument6 IHTMLDocument6_iface;
+    IHTMLDocument7 IHTMLDocument7_iface;
+    IDocumentSelector IDocumentSelector_iface;
+    IDocumentEvent IDocumentEvent_iface;
+    ISupportErrorInfo ISupportErrorInfo_iface;
+    IProvideMultipleClassInfo IProvideMultipleClassInfo_iface;
+    IMarkupServices IMarkupServices_iface;
+    IMarkupContainer IMarkupContainer_iface;
+    IDisplayServices IDisplayServices_iface;
+    IDocumentRange IDocumentRange_iface;
     IOleDocumentView IOleDocumentView_iface;
     IViewObjectEx IViewObjectEx_iface;
     IPersistMoniker IPersistMoniker_iface;
@@ -709,7 +682,10 @@ struct HTMLDocumentObj {
 
     LONG ref;
 
+    IUnknown *outer_unk;
+    HTMLOuterWindow *window;
     GeckoBrowser *nscontainer;
+    HTMLDocumentNode *doc_node;
 
     IOleClientSite *client;
     IDocHostUIHandler *hostui;
@@ -894,8 +870,22 @@ typedef struct nsDocumentEventListener nsDocumentEventListener;
 
 struct HTMLDocumentNode {
     HTMLDOMNode node;
-    HTMLDocument basedoc;
 
+    IDispatchEx                  IDispatchEx_iface;
+    IHTMLDocument2               IHTMLDocument2_iface;
+    IHTMLDocument3               IHTMLDocument3_iface;
+    IHTMLDocument4               IHTMLDocument4_iface;
+    IHTMLDocument5               IHTMLDocument5_iface;
+    IHTMLDocument6               IHTMLDocument6_iface;
+    IHTMLDocument7               IHTMLDocument7_iface;
+    IDocumentSelector            IDocumentSelector_iface;
+    IDocumentEvent               IDocumentEvent_iface;
+    ISupportErrorInfo            ISupportErrorInfo_iface;
+    IProvideMultipleClassInfo    IProvideMultipleClassInfo_iface;
+    IMarkupServices              IMarkupServices_iface;
+    IMarkupContainer             IMarkupContainer_iface;
+    IDisplayServices             IDisplayServices_iface;
+    IDocumentRange               IDocumentRange_iface;
     IPersistMoniker              IPersistMoniker_iface;
     IPersistFile                 IPersistFile_iface;
     IMonikerProp                 IMonikerProp_iface;
@@ -919,7 +909,9 @@ struct HTMLDocumentNode {
     LONG ref;
 
     ConnectionPointContainer cp_container;
+    HTMLOuterWindow *outer_window;
     HTMLInnerWindow *window;
+    HTMLDocumentObj *doc_obj;
 
     GeckoBrowser *browser;
     struct list browser_entry;
@@ -982,7 +974,6 @@ void HTMLDocument_View_Init(HTMLDocumentObj*) DECLSPEC_HIDDEN;
 void HTMLDocumentObj_Persist_Init(HTMLDocumentObj*) DECLSPEC_HIDDEN;
 void HTMLDocumentObj_Service_Init(HTMLDocumentObj*) DECLSPEC_HIDDEN;
 void HTMLDocumentObj_OleCmd_Init(HTMLDocumentObj*) DECLSPEC_HIDDEN;
-void HTMLDocumentObj_OleObj_Init(HTMLDocumentObj*) DECLSPEC_HIDDEN;
 void TargetContainer_Init(HTMLDocumentObj*) DECLSPEC_HIDDEN;
 
 void HTMLDocumentNode_Persist_Init(HTMLDocumentNode*) DECLSPEC_HIDDEN;
