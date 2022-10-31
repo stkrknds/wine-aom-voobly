@@ -43,6 +43,7 @@ extern "C" {
 #include <processthreadsapi.h>
 #include <synchapi.h>
 #include <threadpoolapiset.h>
+#include <memoryapi.h>
 
   /* Windows Exit Procedure flag values */
 #define	WEP_FREE_DLL        0
@@ -802,6 +803,10 @@ typedef enum _FILE_INFO_BY_HANDLE_CLASS {
     FileIdInfo,
     FileIdExtdDirectoryInfo,
     FileIdExtdDirectoryRestartInfo,
+    FileDispositionInfoEx,
+    FileRenameInfoEx,
+    FileCaseSensitiveInfo,
+    FileNormalizedNameInfo,
     MaximumFileInfoByHandlesClass
 } FILE_INFO_BY_HANDLE_CLASS, *PFILE_INFO_BY_HANDLE_CLASS;
 

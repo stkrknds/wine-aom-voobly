@@ -211,6 +211,7 @@ struct adapter
     LONG refcount;
     struct list entry;
     struct display_device dev;
+    LUID gpu_luid;
     unsigned int id;
     const WCHAR *config_key;
     unsigned int mode_count;
@@ -225,6 +226,7 @@ struct monitor
     HANDLE handle;
     unsigned int id;
     unsigned int flags;
+    unsigned int output_id;
     RECT rc_monitor;
     RECT rc_work;
     BOOL is_clone;
@@ -565,6 +567,17 @@ static int mode_compare(const void *p1, const void *p2)
     return 0;
 }
 
+static unsigned int query_reg_subkey_value( HKEY hkey, const WCHAR *name, unsigned int name_size,
+                                            KEY_VALUE_PARTIAL_INFORMATION *value, unsigned int size )
+{
+    HKEY subkey;
+
+    if (!(subkey = reg_open_key( hkey, name, name_size ))) return 0;
+    size = query_reg_value( subkey, NULL, value, size );
+    NtClose( subkey );
+    return size;
+}
+
 static BOOL read_display_adapter_settings( unsigned int index, struct adapter *info )
 {
     char buffer[4096];
@@ -637,6 +650,14 @@ static BOOL read_display_adapter_settings( unsigned int index, struct adapter *i
     if (!(hkey = reg_open_key( enum_key, value_str, value->DataLength - sizeof(WCHAR) )))
         return FALSE;
 
+    size = query_reg_subkey_value( hkey, devpropkey_gpu_luidW, sizeof(devpropkey_gpu_luidW), value, sizeof(buffer) );
+    if (size != sizeof(info->gpu_luid))
+    {
+        NtClose( hkey );
+        return FALSE;
+    }
+    memcpy( &info->gpu_luid, value->Data, sizeof(info->gpu_luid) );
+
     size = query_reg_value( hkey, hardware_idW, value, sizeof(buffer) );
     NtClose( hkey );
     if (!size || (value->Type != REG_SZ && value->Type != REG_MULTI_SZ))
@@ -644,17 +665,6 @@ static BOOL read_display_adapter_settings( unsigned int index, struct adapter *i
 
     lstrcpyW( info->dev.device_id, value_str );
     return TRUE;
-}
-
-static unsigned int query_reg_subkey_value( HKEY hkey, const WCHAR *name, unsigned int name_size,
-                                            KEY_VALUE_PARTIAL_INFORMATION *value, unsigned int size )
-{
-    HKEY subkey;
-
-    if (!(subkey = reg_open_key( hkey, name, name_size ))) return 0;
-    size = query_reg_value( subkey, NULL, value, size );
-    NtClose( subkey );
-    return size;
 }
 
 static BOOL read_monitor_settings( struct adapter *adapter, DWORD index, struct monitor *monitor )
@@ -704,6 +714,17 @@ static BOOL read_monitor_settings( struct adapter *adapter, DWORD index, struct 
         return FALSE;
     }
     monitor->dev.state_flags = *(const DWORD *)value->Data;
+
+    /* Output ID */
+    size = query_reg_subkey_value( hkey, devpropkey_monitor_output_idW,
+                                   sizeof(devpropkey_monitor_output_idW),
+                                   value, sizeof(buffer) );
+    if (size != sizeof(monitor->output_id))
+    {
+        NtClose( hkey );
+        return FALSE;
+    }
+    monitor->output_id = *(const unsigned int *)value->Data;
 
     /* rc_monitor, WINE_DEVPROPKEY_MONITOR_RCMONITOR */
     size = query_reg_subkey_value( hkey, wine_devpropkey_monitor_rcmonitorW,
@@ -5480,5 +5501,113 @@ ULONG_PTR WINAPI NtUserCallTwoParam( ULONG_PTR arg1, ULONG_PTR arg2, ULONG code 
     default:
         FIXME( "invalid code %u\n", code );
         return 0;
+    }
+}
+
+/***********************************************************************
+ *           NtUserDisplayConfigGetDeviceInfo    (win32u.@)
+ */
+NTSTATUS WINAPI NtUserDisplayConfigGetDeviceInfo( DISPLAYCONFIG_DEVICE_INFO_HEADER *packet )
+{
+    NTSTATUS ret = STATUS_UNSUCCESSFUL;
+
+    TRACE( "packet %p.\n", packet );
+
+    if (!packet || packet->size < sizeof(*packet))
+        return STATUS_UNSUCCESSFUL;
+
+    switch (packet->type)
+    {
+    case DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME:
+    {
+        DISPLAYCONFIG_SOURCE_DEVICE_NAME *source_name = (DISPLAYCONFIG_SOURCE_DEVICE_NAME *)packet;
+        struct adapter *adapter;
+
+        TRACE( "DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME.\n" );
+
+        if (packet->size < sizeof(*source_name))
+            return STATUS_INVALID_PARAMETER;
+
+        if (!lock_display_devices()) return STATUS_UNSUCCESSFUL;
+
+        LIST_FOR_EACH_ENTRY(adapter, &adapters, struct adapter, entry)
+        {
+            if (source_name->header.id != adapter->id) continue;
+            if (memcmp( &source_name->header.adapterId, &adapter->gpu_luid, sizeof(adapter->gpu_luid) )) continue;
+
+            lstrcpyW( source_name->viewGdiDeviceName, adapter->dev.device_name );
+            ret = STATUS_SUCCESS;
+            break;
+        }
+
+        unlock_display_devices();
+        return ret;
+    }
+    case DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME:
+    {
+        DISPLAYCONFIG_TARGET_DEVICE_NAME *target_name = (DISPLAYCONFIG_TARGET_DEVICE_NAME *)packet;
+        char buffer[ARRAY_SIZE(target_name->monitorFriendlyDeviceName)];
+        struct monitor *monitor;
+
+        TRACE( "DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME.\n" );
+
+        if (packet->size < sizeof(*target_name))
+            return STATUS_INVALID_PARAMETER;
+
+        if (!lock_display_devices()) return STATUS_UNSUCCESSFUL;
+
+        memset( &target_name->flags, 0, sizeof(*target_name) - offsetof(DISPLAYCONFIG_TARGET_DEVICE_NAME, flags) );
+
+        LIST_FOR_EACH_ENTRY(monitor, &monitors, struct monitor, entry)
+        {
+            if (target_name->header.id != monitor->output_id) continue;
+            if (memcmp( &target_name->header.adapterId, &monitor->adapter->gpu_luid,
+                        sizeof(monitor->adapter->gpu_luid) ))
+                continue;
+
+            target_name->outputTechnology = DISPLAYCONFIG_OUTPUT_TECHNOLOGY_INTERNAL;
+            /* FIXME: get real monitor name. */
+            snprintf( buffer, ARRAY_SIZE(buffer), "Display%u", monitor->output_id + 1 );
+            asciiz_to_unicode( target_name->monitorFriendlyDeviceName, buffer );
+            lstrcpyW( target_name->monitorDevicePath, monitor->dev.interface_name );
+            ret = STATUS_SUCCESS;
+            break;
+        }
+
+        unlock_display_devices();
+        return ret;
+    }
+    case DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_PREFERRED_MODE:
+    {
+        DISPLAYCONFIG_TARGET_PREFERRED_MODE *preferred_mode = (DISPLAYCONFIG_TARGET_PREFERRED_MODE *)packet;
+
+        FIXME( "DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_PREFERRED_MODE stub.\n" );
+
+        if (packet->size < sizeof(*preferred_mode))
+            return STATUS_INVALID_PARAMETER;
+
+        return STATUS_NOT_SUPPORTED;
+    }
+    case DISPLAYCONFIG_DEVICE_INFO_GET_ADAPTER_NAME:
+    {
+        DISPLAYCONFIG_ADAPTER_NAME *adapter_name = (DISPLAYCONFIG_ADAPTER_NAME *)packet;
+
+        FIXME( "DISPLAYCONFIG_DEVICE_INFO_GET_ADAPTER_NAME stub.\n" );
+
+        if (packet->size < sizeof(*adapter_name))
+            return STATUS_INVALID_PARAMETER;
+
+        return STATUS_NOT_SUPPORTED;
+    }
+    case DISPLAYCONFIG_DEVICE_INFO_SET_TARGET_PERSISTENCE:
+    case DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_BASE_TYPE:
+    case DISPLAYCONFIG_DEVICE_INFO_GET_SUPPORT_VIRTUAL_RESOLUTION:
+    case DISPLAYCONFIG_DEVICE_INFO_SET_SUPPORT_VIRTUAL_RESOLUTION:
+    case DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO:
+    case DISPLAYCONFIG_DEVICE_INFO_SET_ADVANCED_COLOR_STATE:
+    case DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL:
+    default:
+        FIXME( "Unimplemented packet type %u.\n", packet->type );
+        return STATUS_INVALID_PARAMETER;
     }
 }

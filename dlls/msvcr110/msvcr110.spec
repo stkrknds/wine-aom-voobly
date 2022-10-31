@@ -1329,9 +1329,9 @@
 @ cdecl _ismbcgraph(long)
 @ cdecl _ismbcgraph_l(long ptr)
 @ cdecl _ismbchira(long)
-@ stub _ismbchira_l
+@ cdecl _ismbchira_l(long ptr)
 @ cdecl _ismbckata(long)
-@ stub _ismbckata_l
+@ cdecl _ismbckata_l(long ptr)
 @ cdecl _ismbcl0(long)
 @ cdecl _ismbcl0_l(long ptr)
 @ cdecl _ismbcl1(long)
@@ -1426,7 +1426,7 @@
 @ cdecl _makepath_s(ptr long str str str str)
 @ cdecl _malloc_crt(long) malloc
 @ cdecl _mbbtombc(long)
-@ stub _mbbtombc_l
+@ cdecl _mbbtombc_l(long ptr)
 @ cdecl _mbbtype(long long)
 @ cdecl _mbbtype_l(long long ptr)
 # extern _mbcasemap
@@ -1435,19 +1435,19 @@
 @ cdecl _mbccpy_s(ptr long ptr ptr)
 @ cdecl _mbccpy_s_l(ptr long ptr ptr ptr)
 @ cdecl _mbcjistojms(long)
-@ stub _mbcjistojms_l
+@ cdecl _mbcjistojms_l(long ptr)
 @ cdecl _mbcjmstojis(long)
-@ stub _mbcjmstojis_l
+@ cdecl _mbcjmstojis_l(long ptr)
 @ cdecl _mbclen(ptr)
 @ cdecl _mbclen_l(ptr ptr)
 @ cdecl _mbctohira(long)
-@ stub _mbctohira_l
+@ cdecl _mbctohira_l(long ptr)
 @ cdecl _mbctokata(long)
-@ stub _mbctokata_l
+@ cdecl _mbctokata_l(long ptr)
 @ cdecl _mbctolower(long)
 @ cdecl _mbctolower_l(long ptr)
 @ cdecl _mbctombb(long)
-@ stub _mbctombb_l
+@ cdecl _mbctombb_l(long ptr)
 @ cdecl _mbctoupper(long)
 @ cdecl _mbctoupper_l(long ptr)
 @ extern _mbctype MSVCRT_mbctype

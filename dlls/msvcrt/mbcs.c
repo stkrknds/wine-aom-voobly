@@ -528,13 +528,19 @@ unsigned int CDECL _mbctoupper(unsigned int c)
 }
 
 /*********************************************************************
- *		_mbctombb (MSVCRT.@)
+ *		_mbctombb_l (MSVCRT.@)
  */
-unsigned int CDECL _mbctombb(unsigned int c)
+unsigned int CDECL _mbctombb_l(unsigned int c, _locale_t locale)
 {
+    pthreadmbcinfo mbcinfo;
     unsigned int value;
 
-    if(get_mbcinfo()->mbcodepage == 932)
+    if(locale)
+        mbcinfo = locale->mbcinfo;
+    else
+        mbcinfo = get_mbcinfo();
+
+    if(mbcinfo->mbcodepage == 932)
     {
         if(c >= 0x829f && c <= 0x82f1)    /* Hiragana */
             return mbctombb_932_kana[c - 0x829f];
@@ -556,17 +562,32 @@ unsigned int CDECL _mbctombb(unsigned int c)
 }
 
 /*********************************************************************
- *		_mbcjistojms(MSVCRT.@)
+ *		_mbctombb (MSVCRT.@)
+ */
+unsigned int CDECL _mbctombb(unsigned int c)
+{
+    return _mbctombb_l(c, NULL);
+}
+
+/*********************************************************************
+ *		_mbcjistojms_l(MSVCRT.@)
  *
  *		Converts a jis character to sjis.
  *		Based on description from
  *		http://www.slayers.ne.jp/~oouchi/code/jistosjis.html
  */
-unsigned int CDECL _mbcjistojms(unsigned int c)
+unsigned int CDECL _mbcjistojms_l(unsigned int c, _locale_t locale)
 {
+  pthreadmbcinfo mbcinfo;
+
+  if(locale)
+      mbcinfo = locale->mbcinfo;
+  else
+      mbcinfo = get_mbcinfo();
+
   /* Conversion takes place only when codepage is 932.
      In all other cases, c is returned unchanged */
-  if(get_mbcinfo()->mbcodepage == 932)
+  if(mbcinfo->mbcodepage == 932)
   {
     if(HIBYTE(c) >= 0x21 && HIBYTE(c) <= 0x7e &&
        LOBYTE(c) >= 0x21 && LOBYTE(c) <= 0x7e)
@@ -592,17 +613,32 @@ unsigned int CDECL _mbcjistojms(unsigned int c)
 }
 
 /*********************************************************************
- *		_mbcjmstojis(MSVCRT.@)
+ *		_mbcjistojms(MSVCRT.@)
+ */
+unsigned int CDECL _mbcjistojms(unsigned int c)
+{
+    return _mbcjistojms_l(c, NULL);
+}
+
+/*********************************************************************
+ *		_mbcjmstojis_l(MSVCRT.@)
  *
  *		Converts a sjis character to jis.
  */
-unsigned int CDECL _mbcjmstojis(unsigned int c)
+unsigned int CDECL _mbcjmstojis_l(unsigned int c, _locale_t locale)
 {
+  pthreadmbcinfo mbcinfo;
+
+  if(locale)
+      mbcinfo = locale->mbcinfo;
+  else
+      mbcinfo = get_mbcinfo();
+
   /* Conversion takes place only when codepage is 932.
      In all other cases, c is returned unchanged */
-  if(get_mbcinfo()->mbcodepage == 932)
+  if(mbcinfo->mbcodepage == 932)
   {
-    if(_ismbclegal(c) && HIBYTE(c) < 0xf0)
+    if(_ismbclegal_l(c, locale) && HIBYTE(c) < 0xf0)
     {
       if(HIBYTE(c) >= 0xe0)
         c -= 0x4000;
@@ -622,6 +658,14 @@ unsigned int CDECL _mbcjmstojis(unsigned int c)
   }
 
   return c;
+}
+
+/*********************************************************************
+ *		_mbcjmstojis(MSVCRT.@)
+ */
+unsigned int CDECL _mbcjmstojis(unsigned int c)
+{
+    return _mbcjmstojis_l(c, NULL);
 }
 
 /*********************************************************************
@@ -1512,11 +1556,18 @@ unsigned char* CDECL _mbstok(unsigned char *str, const unsigned char *delim)
 }
 
 /*********************************************************************
- *		_mbbtombc(MSVCRT.@)
+ *		_mbbtombc_l(MSVCRT.@)
  */
-unsigned int CDECL _mbbtombc(unsigned int c)
+unsigned int CDECL _mbbtombc_l(unsigned int c, _locale_t locale)
 {
-  if(get_mbcinfo()->mbcodepage == 932)
+  pthreadmbcinfo mbcinfo;
+
+  if(locale)
+      mbcinfo = locale->mbcinfo;
+  else
+      mbcinfo = get_mbcinfo();
+
+  if(mbcinfo->mbcodepage == 932)
   {
     if(c >= 0x20 && c <= 0x7e) {
       if((c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a) || (c >= 0x30 && c <= 0x39))
@@ -1532,6 +1583,14 @@ unsigned int CDECL _mbbtombc(unsigned int c)
     }
   }
   return c;  /* not Japanese or no MB char */
+}
+
+/*********************************************************************
+ *		_mbbtombc(MSVCRT.@)
+ */
+unsigned int CDECL _mbbtombc(unsigned int c)
+{
+    return _mbbtombc_l(c, NULL);
 }
 
 /*********************************************************************
@@ -1730,14 +1789,49 @@ int CDECL _ismbcpunct(unsigned int ch)
 }
 
 /*********************************************************************
+ *		_ismbchira_l(MSVCRT.@)
+ */
+int CDECL _ismbchira_l(unsigned int c, _locale_t locale)
+{
+  pthreadmbcinfo mbcinfo;
+
+  if(locale)
+      mbcinfo = locale->mbcinfo;
+  else
+      mbcinfo = get_mbcinfo();
+
+  if(mbcinfo->mbcodepage == 932)
+  {
+    /* Japanese/Hiragana, CP 932 */
+    return (c >= 0x829f && c <= 0x82f1);
+  }
+  return 0;
+}
+
+/*********************************************************************
  *		_ismbchira(MSVCRT.@)
  */
 int CDECL _ismbchira(unsigned int c)
 {
-  if(get_mbcinfo()->mbcodepage == 932)
+    return _ismbchira_l(c, NULL);
+}
+
+/*********************************************************************
+ *		_ismbckata_l(MSVCRT.@)
+ */
+int CDECL _ismbckata_l(unsigned int c, _locale_t locale)
+{
+  pthreadmbcinfo mbcinfo;
+
+  if(locale)
+      mbcinfo = locale->mbcinfo;
+  else
+      mbcinfo = get_mbcinfo();
+
+  if(mbcinfo->mbcodepage == 932)
   {
-    /* Japanese/Hiragana, CP 932 */
-    return (c >= 0x829f && c <= 0x82f1);
+    /* Japanese/Katakana, CP 932 */
+    return (c >= 0x8340 && c <= 0x8396 && c != 0x837f);
   }
   return 0;
 }
@@ -1747,14 +1841,8 @@ int CDECL _ismbchira(unsigned int c)
  */
 int CDECL _ismbckata(unsigned int c)
 {
-  if(get_mbcinfo()->mbcodepage == 932)
-  {
-    /* Japanese/Katakana, CP 932 */
-    return (c >= 0x8340 && c <= 0x8396 && c != 0x837f);
-  }
-  return 0;
+    return _ismbckata_l(c, NULL);
 }
-
 
 /*********************************************************************
  *		_ismbblead_l(MSVCRT.@)
@@ -2862,27 +2950,44 @@ int CDECL mbsrtowcs_s(size_t *ret, wchar_t *wcstr, size_t len,
 }
 
 /*********************************************************************
- *		_mbctohira (MSVCRT.@)
+ *		_mbctohira_l (MSVCRT.@)
  *
  *              Converts a sjis katakana character to hiragana.
  */
-unsigned int CDECL _mbctohira(unsigned int c)
+unsigned int CDECL _mbctohira_l(unsigned int c, _locale_t locale)
 {
-    if(_ismbckata(c) && c <= 0x8393)
+    if(_ismbckata_l(c, locale) && c <= 0x8393)
         return (c - 0x8340 - (c >= 0x837f ? 1 : 0)) + 0x829f;
     return c;
 }
 
 /*********************************************************************
- *		_mbctokata (MSVCRT.@)
+ *		_mbctohira (MSVCRT.@)
+ */
+unsigned int CDECL _mbctohira(unsigned int c)
+{
+    return _mbctohira_l(c, NULL);
+}
+
+/*********************************************************************
+ *		_mbctokata_l (MSVCRT.@)
  *
  *              Converts a sjis hiragana character to katakana.
  */
-unsigned int CDECL _mbctokata(unsigned int c)
+unsigned int CDECL _mbctokata_l(unsigned int c, _locale_t locale)
 {
-    if(_ismbchira(c))
+    if(_ismbchira_l(c, locale))
         return (c - 0x829f) + 0x8340 + (c >= 0x82de ? 1 : 0);
     return c;
+}
+
+
+/*********************************************************************
+ *		_mbctokata (MSVCRT.@)
+ */
+unsigned int CDECL _mbctokata(unsigned int c)
+{
+    return _mbctokata_l(c, NULL);
 }
 
 /*********************************************************************

@@ -475,9 +475,9 @@
 @ cdecl _ismbcgraph(long)
 @ cdecl _ismbcgraph_l(long ptr)
 @ cdecl _ismbchira(long)
-@ stub _ismbchira_l
+@ cdecl _ismbchira_l(long ptr)
 @ cdecl _ismbckata(long)
-@ stub _ismbckata_l
+@ cdecl _ismbckata_l(long ptr)
 @ cdecl _ismbcl0(long)
 @ cdecl _ismbcl0_l(long ptr)
 @ cdecl _ismbcl1(long)
@@ -584,7 +584,7 @@
 @ cdecl _makepath_s(ptr long str str str str)
 @ cdecl _malloc_base(long)
 @ cdecl _mbbtombc(long)
-@ stub _mbbtombc_l
+@ cdecl _mbbtombc_l(long ptr)
 @ cdecl _mbbtype(long long)
 @ cdecl _mbbtype_l(long long ptr)
 @ stub _mbcasemap
@@ -593,19 +593,19 @@
 @ cdecl _mbccpy_s(ptr long ptr ptr)
 @ cdecl _mbccpy_s_l(ptr long ptr ptr ptr)
 @ cdecl _mbcjistojms(long)
-@ stub _mbcjistojms_l
+@ cdecl _mbcjistojms_l(long ptr)
 @ cdecl _mbcjmstojis(long)
-@ stub _mbcjmstojis_l
+@ cdecl _mbcjmstojis_l(long ptr)
 @ cdecl _mbclen(ptr)
 @ cdecl _mbclen_l(ptr ptr)
 @ cdecl _mbctohira(long)
-@ stub _mbctohira_l
+@ cdecl _mbctohira_l(long ptr)
 @ cdecl _mbctokata(long)
-@ stub _mbctokata_l
+@ cdecl _mbctokata_l(long ptr)
 @ cdecl _mbctolower(long)
 @ cdecl _mbctolower_l(long ptr)
 @ cdecl _mbctombb(long)
-@ stub _mbctombb_l
+@ cdecl _mbctombb_l(long ptr)
 @ cdecl _mbctoupper(long)
 @ cdecl _mbctoupper_l(long ptr)
 @ stub _mblen_l
@@ -1074,9 +1074,9 @@
 @ cdecl _o__ismbcgraph(long) _ismbcgraph
 @ cdecl _o__ismbcgraph_l(long ptr) _ismbcgraph_l
 @ cdecl _o__ismbchira(long) _ismbchira
-@ stub _o__ismbchira_l
+@ cdecl _o__ismbchira_l(long ptr) _ismbchira_l
 @ cdecl _o__ismbckata(long) _ismbckata
-@ stub _o__ismbckata_l
+@ cdecl _o__ismbckata_l(long ptr) _ismbckata_l
 @ cdecl _o__ismbcl0(long) _ismbcl0
 @ cdecl _o__ismbcl0_l(long ptr) _ismbcl0_l
 @ cdecl _o__ismbcl1(long) _ismbcl1
@@ -1155,7 +1155,7 @@
 @ cdecl _o__makepath_s(ptr long str str str str) _makepath_s
 @ cdecl _o__malloc_base(long) _malloc_base
 @ cdecl _o__mbbtombc(long) _mbbtombc
-@ stub _o__mbbtombc_l
+@ cdecl _o__mbbtombc_l(long ptr) _mbbtombc_l
 @ cdecl _o__mbbtype(long long) _mbbtype
 @ cdecl _o__mbbtype_l(long long ptr) _mbbtype_l
 @ cdecl _o__mbccpy(ptr ptr) _mbccpy
@@ -1163,21 +1163,21 @@
 @ cdecl _o__mbccpy_s(ptr long ptr ptr) _mbccpy_s
 @ cdecl _o__mbccpy_s_l(ptr long ptr ptr ptr) _mbccpy_s_l
 @ cdecl _o__mbcjistojms(long) _mbcjistojms
-@ stub _o__mbcjistojms_l
+@ cdecl _o__mbcjistojms_l(long ptr) _mbcjistojms_l
 @ cdecl _o__mbcjmstojis(long) _mbcjmstojis
-@ stub _o__mbcjmstojis_l
+@ cdecl _o__mbcjmstojis_l(long ptr) _mbcjmstojis_l
 @ cdecl _o__mbclen(ptr) _mbclen
 @ cdecl _o__mbclen_l(ptr ptr) _mbclen_l
 @ cdecl _o__mbctohira(long) _mbctohira
-@ stub _o__mbctohira_l
+@ cdecl _o__mbctohira_l(long ptr) _mbctohira_l
 @ cdecl _o__mbctokata(long) _mbctokata
-@ stub _o__mbctokata_l
+@ cdecl _o__mbctokata_l(long ptr) _mbctokata_l
 @ cdecl _o__mbctolower(long) _mbctolower
-@ stub _o__mbctolower_l
+@ cdecl _o__mbctolower_l(long ptr) _mbctolower_l
 @ cdecl _o__mbctombb(long) _mbctombb
-@ stub _o__mbctombb_l
+@ cdecl _o__mbctombb_l(long ptr) _mbctombb_l
 @ cdecl _o__mbctoupper(long) _mbctoupper
-@ stub _o__mbctoupper_l
+@ cdecl _o__mbctoupper_l(long ptr) _mbctoupper_l
 @ stub _o__mblen_l
 @ cdecl _o__mbsbtype(str long) _mbsbtype
 @ stub _o__mbsbtype_l
@@ -1206,7 +1206,7 @@
 @ cdecl _o__mbslwr(str) _mbslwr
 @ stub _o__mbslwr_l
 @ cdecl _o__mbslwr_s(str long) _mbslwr_s
-@ stub _o__mbslwr_s_l
+@ cdecl _o__mbslwr_s_l(str long ptr) _mbslwr_s_l
 @ cdecl _o__mbsnbcat(str str long) _mbsnbcat
 @ stub _o__mbsnbcat_l
 @ cdecl _o__mbsnbcat_s(str long ptr long) _mbsnbcat_s
@@ -1286,7 +1286,7 @@
 @ cdecl _o__mbsupr(str) _mbsupr
 @ stub _o__mbsupr_l
 @ cdecl _o__mbsupr_s(str long) _mbsupr_s
-@ stub _o__mbsupr_s_l
+@ cdecl _o__mbsupr_s_l(str long ptr) _mbsupr_s_l
 @ cdecl _o__mbtowc_l(ptr str long ptr) _mbtowc_l
 @ cdecl _o__memicmp(str str long) _memicmp
 @ cdecl _o__memicmp_l(str str long ptr) _memicmp_l

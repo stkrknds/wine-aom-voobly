@@ -1040,11 +1040,14 @@ static HRESULT WINAPI HTMLDocument_get_vlinkColor(IHTMLDocument2 *iface, VARIANT
 static HRESULT WINAPI HTMLDocument_get_referrer(IHTMLDocument2 *iface, BSTR *p)
 {
     HTMLDocumentNode *This = impl_from_IHTMLDocument2(iface);
+    nsAString nsstr;
+    nsresult nsres;
 
-    FIXME("(%p)->(%p)\n", This, p);
+    TRACE("(%p)->(%p)\n", This, p);
 
-    *p = NULL;
-    return S_OK;
+    nsAString_InitDepend(&nsstr, NULL);
+    nsres = nsIDOMHTMLDocument_GetReferrer(This->nsdoc, &nsstr);
+    return return_nsstr(nsres, &nsstr, p);
 }
 
 static HRESULT WINAPI HTMLDocument_get_location(IHTMLDocument2 *iface, IHTMLLocation **p)
@@ -1245,8 +1248,27 @@ static HRESULT WINAPI HTMLDocument_get_defaultCharset(IHTMLDocument2 *iface, BST
 static HRESULT WINAPI HTMLDocument_get_mimeType(IHTMLDocument2 *iface, BSTR *p)
 {
     HTMLDocumentNode *This = impl_from_IHTMLDocument2(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+    const PRUnichar *content_type;
+    nsAString nsstr;
+    nsresult nsres;
+    HRESULT hres;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    *p = NULL;
+
+    if(This->window && This->window->base.outer_window->readystate == READYSTATE_UNINITIALIZED)
+        return (*p = SysAllocString(L"")) ? S_OK : E_FAIL;
+
+    nsAString_InitDepend(&nsstr, NULL);
+    nsres = nsIDOMHTMLDocument_GetContentType(This->nsdoc, &nsstr);
+    if(NS_FAILED(nsres))
+        return map_nsresult(nsres);
+
+    nsAString_GetData(&nsstr, &content_type);
+    hres = get_mime_type_display_name(content_type, p);
+    nsAString_Finish(&nsstr);
+    return hres;
 }
 
 static HRESULT WINAPI HTMLDocument_get_fileSize(IHTMLDocument2 *iface, BSTR *p)

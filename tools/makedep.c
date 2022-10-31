@@ -157,7 +157,6 @@ static const char *ar;
 static const char *ranlib;
 static const char *rsvg;
 static const char *icotool;
-static const char *dlltool;
 static const char *msgfmt;
 static const char *ln_s;
 static const char *sed_cmd;
@@ -437,19 +436,19 @@ static void output_filenames( struct strarray array )
 /*******************************************************************
  *         output_rm_filenames
  */
-static void output_rm_filenames( struct strarray array )
+static void output_rm_filenames( struct strarray array, const char *command )
 {
     static const unsigned int max_cmdline = 30000;  /* to be on the safe side */
     unsigned int i, len;
 
     if (!array.count) return;
-    output( "\trm -f" );
+    output( "\t%s", command );
     for (i = len = 0; i < array.count; i++)
     {
         if (len > max_cmdline)
         {
             output( "\n" );
-            output( "\trm -f" );
+            output( "\t%s", command );
             len = 0;
         }
         output_filename( array.str[i] );
@@ -2602,6 +2601,30 @@ static int cmp_string_length( const char **a, const char **b )
 }
 
 /*******************************************************************
+ *         get_removable_dirs
+ *
+ * Retrieve a list of directories to try to remove after deleting the files.
+ */
+static struct strarray get_removable_dirs( struct strarray files )
+{
+    struct strarray dirs = empty_strarray;
+    unsigned int i;
+
+    for (i = 0; i < files.count; i++)
+    {
+        char *dir = xstrdup( files.str[i] );
+        while (strchr( dir, '/' ))
+        {
+            *strrchr( dir, '/' ) = 0;
+            strarray_add_uniq( &dirs, xstrdup(dir) );
+        }
+    }
+    strarray_qsort( &dirs, cmp_string_length );
+    return dirs;
+}
+
+
+/*******************************************************************
  *         output_uninstall_rules
  */
 static void output_uninstall_rules( struct makefile *make )
@@ -2609,25 +2632,16 @@ static void output_uninstall_rules( struct makefile *make )
     static const char *dirs_order[] =
         { "$(includedir)", "$(mandir)", "$(fontdir)", "$(nlsdir)", "$(datadir)", "$(dlldir)" };
 
-    struct strarray uninstall_dirs = empty_strarray;
+    struct strarray uninstall_dirs;
     unsigned int i, j;
 
     if (!make->uninstall_files.count) return;
     output( "uninstall::\n" );
-    output_rm_filenames( make->uninstall_files );
+    output_rm_filenames( make->uninstall_files, "rm -f" );
     strarray_add_uniq( &make->phony_targets, "uninstall" );
 
     if (!subdirs.count) return;
-    for (i = 0; i < make->uninstall_files.count; i++)
-    {
-        char *dir = xstrdup( make->uninstall_files.str[i] );
-        while (strchr( dir, '/' ))
-        {
-            *strrchr( dir, '/' ) = 0;
-            strarray_add_uniq( &uninstall_dirs, xstrdup(dir) );
-        }
-    }
-    strarray_qsort( &uninstall_dirs, cmp_string_length );
+    uninstall_dirs = get_removable_dirs( make->uninstall_files );
     output( "\t-rmdir" );
     for (i = 0; i < ARRAY_SIZE(dirs_order); i++)
     {
@@ -3051,14 +3065,15 @@ static void output_source_in( struct makefile *make, struct incl_file *source, c
 static void output_source_spec( struct makefile *make, struct incl_file *source, const char *obj )
 {
     struct strarray imports = get_expanded_file_local_var( make, obj, "IMPORTS" );
-    struct strarray dll_flags = get_expanded_file_local_var( make, obj, "EXTRADLLFLAGS" );
+    struct strarray dll_flags = empty_strarray;
     struct strarray all_libs = empty_strarray, dep_libs = empty_strarray;
     struct strarray default_imports = empty_strarray;
     const char *dll_name, *obj_name, *res_name, *output_file, *debug_file;
     unsigned int arch = make->is_cross ? 1 : 0;
 
     if (!imports.count) imports = make->imports;
-    if (!dll_flags.count) dll_flags = make->extradllflags;
+    strarray_addall( &dll_flags, make->extradllflags );
+    strarray_addall( &dll_flags, get_expanded_file_local_var( make, obj, "EXTRADLLFLAGS" ));
     if (!strarray_exists( &dll_flags, "-nodefaultlibs" )) default_imports = get_default_imports( make, imports );
 
     strarray_addall( &all_libs, add_import_libs( make, &dep_libs, imports, IMPORT_TYPE_DIRECT, arch ) );
@@ -3665,6 +3680,7 @@ static void output_subdirs( struct makefile *make )
     struct strarray clean_files = empty_strarray;
     struct strarray testclean_files = empty_strarray;
     struct strarray distclean_files = empty_strarray;
+    struct strarray distclean_dirs = empty_strarray;
     struct strarray dependencies = empty_strarray;
     struct strarray install_deps[NB_INSTALL_RULES] = { empty_strarray };
     struct strarray tooldeps_deps = empty_strarray;
@@ -3676,12 +3692,16 @@ static void output_subdirs( struct makefile *make )
     for (arch = 0; arch < archs.count; arch++) strarray_addall( &all_targets, make->all_targets[arch] );
     for (i = 0; i < subdirs.count; i++)
     {
+        struct strarray subclean = empty_strarray;
+        strarray_addall( &subclean, get_removable_dirs( submakes[i]->clean_files ));
+        strarray_addall( &subclean, get_removable_dirs( submakes[i]->distclean_files ));
         strarray_add( &makefile_deps, src_dir_path( submakes[i], "Makefile.in" ));
         strarray_addall_uniq( &make->phony_targets, submakes[i]->phony_targets );
         strarray_addall_uniq( &make->uninstall_files, submakes[i]->uninstall_files );
         strarray_addall_uniq( &dependencies, submakes[i]->dependencies );
         strarray_addall_path( &clean_files, submakes[i]->obj_dir, submakes[i]->clean_files );
         strarray_addall_path( &distclean_files, submakes[i]->obj_dir, submakes[i]->distclean_files );
+        strarray_addall_path( &distclean_dirs, submakes[i]->obj_dir, subclean );
         strarray_addall_path( &make->maintainerclean_files, submakes[i]->obj_dir, submakes[i]->maintainerclean_files );
         strarray_addall_path( &testclean_files, submakes[i]->obj_dir, submakes[i]->ok_files );
         strarray_addall_path( &make->pot_files, submakes[i]->obj_dir, submakes[i]->pot_files );
@@ -3741,13 +3761,14 @@ static void output_subdirs( struct makefile *make )
     if (get_expanded_make_variable( make, "GETTEXTPO_LIBS" )) output_po_files( make );
 
     output( "clean::\n");
-    output_rm_filenames( clean_files );
+    output_rm_filenames( clean_files, "rm -f" );
     output( "testclean::\n");
-    output_rm_filenames( testclean_files );
+    output_rm_filenames( testclean_files, "rm -f" );
     output( "distclean::\n");
-    output_rm_filenames( distclean_files );
+    output_rm_filenames( distclean_files, "rm -f" );
+    output_rm_filenames( distclean_dirs, "-rmdir 2>/dev/null" );
     output( "maintainer-clean::\n");
-    output_rm_filenames( make->maintainerclean_files );
+    output_rm_filenames( make->maintainerclean_files, "rm -f" );
     strarray_add_uniq( &make->phony_targets, "distclean" );
     strarray_add_uniq( &make->phony_targets, "testclean" );
     strarray_add_uniq( &make->phony_targets, "maintainer-clean" );
@@ -4480,7 +4501,6 @@ int main( int argc, char *argv[] )
     ranlib             = get_expanded_make_variable( top_makefile, "RANLIB" );
     rsvg               = get_expanded_make_variable( top_makefile, "RSVG" );
     icotool            = get_expanded_make_variable( top_makefile, "ICOTOOL" );
-    dlltool            = get_expanded_make_variable( top_makefile, "DLLTOOL" );
     msgfmt             = get_expanded_make_variable( top_makefile, "MSGFMT" );
     sed_cmd            = get_expanded_make_variable( top_makefile, "SED_CMD" );
     ln_s               = get_expanded_make_variable( top_makefile, "LN_S" );
