@@ -568,6 +568,19 @@ typedef VkCuLaunchInfoNVX VkCuLaunchInfoNVX_host;
 #endif
 
 #if defined(USE_STRUCT_CONVERSION)
+typedef struct VkDecompressMemoryRegionNV_host
+{
+    VkDeviceAddress srcAddress;
+    VkDeviceAddress dstAddress;
+    VkDeviceSize compressedSize;
+    VkDeviceSize decompressedSize;
+    VkMemoryDecompressionMethodFlagsNV decompressionMethod;
+} VkDecompressMemoryRegionNV_host;
+#else
+typedef VkDecompressMemoryRegionNV VkDecompressMemoryRegionNV_host;
+#endif
+
+#if defined(USE_STRUCT_CONVERSION)
 typedef struct VkIndirectCommandsStreamNV_host
 {
     VkBuffer buffer;
@@ -1397,18 +1410,6 @@ typedef VkImageViewHandleInfoNVX VkImageViewHandleInfoNVX_host;
 #endif
 
 #if defined(USE_STRUCT_CONVERSION)
-typedef struct VkMemoryGetWin32HandleInfoKHR_host
-{
-    VkStructureType sType;
-    const void *pNext;
-    VkDeviceMemory memory;
-    VkExternalMemoryHandleTypeFlagBits handleType;
-} VkMemoryGetWin32HandleInfoKHR_host;
-#else
-typedef VkMemoryGetWin32HandleInfoKHR VkMemoryGetWin32HandleInfoKHR_host;
-#endif
-
-#if defined(USE_STRUCT_CONVERSION)
 typedef struct VkMicromapBuildSizesInfoEXT_host
 {
     VkStructureType sType;
@@ -1750,23 +1751,6 @@ typedef VkBindSparseInfo VkBindSparseInfo_host;
 #endif
 
 #if defined(USE_STRUCT_CONVERSION)
-typedef struct VkSubmitInfo_host
-{
-    VkStructureType sType;
-    const void *pNext;
-    uint32_t waitSemaphoreCount;
-    const VkSemaphore *pWaitSemaphores;
-    const VkPipelineStageFlags *pWaitDstStageMask;
-    uint32_t commandBufferCount;
-    const VkCommandBuffer *pCommandBuffers;
-    uint32_t signalSemaphoreCount;
-    const VkSemaphore *pSignalSemaphores;
-} VkSubmitInfo_host;
-#else
-typedef VkSubmitInfo VkSubmitInfo_host;
-#endif
-
-#if defined(USE_STRUCT_CONVERSION)
 typedef struct VkSemaphoreSubmitInfo_host
 {
     VkStructureType sType;
@@ -1779,19 +1763,6 @@ typedef struct VkSemaphoreSubmitInfo_host
 typedef VkSemaphoreSubmitInfo VkSemaphoreSubmitInfoKHR;
 #else
 typedef VkSemaphoreSubmitInfo VkSemaphoreSubmitInfo_host;
-#endif
-
-#if defined(USE_STRUCT_CONVERSION)
-typedef struct VkCommandBufferSubmitInfo_host
-{
-    VkStructureType sType;
-    const void *pNext;
-    VkCommandBuffer commandBuffer;
-    uint32_t deviceMask;
-} VkCommandBufferSubmitInfo_host;
-typedef VkCommandBufferSubmitInfo VkCommandBufferSubmitInfoKHR;
-#else
-typedef VkCommandBufferSubmitInfo VkCommandBufferSubmitInfo_host;
 #endif
 
 #if defined(USE_STRUCT_CONVERSION)
@@ -1935,10 +1906,6 @@ VkResult wine_vkGetPhysicalDeviceImageFormatProperties2KHR(VkPhysicalDevice phys
 VkResult wine_vkGetPhysicalDeviceSurfaceCapabilities2KHR(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceSurfaceInfo2KHR_host *pSurfaceInfo, VkSurfaceCapabilities2KHR *pSurfaceCapabilities) DECLSPEC_HIDDEN;
 VkResult wine_vkGetPhysicalDeviceSurfaceCapabilitiesKHR(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, VkSurfaceCapabilitiesKHR *pSurfaceCapabilities) DECLSPEC_HIDDEN;
 
-struct conversion_context;
-VkResult convert_VkDeviceCreateInfo_struct_chain(struct conversion_context *ctx, const void *pNext, VkDeviceCreateInfo *out_struct) DECLSPEC_HIDDEN;
-VkResult convert_VkInstanceCreateInfo_struct_chain(struct conversion_context *ctx, const void *pNext, VkInstanceCreateInfo *out_struct) DECLSPEC_HIDDEN;
-
 /* For use by vkDevice and children */
 struct vulkan_device_funcs
 {
@@ -2005,7 +1972,9 @@ struct vulkan_device_funcs
     void (*p_vkCmdCopyImageToBuffer)(VkCommandBuffer, VkImage, VkImageLayout, VkBuffer, uint32_t, const VkBufferImageCopy_host *);
     void (*p_vkCmdCopyImageToBuffer2)(VkCommandBuffer, const VkCopyImageToBufferInfo2_host *);
     void (*p_vkCmdCopyImageToBuffer2KHR)(VkCommandBuffer, const VkCopyImageToBufferInfo2_host *);
+    void (*p_vkCmdCopyMemoryIndirectNV)(VkCommandBuffer, VkDeviceAddress, uint32_t, uint32_t);
     void (*p_vkCmdCopyMemoryToAccelerationStructureKHR)(VkCommandBuffer, const VkCopyMemoryToAccelerationStructureInfoKHR_host *);
+    void (*p_vkCmdCopyMemoryToImageIndirectNV)(VkCommandBuffer, VkDeviceAddress, uint32_t, uint32_t, VkImage, VkImageLayout, const VkImageSubresourceLayers *);
     void (*p_vkCmdCopyMemoryToMicromapEXT)(VkCommandBuffer, const VkCopyMemoryToMicromapInfoEXT_host *);
     void (*p_vkCmdCopyMicromapEXT)(VkCommandBuffer, const VkCopyMicromapInfoEXT_host *);
     void (*p_vkCmdCopyMicromapToMemoryEXT)(VkCommandBuffer, const VkCopyMicromapToMemoryInfoEXT_host *);
@@ -2014,6 +1983,8 @@ struct vulkan_device_funcs
     void (*p_vkCmdDebugMarkerBeginEXT)(VkCommandBuffer, const VkDebugMarkerMarkerInfoEXT *);
     void (*p_vkCmdDebugMarkerEndEXT)(VkCommandBuffer);
     void (*p_vkCmdDebugMarkerInsertEXT)(VkCommandBuffer, const VkDebugMarkerMarkerInfoEXT *);
+    void (*p_vkCmdDecompressMemoryIndirectCountNV)(VkCommandBuffer, VkDeviceAddress, VkDeviceAddress, uint32_t);
+    void (*p_vkCmdDecompressMemoryNV)(VkCommandBuffer, uint32_t, const VkDecompressMemoryRegionNV_host *);
     void (*p_vkCmdDispatch)(VkCommandBuffer, uint32_t, uint32_t, uint32_t);
     void (*p_vkCmdDispatchBase)(VkCommandBuffer, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
     void (*p_vkCmdDispatchBaseKHR)(VkCommandBuffer, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
@@ -2321,8 +2292,6 @@ struct vulkan_device_funcs
     VkResult (*p_vkGetImageViewAddressNVX)(VkDevice, VkImageView, VkImageViewAddressPropertiesNVX_host *);
     uint32_t (*p_vkGetImageViewHandleNVX)(VkDevice, const VkImageViewHandleInfoNVX_host *);
     VkResult (*p_vkGetMemoryHostPointerPropertiesEXT)(VkDevice, VkExternalMemoryHandleTypeFlagBits, const void *, VkMemoryHostPointerPropertiesEXT *);
-    VkResult (*p_vkGetMemoryWin32HandleKHR)(VkDevice, const VkMemoryGetWin32HandleInfoKHR_host *, HANDLE *);
-    VkResult (*p_vkGetMemoryWin32HandlePropertiesKHR)(VkDevice, VkExternalMemoryHandleTypeFlagBits, HANDLE, VkMemoryWin32HandlePropertiesKHR *);
     void (*p_vkGetMicromapBuildSizesEXT)(VkDevice, VkAccelerationStructureBuildTypeKHR, const VkMicromapBuildInfoEXT_host *, VkMicromapBuildSizesInfoEXT_host *);
     VkResult (*p_vkGetPerformanceParameterINTEL)(VkDevice, VkPerformanceParameterTypeINTEL, VkPerformanceValueINTEL *);
     VkResult (*p_vkGetPipelineCacheData)(VkDevice, VkPipelineCache, size_t *, void *);
@@ -2516,7 +2485,9 @@ struct vulkan_instance_funcs
     USE_VK_FUNC(vkCmdCopyImageToBuffer) \
     USE_VK_FUNC(vkCmdCopyImageToBuffer2) \
     USE_VK_FUNC(vkCmdCopyImageToBuffer2KHR) \
+    USE_VK_FUNC(vkCmdCopyMemoryIndirectNV) \
     USE_VK_FUNC(vkCmdCopyMemoryToAccelerationStructureKHR) \
+    USE_VK_FUNC(vkCmdCopyMemoryToImageIndirectNV) \
     USE_VK_FUNC(vkCmdCopyMemoryToMicromapEXT) \
     USE_VK_FUNC(vkCmdCopyMicromapEXT) \
     USE_VK_FUNC(vkCmdCopyMicromapToMemoryEXT) \
@@ -2525,6 +2496,8 @@ struct vulkan_instance_funcs
     USE_VK_FUNC(vkCmdDebugMarkerBeginEXT) \
     USE_VK_FUNC(vkCmdDebugMarkerEndEXT) \
     USE_VK_FUNC(vkCmdDebugMarkerInsertEXT) \
+    USE_VK_FUNC(vkCmdDecompressMemoryIndirectCountNV) \
+    USE_VK_FUNC(vkCmdDecompressMemoryNV) \
     USE_VK_FUNC(vkCmdDispatch) \
     USE_VK_FUNC(vkCmdDispatchBase) \
     USE_VK_FUNC(vkCmdDispatchBaseKHR) \
@@ -2832,8 +2805,6 @@ struct vulkan_instance_funcs
     USE_VK_FUNC(vkGetImageViewAddressNVX) \
     USE_VK_FUNC(vkGetImageViewHandleNVX) \
     USE_VK_FUNC(vkGetMemoryHostPointerPropertiesEXT) \
-    USE_VK_FUNC(vkGetMemoryWin32HandleKHR) \
-    USE_VK_FUNC(vkGetMemoryWin32HandlePropertiesKHR) \
     USE_VK_FUNC(vkGetMicromapBuildSizesEXT) \
     USE_VK_FUNC(vkGetPerformanceParameterINTEL) \
     USE_VK_FUNC(vkGetPipelineCacheData) \
