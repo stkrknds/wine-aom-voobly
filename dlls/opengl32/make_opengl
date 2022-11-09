@@ -161,9 +161,6 @@ my %manual_win_functions =
     );
 my %manual_win_thunks =
     (
-     "glGetIntegerv" => 1,
-     "glGetString" => 1,
-     "glGetStringi" => 1,
      "wglGetCurrentReadDCARB" => 1,
      "wglGetPixelFormat" => 1,
      "wglGetProcAddress" => 1,
@@ -511,7 +508,7 @@ sub needs_wrapper($$)
 {
     my ($name, $func) = @_;
 
-    return 1 if $name =~ /^glDebugMessageCallback/;
+    return 1 if $name =~ /^glDebugMessageCallback|^glGetString|^glGetIntegerv|^wglGetProcAddress/;
 
     # check if return value needs special handling
     (my $type = $func->[0]->textContent()) =~ s/ $//;
@@ -904,15 +901,11 @@ foreach (sort keys %ext_functions)
     printf OUT "extern %s WINAPI %s(%s) DECLSPEC_HIDDEN;\n", $func_ret, $_, $decl_args;
 }
 
-# Then the table giving the string <-> function correspondence */
-my $count = keys %ext_functions;
-print OUT "\nconst int extension_registry_size = $count;\n";
-print OUT "const OpenGL_extension extension_registry[$count] =\n";
+print OUT "const void *extension_procs[] =\n";
 print OUT "{\n";
 foreach (sort keys %ext_functions)
 {
-    my $func = $ext_functions{$_};
-    printf OUT "    { \"%s\", \"%s\", %s },\n", $_, join(" ", sort @{$func->[2]}), $_;
+    printf OUT "    %s,\n", $_;
 }
 print OUT "};\n";
 
@@ -942,6 +935,12 @@ foreach (sort keys %wgl_functions)
     next unless needs_wrapper( $_, $wgl_functions{$_} );
     print OUT "extern NTSTATUS wgl_$_( void *args ) DECLSPEC_HIDDEN;\n";
 }
+foreach (sort keys %norm_functions)
+{
+    next if defined $manual_win_functions{$_};
+    next unless needs_wrapper( $_, $norm_functions{$_} );
+    print OUT "extern NTSTATUS gl_$_( void *args ) DECLSPEC_HIDDEN;\n";
+}
 foreach (sort keys %ext_functions)
 {
     next if defined $manual_win_functions{$_};
@@ -959,6 +958,7 @@ foreach (sort keys %wgl_functions)
 foreach (sort keys %norm_functions)
 {
     next if defined $manual_win_functions{$_};
+    next if needs_wrapper( $_, $norm_functions{$_} );
     print OUT generate_unix_thunk($_, $norm_functions{$_}, "gl");
 }
 foreach (sort keys %ext_functions)
@@ -1028,6 +1028,18 @@ foreach (sort keys %ext_functions)
     print OUT "        null_$_,\n";
 }
 print OUT "    },\n";
+print OUT "};\n";
+
+# Then the table giving the string <-> function correspondence */
+my $count = keys %ext_functions;
+print OUT "\nconst int extension_registry_size = $count;\n";
+print OUT "const struct registry_entry extension_registry[$count] =\n";
+print OUT "{\n";
+foreach (sort keys %ext_functions)
+{
+    my $func = $ext_functions{$_};
+    printf OUT "    { \"%s\", \"%s\" },\n", $_, join(" ", sort @{$func->[2]});
+}
 print OUT "};\n";
 
 close OUT;

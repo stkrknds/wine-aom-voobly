@@ -30,14 +30,15 @@
 #include "wine/wgl.h"
 #include "wine/wgl_driver.h"
 
-typedef struct {
-  const char  *name;     /* name of the extension */
-  const char  *extension; /* name of the GL/WGL extension */
-  void  *func;     /* pointer to the Wine function for this extension */
-} OpenGL_extension;
+struct registry_entry
+{
+    const char *name;     /* name of the extension */
+    const char *extension; /* name of the GL/WGL extension */
+};
 
-extern const OpenGL_extension extension_registry[] DECLSPEC_HIDDEN;
+extern const struct registry_entry extension_registry[] DECLSPEC_HIDDEN;
 extern const int extension_registry_size DECLSPEC_HIDDEN;
+extern const void *extension_procs[] DECLSPEC_HIDDEN;
 extern struct opengl_funcs null_opengl_funcs DECLSPEC_HIDDEN;
 
 static inline struct opengl_funcs *get_dc_funcs( HDC hdc )
@@ -91,12 +92,6 @@ static inline struct wgl_handle *get_current_context_ptr(void)
 {
     if (!NtCurrentTeb()->glCurrentRC) return NULL;
     return &wgl_handles[LOWORD(NtCurrentTeb()->glCurrentRC) & ~HANDLE_TYPE_MASK];
-}
-
-static inline enum wgl_handle_type get_current_context_type(void)
-{
-    if (!NtCurrentTeb()->glCurrentRC) return HANDLE_CONTEXT;
-    return LOWORD(NtCurrentTeb()->glCurrentRC) & HANDLE_TYPE_MASK;
 }
 
 extern int WINAPI wglDescribePixelFormat( HDC hdc, int ipfd, UINT cjpfd, PIXELFORMATDESCRIPTOR *ppfd );
