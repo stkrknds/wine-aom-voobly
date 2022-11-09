@@ -30,17 +30,12 @@
 #include "winreg.h"
 #include "ntuser.h"
 
-#include "opengl_ext.h"
-
 #include "unixlib.h"
+#include "unix_private.h"
 
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(wgl);
-
-struct wgl_handle wgl_handles[MAX_WGL_HANDLES];
-static struct wgl_handle *next_free;
-static unsigned int handle_count;
 
 static CRITICAL_SECTION wgl_section;
 static CRITICAL_SECTION_DEBUG critsect_debug =
@@ -50,6 +45,50 @@ static CRITICAL_SECTION_DEBUG critsect_debug =
       0, 0, { (DWORD_PTR)(__FILE__ ": wgl_section") }
 };
 static CRITICAL_SECTION wgl_section = { &critsect_debug, -1, 0, 0, 0, 0 };
+
+/* handle management */
+
+enum wgl_handle_type
+{
+    HANDLE_PBUFFER = 0 << 12,
+    HANDLE_CONTEXT = 1 << 12,
+    HANDLE_CONTEXT_V3 = 3 << 12,
+    HANDLE_TYPE_MASK = 15 << 12
+};
+
+struct opengl_context
+{
+    DWORD tid;                   /* thread that the context is current in */
+    void (CALLBACK *debug_callback)( GLenum, GLenum, GLuint, GLenum, GLsizei, const GLchar *, const void * ); /* debug callback */
+    const void *debug_user;      /* debug user parameter */
+    GLubyte *extensions;         /* extension string */
+    GLuint *disabled_exts;       /* indices of disabled extensions */
+    struct wgl_context *drv_ctx; /* driver context */
+};
+
+struct wgl_handle
+{
+    UINT handle;
+    struct opengl_funcs *funcs;
+    union
+    {
+        struct opengl_context *context; /* for HANDLE_CONTEXT */
+        struct wgl_pbuffer *pbuffer;    /* for HANDLE_PBUFFER */
+        struct wgl_handle *next;        /* for free handles */
+    } u;
+};
+
+#define MAX_WGL_HANDLES 1024
+static struct wgl_handle wgl_handles[MAX_WGL_HANDLES];
+static struct wgl_handle *next_free;
+static unsigned int handle_count;
+
+/* the current context is assumed valid and doesn't need locking */
+static inline struct wgl_handle *get_current_context_ptr(void)
+{
+    if (!NtCurrentTeb()->glCurrentRC) return NULL;
+    return &wgl_handles[LOWORD(NtCurrentTeb()->glCurrentRC) & ~HANDLE_TYPE_MASK];
+}
 
 static inline HANDLE next_handle( struct wgl_handle *ptr, enum wgl_handle_type type )
 {
@@ -63,18 +102,11 @@ static struct wgl_handle *get_handle_ptr( HANDLE handle, enum wgl_handle_type ty
 {
     unsigned int index = LOWORD( handle ) & ~HANDLE_TYPE_MASK;
 
-    EnterCriticalSection( &wgl_section );
     if (index < handle_count && ULongToHandle(wgl_handles[index].handle) == handle)
         return &wgl_handles[index];
 
-    LeaveCriticalSection( &wgl_section );
     SetLastError( ERROR_INVALID_HANDLE );
     return NULL;
-}
-
-static void release_handle_ptr( struct wgl_handle *ptr )
-{
-    if (ptr) LeaveCriticalSection( &wgl_section );
 }
 
 static HANDLE alloc_handle( enum wgl_handle_type type, struct opengl_funcs *funcs, void *user_ptr )
@@ -82,7 +114,6 @@ static HANDLE alloc_handle( enum wgl_handle_type type, struct opengl_funcs *func
     HANDLE handle = 0;
     struct wgl_handle *ptr = NULL;
 
-    EnterCriticalSection( &wgl_section );
     if ((ptr = next_free))
         next_free = next_free->u.next;
     else if (handle_count < MAX_WGL_HANDLES)
@@ -95,7 +126,6 @@ static HANDLE alloc_handle( enum wgl_handle_type type, struct opengl_funcs *func
         handle = next_handle( ptr, type );
     }
     else SetLastError( ERROR_NOT_ENOUGH_MEMORY );
-    LeaveCriticalSection( &wgl_section );
     return handle;
 }
 
@@ -105,7 +135,6 @@ static void free_handle_ptr( struct wgl_handle *ptr )
     ptr->u.next = next_free;
     ptr->funcs = NULL;
     next_free = ptr;
-    LeaveCriticalSection( &wgl_section );
 }
 
 /* check if the extension is present in the list */
@@ -194,6 +223,77 @@ static GLuint *filter_extensions_index( const char *disabled )
     return disabled_index;
 }
 
+static inline void ascii_to_unicode( WCHAR *dst, const char *src, size_t len )
+{
+    while (len--) *dst++ = (unsigned char)*src++;
+}
+
+static inline UINT asciiz_to_unicode( WCHAR *dst, const char *src )
+{
+    WCHAR *p = dst;
+    while ((*p++ = *src++));
+    return (p - dst) * sizeof(WCHAR);
+}
+
+static HKEY reg_open_key( HKEY root, const WCHAR *name, ULONG name_len )
+{
+    UNICODE_STRING nameW = { name_len, name_len, (WCHAR *)name };
+    OBJECT_ATTRIBUTES attr;
+    HANDLE ret;
+
+    attr.Length = sizeof(attr);
+    attr.RootDirectory = root;
+    attr.ObjectName = &nameW;
+    attr.Attributes = 0;
+    attr.SecurityDescriptor = NULL;
+    attr.SecurityQualityOfService = NULL;
+
+    return NtOpenKeyEx( &ret, MAXIMUM_ALLOWED, &attr, 0 ) ? 0 : ret;
+}
+
+static HKEY open_hkcu_key( const char *name )
+{
+    WCHAR bufferW[256];
+    static HKEY hkcu;
+
+    if (!hkcu)
+    {
+        char buffer[256];
+        DWORD_PTR sid_data[(sizeof(TOKEN_USER) + SECURITY_MAX_SID_SIZE) / sizeof(DWORD_PTR)];
+        DWORD i, len = sizeof(sid_data);
+        SID *sid;
+
+        if (NtQueryInformationToken( GetCurrentThreadEffectiveToken(), TokenUser, sid_data, len, &len ))
+            return 0;
+
+        sid = ((TOKEN_USER *)sid_data)->User.Sid;
+        len = sprintf( buffer, "\\Registry\\User\\S-%u-%u", sid->Revision,
+                       MAKELONG( MAKEWORD( sid->IdentifierAuthority.Value[5],
+                                           sid->IdentifierAuthority.Value[4] ),
+                                 MAKEWORD( sid->IdentifierAuthority.Value[3],
+                                           sid->IdentifierAuthority.Value[2] )));
+        for (i = 0; i < sid->SubAuthorityCount; i++)
+            len += sprintf( buffer + len, "-%u", sid->SubAuthority[i] );
+
+        ascii_to_unicode( bufferW, buffer, len );
+        hkcu = reg_open_key( NULL, bufferW, len * sizeof(WCHAR) );
+    }
+
+    return reg_open_key( hkcu, bufferW, asciiz_to_unicode( bufferW, name ) - sizeof(WCHAR) );
+}
+
+static ULONG query_reg_value( HKEY hkey, const WCHAR *name, KEY_VALUE_PARTIAL_INFORMATION *info, ULONG size )
+{
+    unsigned int name_size = name ? lstrlenW( name ) * sizeof(WCHAR) : 0;
+    UNICODE_STRING nameW = { name_size, name_size, (WCHAR *)name };
+
+    if (NtQueryValueKey( hkey, &nameW, KeyValuePartialInformation,
+                         info, size, &size ))
+        return 0;
+
+    return size - FIELD_OFFSET(KEY_VALUE_PARTIAL_INFORMATION, Data);
+}
+
 static char *heap_strdup( const char *str )
 {
     int len = strlen( str ) + 1;
@@ -209,19 +309,18 @@ static BOOL filter_extensions( const char *extensions, GLubyte **exts_list, GLui
 
     if (!disabled)
     {
-        HKEY hkey;
-        DWORD size;
         char *str = NULL;
+        HKEY hkey;
 
         /* @@ Wine registry key: HKCU\Software\Wine\OpenGL */
-        if (!RegOpenKeyA( HKEY_CURRENT_USER, "Software\\Wine\\OpenGL", &hkey ))
+        if ((hkey = open_hkcu_key( "Software\\Wine\\OpenGL" )))
         {
-            if (!RegQueryValueExA( hkey, "DisabledExtensions", 0, NULL, NULL, &size ))
-            {
-                str = HeapAlloc( GetProcessHeap(), 0, size );
-                if (RegQueryValueExA( hkey, "DisabledExtensions", 0, NULL, (BYTE *)str, &size )) *str = 0;
-            }
-            RegCloseKey( hkey );
+            char buffer[4096];
+            KEY_VALUE_PARTIAL_INFORMATION *value = (void *)buffer;
+            static WCHAR disabled_extensionsW[] = {'D','i','s','a','b','l','e','d','E','x','t','e','n','s','i','o','n','s',0};
+
+            if (query_reg_value( hkey, disabled_extensionsW, value, sizeof(buffer) )) str = heap_strdup( buffer );
+            NtClose( hkey );
         }
         if (str)
         {
@@ -459,8 +558,6 @@ static BOOL wrap_wglCopyContext( HGLRC hglrcSrc, HGLRC hglrcDst, UINT mask )
         if (src->funcs != dst->funcs) SetLastError( ERROR_INVALID_HANDLE );
         else ret = src->funcs->wgl.p_wglCopyContext( src->u.context->drv_ctx, dst->u.context->drv_ctx, mask );
     }
-    release_handle_ptr( dst );
-    release_handle_ptr( src );
     return ret;
 }
 
@@ -483,27 +580,6 @@ static HGLRC wrap_wglCreateContext( HDC hdc )
     return ret;
 }
 
-static BOOL wrap_wglDeleteContext( HGLRC hglrc )
-{
-    struct wgl_handle *ptr = get_handle_ptr( hglrc, HANDLE_CONTEXT );
-
-    if (!ptr) return FALSE;
-
-    if (ptr->u.context->tid && ptr->u.context->tid != GetCurrentThreadId())
-    {
-        SetLastError( ERROR_BUSY );
-        release_handle_ptr( ptr );
-        return FALSE;
-    }
-    if (hglrc == NtCurrentTeb()->glCurrentRC) wglMakeCurrent( 0, 0 );
-    ptr->funcs->wgl.p_wglDeleteContext( ptr->u.context->drv_ctx );
-    HeapFree( GetProcessHeap(), 0, ptr->u.context->disabled_exts );
-    HeapFree( GetProcessHeap(), 0, ptr->u.context->extensions );
-    HeapFree( GetProcessHeap(), 0, ptr->u.context );
-    free_handle_ptr( ptr );
-    return TRUE;
-}
-
 static BOOL wrap_wglMakeCurrent( HDC hdc, HGLRC hglrc )
 {
     BOOL ret = TRUE;
@@ -519,8 +595,8 @@ static BOOL wrap_wglMakeCurrent( HDC hdc, HGLRC hglrc )
             {
                 if (prev) prev->u.context->tid = 0;
                 ptr->u.context->tid = GetCurrentThreadId();
-                ptr->u.context->draw_dc = hdc;
-                ptr->u.context->read_dc = hdc;
+                NtCurrentTeb()->glReserved1[0] = hdc;
+                NtCurrentTeb()->glReserved1[1] = hdc;
                 NtCurrentTeb()->glCurrentRC = hglrc;
                 NtCurrentTeb()->glTable = ptr->funcs;
             }
@@ -530,7 +606,6 @@ static BOOL wrap_wglMakeCurrent( HDC hdc, HGLRC hglrc )
             SetLastError( ERROR_BUSY );
             ret = FALSE;
         }
-        release_handle_ptr( ptr );
     }
     else if (prev)
     {
@@ -547,6 +622,25 @@ static BOOL wrap_wglMakeCurrent( HDC hdc, HGLRC hglrc )
     return ret;
 }
 
+static BOOL wrap_wglDeleteContext( HGLRC hglrc )
+{
+    struct wgl_handle *ptr;
+
+    if (!(ptr = get_handle_ptr( hglrc, HANDLE_CONTEXT ))) return FALSE;
+    if (ptr->u.context->tid && ptr->u.context->tid != GetCurrentThreadId())
+    {
+        SetLastError( ERROR_BUSY );
+        return FALSE;
+    }
+    if (hglrc == NtCurrentTeb()->glCurrentRC) wrap_wglMakeCurrent( 0, 0 );
+    ptr->funcs->wgl.p_wglDeleteContext( ptr->u.context->drv_ctx );
+    HeapFree( GetProcessHeap(), 0, ptr->u.context->disabled_exts );
+    HeapFree( GetProcessHeap(), 0, ptr->u.context->extensions );
+    HeapFree( GetProcessHeap(), 0, ptr->u.context );
+    free_handle_ptr( ptr );
+    return TRUE;
+}
+
 static BOOL wrap_wglShareLists( HGLRC hglrcSrc, HGLRC hglrcDst )
 {
     BOOL ret = FALSE;
@@ -558,20 +652,14 @@ static BOOL wrap_wglShareLists( HGLRC hglrcSrc, HGLRC hglrcDst )
         if (src->funcs != dst->funcs) SetLastError( ERROR_INVALID_HANDLE );
         else ret = src->funcs->wgl.p_wglShareLists( src->u.context->drv_ctx, dst->u.context->drv_ctx );
     }
-    release_handle_ptr( dst );
-    release_handle_ptr( src );
     return ret;
 }
 
 static BOOL wrap_wglBindTexImageARB( HPBUFFERARB handle, int buffer )
 {
-    struct wgl_handle *ptr = get_handle_ptr( handle, HANDLE_PBUFFER );
-    BOOL ret;
-
-    if (!ptr) return FALSE;
-    ret = ptr->funcs->ext.p_wglBindTexImageARB( ptr->u.pbuffer, buffer );
-    release_handle_ptr( ptr );
-    return ret;
+    struct wgl_handle *ptr;
+    if (!(ptr = get_handle_ptr( handle, HANDLE_PBUFFER ))) return FALSE;
+    return ptr->funcs->ext.p_wglBindTexImageARB( ptr->u.pbuffer, buffer );
 }
 
 static HGLRC wrap_wglCreateContextAttribsARB( HDC hdc, HGLRC share, const int *attribs )
@@ -618,7 +706,6 @@ static HGLRC wrap_wglCreateContextAttribsARB( HDC hdc, HGLRC share, const int *a
         if (!ret) funcs->wgl.p_wglDeleteContext( drv_ctx );
     }
 
-    release_handle_ptr( share_ptr );
     return ret;
 }
 
@@ -637,9 +724,9 @@ static HPBUFFERARB wrap_wglCreatePbufferARB( HDC hdc, int format, int width, int
 
 static BOOL wrap_wglDestroyPbufferARB( HPBUFFERARB handle )
 {
-    struct wgl_handle *ptr = get_handle_ptr( handle, HANDLE_PBUFFER );
+    struct wgl_handle *ptr;
 
-    if (!ptr) return FALSE;
+    if (!(ptr = get_handle_ptr( handle, HANDLE_PBUFFER ))) return FALSE;
     ptr->funcs->ext.p_wglDestroyPbufferARB( ptr->u.pbuffer );
     free_handle_ptr( ptr );
     return TRUE;
@@ -647,13 +734,9 @@ static BOOL wrap_wglDestroyPbufferARB( HPBUFFERARB handle )
 
 static HDC wrap_wglGetPbufferDCARB( HPBUFFERARB handle )
 {
-    struct wgl_handle *ptr = get_handle_ptr( handle, HANDLE_PBUFFER );
-    HDC ret;
-
-    if (!ptr) return 0;
-    ret = ptr->funcs->ext.p_wglGetPbufferDCARB( ptr->u.pbuffer );
-    release_handle_ptr( ptr );
-    return ret;
+    struct wgl_handle *ptr;
+    if (!(ptr = get_handle_ptr( handle, HANDLE_PBUFFER ))) return 0;
+    return ptr->funcs->ext.p_wglGetPbufferDCARB( ptr->u.pbuffer );
 }
 
 static BOOL wrap_wglMakeContextCurrentARB( HDC draw_hdc, HDC read_hdc, HGLRC hglrc )
@@ -672,8 +755,8 @@ static BOOL wrap_wglMakeContextCurrentARB( HDC draw_hdc, HDC read_hdc, HGLRC hgl
             {
                 if (prev) prev->u.context->tid = 0;
                 ptr->u.context->tid = GetCurrentThreadId();
-                ptr->u.context->draw_dc = draw_hdc;
-                ptr->u.context->read_dc = read_hdc;
+                NtCurrentTeb()->glReserved1[0] = draw_hdc;
+                NtCurrentTeb()->glReserved1[1] = read_hdc;
                 NtCurrentTeb()->glCurrentRC = hglrc;
                 NtCurrentTeb()->glTable = ptr->funcs;
             }
@@ -683,7 +766,6 @@ static BOOL wrap_wglMakeContextCurrentARB( HDC draw_hdc, HDC read_hdc, HGLRC hgl
             SetLastError( ERROR_BUSY );
             ret = FALSE;
         }
-        release_handle_ptr( ptr );
     }
     else if (prev)
     {
@@ -697,46 +779,30 @@ static BOOL wrap_wglMakeContextCurrentARB( HDC draw_hdc, HDC read_hdc, HGLRC hgl
 
 static BOOL wrap_wglQueryPbufferARB( HPBUFFERARB handle, int attrib, int *value )
 {
-    struct wgl_handle *ptr = get_handle_ptr( handle, HANDLE_PBUFFER );
-    BOOL ret;
-
-    if (!ptr) return FALSE;
-    ret = ptr->funcs->ext.p_wglQueryPbufferARB( ptr->u.pbuffer, attrib, value );
-    release_handle_ptr( ptr );
-    return ret;
+    struct wgl_handle *ptr;
+    if (!(ptr = get_handle_ptr( handle, HANDLE_PBUFFER ))) return FALSE;
+    return ptr->funcs->ext.p_wglQueryPbufferARB( ptr->u.pbuffer, attrib, value );
 }
 
 static int wrap_wglReleasePbufferDCARB( HPBUFFERARB handle, HDC hdc )
 {
-    struct wgl_handle *ptr = get_handle_ptr( handle, HANDLE_PBUFFER );
-    BOOL ret;
-
-    if (!ptr) return FALSE;
-    ret = ptr->funcs->ext.p_wglReleasePbufferDCARB( ptr->u.pbuffer, hdc );
-    release_handle_ptr( ptr );
-    return ret;
+    struct wgl_handle *ptr;
+    if (!(ptr = get_handle_ptr( handle, HANDLE_PBUFFER ))) return FALSE;
+    return ptr->funcs->ext.p_wglReleasePbufferDCARB( ptr->u.pbuffer, hdc );
 }
 
 static BOOL wrap_wglReleaseTexImageARB( HPBUFFERARB handle, int buffer )
 {
-    struct wgl_handle *ptr = get_handle_ptr( handle, HANDLE_PBUFFER );
-    BOOL ret;
-
-    if (!ptr) return FALSE;
-    ret = ptr->funcs->ext.p_wglReleaseTexImageARB( ptr->u.pbuffer, buffer );
-    release_handle_ptr( ptr );
-    return ret;
+    struct wgl_handle *ptr;
+    if (!(ptr = get_handle_ptr( handle, HANDLE_PBUFFER ))) return FALSE;
+    return ptr->funcs->ext.p_wglReleaseTexImageARB( ptr->u.pbuffer, buffer );
 }
 
 static BOOL wrap_wglSetPbufferAttribARB( HPBUFFERARB handle, const int *attribs )
 {
-    struct wgl_handle *ptr = get_handle_ptr( handle, HANDLE_PBUFFER );
-    BOOL ret;
-
-    if (!ptr) return FALSE;
-    ret = ptr->funcs->ext.p_wglSetPbufferAttribARB( ptr->u.pbuffer, attribs );
-    release_handle_ptr( ptr );
-    return ret;
+    struct wgl_handle *ptr;
+    if (!(ptr = get_handle_ptr( handle, HANDLE_PBUFFER ))) return FALSE;
+    return ptr->funcs->ext.p_wglSetPbufferAttribARB( ptr->u.pbuffer, attribs );
 }
 
 static void gl_debug_message_callback( GLenum source, GLenum type, GLuint id, GLenum severity,
@@ -802,21 +868,27 @@ static void WINAPI wrap_glDebugMessageCallbackARB( GLDEBUGPROCARB callback, cons
 NTSTATUS wgl_wglCopyContext( void *args )
 {
     struct wglCopyContext_params *params = args;
+    EnterCriticalSection( &wgl_section );
     params->ret = wrap_wglCopyContext( params->hglrcSrc, params->hglrcDst, params->mask );
+    LeaveCriticalSection( &wgl_section );
     return STATUS_SUCCESS;
 }
 
 NTSTATUS wgl_wglCreateContext( void *args )
 {
     struct wglCreateContext_params *params = args;
+    EnterCriticalSection( &wgl_section );
     params->ret = wrap_wglCreateContext( params->hDc );
+    LeaveCriticalSection( &wgl_section );
     return STATUS_SUCCESS;
 }
 
 NTSTATUS wgl_wglDeleteContext( void *args )
 {
     struct wglDeleteContext_params *params = args;
+    EnterCriticalSection( &wgl_section );
     params->ret = wrap_wglDeleteContext( params->oldContext );
+    LeaveCriticalSection( &wgl_section );
     return STATUS_SUCCESS;
 }
 
@@ -830,14 +902,18 @@ NTSTATUS wgl_wglGetProcAddress( void *args )
 NTSTATUS wgl_wglMakeCurrent( void *args )
 {
     struct wglMakeCurrent_params *params = args;
+    if (params->newContext) EnterCriticalSection( &wgl_section );
     params->ret = wrap_wglMakeCurrent( params->hDc, params->newContext );
+    if (params->newContext) LeaveCriticalSection( &wgl_section );
     return STATUS_SUCCESS;
 }
 
 NTSTATUS wgl_wglShareLists( void *args )
 {
     struct wglShareLists_params *params = args;
+    EnterCriticalSection( &wgl_section );
     params->ret = wrap_wglShareLists( params->hrcSrvShare, params->hrcSrvSource );
+    LeaveCriticalSection( &wgl_section );
     return STATUS_SUCCESS;
 }
 
@@ -861,12 +937,14 @@ NTSTATUS ext_glDebugMessageCallback( void *args )
     wrap_glDebugMessageCallback( params->callback, params->userParam );
     return STATUS_SUCCESS;
 }
+
 NTSTATUS ext_glDebugMessageCallbackAMD( void *args )
 {
     struct glDebugMessageCallbackAMD_params *params = args;
     wrap_glDebugMessageCallbackAMD( params->callback, params->userParam );
     return STATUS_SUCCESS;
 }
+
 NTSTATUS ext_glDebugMessageCallbackARB( void *args )
 {
     struct glDebugMessageCallbackARB_params *params = args;
@@ -884,69 +962,89 @@ NTSTATUS ext_glGetStringi( void *args )
 NTSTATUS ext_wglBindTexImageARB( void *args )
 {
     struct wglBindTexImageARB_params *params = args;
+    EnterCriticalSection( &wgl_section );
     params->ret = wrap_wglBindTexImageARB( params->hPbuffer, params->iBuffer );
+    LeaveCriticalSection( &wgl_section );
     return STATUS_SUCCESS;
 }
 
 NTSTATUS ext_wglCreateContextAttribsARB( void *args )
 {
     struct wglCreateContextAttribsARB_params *params = args;
+    EnterCriticalSection( &wgl_section );
     params->ret = wrap_wglCreateContextAttribsARB( params->hDC, params->hShareContext, params->attribList );
+    LeaveCriticalSection( &wgl_section );
     return STATUS_SUCCESS;
 }
 
 NTSTATUS ext_wglCreatePbufferARB( void *args )
 {
     struct wglCreatePbufferARB_params *params = args;
+    EnterCriticalSection( &wgl_section );
     params->ret = wrap_wglCreatePbufferARB( params->hDC, params->iPixelFormat, params->iWidth, params->iHeight, params->piAttribList );
+    LeaveCriticalSection( &wgl_section );
     return STATUS_SUCCESS;
 }
 
 NTSTATUS ext_wglDestroyPbufferARB( void *args )
 {
     struct wglDestroyPbufferARB_params *params = args;
+    EnterCriticalSection( &wgl_section );
     params->ret = wrap_wglDestroyPbufferARB( params->hPbuffer );
+    LeaveCriticalSection( &wgl_section );
     return STATUS_SUCCESS;
 }
 
 NTSTATUS ext_wglGetPbufferDCARB( void *args )
 {
     struct wglGetPbufferDCARB_params *params = args;
+    EnterCriticalSection( &wgl_section );
     params->ret = wrap_wglGetPbufferDCARB( params->hPbuffer );
+    LeaveCriticalSection( &wgl_section );
     return STATUS_SUCCESS;
 }
 
 NTSTATUS ext_wglMakeContextCurrentARB( void *args )
 {
     struct wglMakeContextCurrentARB_params *params = args;
+    if (params->hglrc) EnterCriticalSection( &wgl_section );
     params->ret = wrap_wglMakeContextCurrentARB( params->hDrawDC, params->hReadDC, params->hglrc );
+    if (params->hglrc) LeaveCriticalSection( &wgl_section );
     return STATUS_SUCCESS;
 }
 
 NTSTATUS ext_wglQueryPbufferARB( void *args )
 {
     struct wglQueryPbufferARB_params *params = args;
+    EnterCriticalSection( &wgl_section );
     params->ret = wrap_wglQueryPbufferARB( params->hPbuffer, params->iAttribute, params->piValue );
+    LeaveCriticalSection( &wgl_section );
     return STATUS_SUCCESS;
 }
 
 NTSTATUS ext_wglReleasePbufferDCARB( void *args )
 {
     struct wglReleasePbufferDCARB_params *params = args;
+    EnterCriticalSection( &wgl_section );
     params->ret = wrap_wglReleasePbufferDCARB( params->hPbuffer, params->hDC );
+    LeaveCriticalSection( &wgl_section );
     return STATUS_SUCCESS;
 }
 
 NTSTATUS ext_wglReleaseTexImageARB( void *args )
 {
     struct wglReleaseTexImageARB_params *params = args;
+    EnterCriticalSection( &wgl_section );
     params->ret = wrap_wglReleaseTexImageARB( params->hPbuffer, params->iBuffer );
+    LeaveCriticalSection( &wgl_section );
     return STATUS_SUCCESS;
 }
 
 NTSTATUS ext_wglSetPbufferAttribARB( void *args )
 {
     struct wglSetPbufferAttribARB_params *params = args;
+    EnterCriticalSection( &wgl_section );
     params->ret = wrap_wglSetPbufferAttribARB( params->hPbuffer, params->piAttribList );
+    LeaveCriticalSection( &wgl_section );
     return STATUS_SUCCESS;
 }

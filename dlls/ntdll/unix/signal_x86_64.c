@@ -1647,7 +1647,7 @@ __ASM_GLOBAL_FUNC( user_mode_callback_return,
                    "movq 0x10(%rbp),%rsi\n\t"  /* ret_ptr */
                    "movq 0x18(%rbp),%rdi\n\t"  /* ret_len */
                    "movq %rcx,(%rsi)\n\t"
-                   "movq %rdx,(%rdi)\n\t"
+                   "movl %edx,(%rdi)\n\t"
                    "movdqa -0xe0(%rbp),%xmm15\n\t"
                    "movdqa -0xd0(%rbp),%xmm14\n\t"
                    "movdqa -0xc0(%rbp),%xmm13\n\t"
@@ -2895,5 +2895,10 @@ __ASM_GLOBAL_FUNC( __wine_longjmp,
                    "movq 0x50(%rcx),%rdx\n\t"      /* jmp_buf->Rip */
                    "movq 0x10(%rcx),%rsp\n\t"      /* jmp_buf->Rsp */
                    "jmp *%rdx" )
+
+/**********************************************************************
+ *           NtCurrentTeb   (NTDLL.@)
+ */
+__ASM_GLOBAL_FUNC( NtCurrentTeb, "movq %gs:0x30,%rax; ret" )
 
 #endif  /* __x86_64__ */

@@ -31,9 +31,8 @@
 #include "winreg.h"
 #include "ntuser.h"
 
-#include "opengl_ext.h"
-
 #include "unixlib.h"
+#include "private.h"
 
 #include "wine/glu.h"
 #include "wine/debug.h"
@@ -50,10 +49,8 @@ static const MAT2 identity = { {0,1},{0,0},{0,0},{0,1} };
  */
 HDC WINAPI wglGetCurrentReadDCARB(void)
 {
-    struct wgl_handle *ptr = get_current_context_ptr();
-
-    if (!ptr) return 0;
-    return ptr->u.context->read_dc;
+    if (!NtCurrentTeb()->glCurrentRC) return 0;
+    return NtCurrentTeb()->glReserved1[1];
 }
 
 /***********************************************************************
@@ -61,10 +58,8 @@ HDC WINAPI wglGetCurrentReadDCARB(void)
  */
 HDC WINAPI wglGetCurrentDC(void)
 {
-    struct wgl_handle *ptr = get_current_context_ptr();
-
-    if (!ptr) return 0;
-    return ptr->u.context->draw_dc;
+    if (!NtCurrentTeb()->glCurrentRC) return 0;
+    return NtCurrentTeb()->glReserved1[0];
 }
 
 /***********************************************************************
@@ -869,6 +864,8 @@ static BOOL WINAPI call_opengl_debug_message_callback( struct wine_gl_debug_mess
                            params->length, params->message, params->user_data );
     return TRUE;
 }
+
+extern struct opengl_funcs null_opengl_funcs DECLSPEC_HIDDEN;
 
 /***********************************************************************
  *           OpenGL initialisation routine
