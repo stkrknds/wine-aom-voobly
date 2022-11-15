@@ -40,6 +40,8 @@
 WINE_DEFAULT_DEBUG_CHANNEL(seh);
 WINE_DECLARE_DEBUG_CHANNEL(threadname);
 
+TEB * (* WINAPI __wine_current_teb)(void) = NULL;
+
 typedef struct _SCOPE_TABLE
 {
     ULONG Count;
@@ -195,7 +197,9 @@ static NTSTATUS virtual_unwind( ULONG type, DISPATCHER_CONTEXT *dispatch, CONTEX
 
     if (!module || (module->Flags & LDR_WINE_INTERNAL))
     {
-        status = unix_funcs->unwind_builtin_dll( type, dispatch, context );
+        struct unwind_builtin_dll_params params = { type, dispatch, context };
+
+        status = NTDLL_UNIX_CALL( unwind_builtin_dll, &params );
         if (status != STATUS_SUCCESS) return status;
 
         if (dispatch->EstablisherFrame)
@@ -1528,7 +1532,7 @@ __ASM_STDCALL_FUNC( DbgUserBreakPoint, 0, "brk #0xf000; ret"
  */
 TEB * WINAPI NtCurrentTeb(void)
 {
-    return unix_funcs->NtCurrentTeb();
+    return __wine_current_teb();
 }
 
 #endif  /* __aarch64__ */

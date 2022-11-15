@@ -18,8 +18,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-
 #include <stdarg.h>
 #include <stdlib.h>
 #include <math.h>
@@ -39,6 +37,8 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(wgl);
 WINE_DECLARE_DEBUG_CHANNEL(fps);
+
+unixlib_handle_t unixlib_handle;
 
 static const MAT2 identity = { {0,1},{0,0},{0,0},{0,1} };
 
@@ -429,10 +429,10 @@ static BOOL wglUseFontBitmaps_common( HDC hdc, DWORD first, DWORD count, DWORD l
 
          if (needed_size > size) {
              size = needed_size;
-             HeapFree(GetProcessHeap(), 0, bitmap);
-             HeapFree(GetProcessHeap(), 0, gl_bitmap);
-             bitmap = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, size);
-             gl_bitmap = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, size);
+             free( bitmap );
+             free( gl_bitmap );
+             bitmap = calloc( 1, size );
+             gl_bitmap = calloc( 1, size );
          }
          if (needed_size != 0) {
              if (unicode)
@@ -496,8 +496,8 @@ static BOOL wglUseFontBitmaps_common( HDC hdc, DWORD first, DWORD count, DWORD l
      }
 
      glPixelStorei( GL_UNPACK_ALIGNMENT, org_alignment );
-     HeapFree(GetProcessHeap(), 0, bitmap);
-     HeapFree(GetProcessHeap(), 0, gl_bitmap);
+     free( bitmap );
+     free( gl_bitmap );
      return ret;
 }
 
@@ -658,7 +658,7 @@ static BOOL wglUseFontOutlines_common(HDC hdc,
         if(needed == GDI_ERROR)
             goto error;
 
-        buf = HeapAlloc(GetProcessHeap(), 0, needed);
+        buf = malloc( needed );
 
         if(unicode)
             GetGlyphOutlineW(hdc, glyph, GGO_NATIVE, &gm, needed, buf, &identity);
@@ -692,8 +692,7 @@ static BOOL wglUseFontOutlines_common(HDC hdc,
 
         while(!vertices)
         {
-            if(vertex_total != -1)
-                vertices = HeapAlloc(GetProcessHeap(), 0, vertex_total * 3 * sizeof(GLdouble));
+            if (vertex_total != -1) vertices = malloc( vertex_total * 3 * sizeof(GLdouble) );
             vertex_total = 0;
 
             pph = (TTPOLYGONHEADER*)buf;
@@ -767,7 +766,7 @@ static BOOL wglUseFontOutlines_common(HDC hdc,
                                 curve[2].y = (curve[1].y + curve[2].y)/2;
                             }
                             num = bezier_approximate(curve, NULL, deviation);
-                            points = HeapAlloc(GetProcessHeap(), 0, num*sizeof(bezier_vector));
+                            points = malloc( num * sizeof(bezier_vector) );
                             num = bezier_approximate(curve, points, deviation);
                             vertex_total += num;
                             if(vertices)
@@ -783,7 +782,7 @@ static BOOL wglUseFontOutlines_common(HDC hdc,
                                     vertices += 3;
                                 }
                             }
-                            HeapFree(GetProcessHeap(), 0, points);
+                            free( points );
                             previous[0] = curve[2].x;
                             previous[1] = curve[2].y;
                         }
@@ -808,8 +807,8 @@ error_in_list:
         if (format == WGL_FONT_POLYGONS) gluTessEndPolygon( tess );
         glTranslated( (GLdouble)gm.gmCellIncX / em_size, (GLdouble)gm.gmCellIncY / em_size, 0.0 );
         glEndList();
-        HeapFree(GetProcessHeap(), 0, buf);
-        HeapFree(GetProcessHeap(), 0, vertices);
+        free( buf );
+        free( vertices );
     }
 
  error:
@@ -865,25 +864,33 @@ static BOOL WINAPI call_opengl_debug_message_callback( struct wine_gl_debug_mess
     return TRUE;
 }
 
-extern struct opengl_funcs null_opengl_funcs DECLSPEC_HIDDEN;
-
 /***********************************************************************
  *           OpenGL initialisation routine
  */
 BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, LPVOID reserved )
 {
     void **kernel_callback_table;
+    NTSTATUS status;
 
     switch(reason)
     {
     case DLL_PROCESS_ATTACH:
-        NtCurrentTeb()->glTable = &null_opengl_funcs;
+        if ((status = NtQueryVirtualMemory( GetCurrentProcess(), hinst, MemoryWineUnixFuncs,
+                                            &unixlib_handle, sizeof(unixlib_handle), NULL )))
+        {
+            ERR( "Failed to load unixlib, status %#x\n", status );
+            return FALSE;
+        }
 
         kernel_callback_table = NtCurrentTeb()->Peb->KernelCallbackTable;
         kernel_callback_table[NtUserCallOpenGLDebugMessageCallback] = call_opengl_debug_message_callback;
-        break;
+        /* fallthrough */
     case DLL_THREAD_ATTACH:
-        NtCurrentTeb()->glTable = &null_opengl_funcs;
+        if ((status = UNIX_CALL( thread_attach, NULL )))
+        {
+            WARN( "Failed to initialize thread, status %#x\n", status );
+            return FALSE;
+        }
         break;
     }
     return TRUE;

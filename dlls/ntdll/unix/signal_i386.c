@@ -512,7 +512,7 @@ static inline void set_gs( WORD val ) { __asm__( "mov %0,%%gs" :: "r" (val)); }
 /***********************************************************************
  *           unwind_builtin_dll
  */
-NTSTATUS CDECL unwind_builtin_dll( ULONG type, struct _DISPATCHER_CONTEXT *dispatch, CONTEXT *context )
+NTSTATUS unwind_builtin_dll( void *args )
 {
     return STATUS_UNSUCCESSFUL;
 }
@@ -2368,21 +2368,6 @@ void signal_free_thread( TEB *teb )
 
 
 /**********************************************************************
- *		signal_init_thread
- */
-void signal_init_thread( TEB *teb )
-{
-    const WORD fpu_cw = 0x27f;
-    struct x86_thread_data *thread_data = (struct x86_thread_data *)&teb->GdiTebBatch;
-
-    ldt_set_fs( thread_data->fs, teb );
-    thread_data->gs = get_gs();
-
-    __asm__ volatile ("fninit; fldcw %0" : : "m" (fpu_cw));
-}
-
-
-/**********************************************************************
  *		signal_init_process
  */
 void signal_init_process(void)
@@ -2436,11 +2421,14 @@ void DECLSPEC_HIDDEN call_init_thunk( LPTHREAD_START_ROUTINE entry, void *arg, B
     CONTEXT *ctx, context = { CONTEXT_ALL };
     DWORD *stack;
 
+    ldt_set_fs( thread_data->fs, teb );
+    thread_data->gs = get_gs();
+
     context.SegCs  = get_cs();
     context.SegDs  = get_ds();
     context.SegEs  = get_ds();
-    context.SegFs  = get_fs();
-    context.SegGs  = get_gs();
+    context.SegFs  = thread_data->fs;
+    context.SegGs  = thread_data->gs;
     context.SegSs  = get_ds();
     context.EFlags = 0x202;
     context.Eax    = (DWORD)entry;
@@ -2751,11 +2739,5 @@ __ASM_GLOBAL_FUNC( __wine_longjmp,
                    "movl 16(%ecx),%esp\n\t"  /* jmp_buf.Esp */
                    "addl $4,%esp\n\t"        /* get rid of return address */
                    "jmp *20(%ecx)\n\t"       /* jmp_buf.Eip */ )
-
-
-/**********************************************************************
- *           NtCurrentTeb   (NTDLL.@)
- */
-__ASM_STDCALL_FUNC( NtCurrentTeb, 0, ".byte 0x64\n\tmovl 0x18,%eax\n\tret" )
 
 #endif  /* __i386__ */

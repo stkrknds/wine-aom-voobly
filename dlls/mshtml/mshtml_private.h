@@ -640,7 +640,6 @@ struct  ConnectionPoint {
 };
 
 struct HTMLDocumentObj {
-    DispatchEx dispex;
     IUnknown IUnknown_inner;
     IDispatchEx IDispatchEx_iface;
     ICustomDoc ICustomDoc_iface;
@@ -677,6 +676,7 @@ struct HTMLDocumentObj {
     IObjectSafety IObjectSafety_iface;
     IServiceProvider IServiceProvider_iface;
     ITargetContainer ITargetContainer_iface;
+    IEventTarget IEventTarget_iface;
 
     IWindowForBindingUI IWindowForBindingUI_iface;
 

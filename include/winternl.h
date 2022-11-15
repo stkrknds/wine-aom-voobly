@@ -1577,6 +1577,7 @@ typedef enum _PROCESSINFOCLASS {
     MaxProcessInfoClass,
 #ifdef __WINESRC__
     ProcessWineMakeProcessSystem = 1000,
+    ProcessWineLdtCopy,
 #endif
 } PROCESSINFOCLASS, PROCESS_INFORMATION_CLASS;
 
@@ -4711,7 +4712,8 @@ NTSYSAPI NTSTATUS WINAPI wine_unix_to_nt_file_name( const char *name, WCHAR *buf
         (p)->SecurityQualityOfService = NULL; \
     } while (0)
 
-#define NtCurrentProcess() ((HANDLE)-1)
+#define NtCurrentProcess() ((HANDLE)~(ULONG_PTR)0)
+#define NtCurrentThread()  ((HANDLE)~(ULONG_PTR)1)
 
 #define RtlFillMemory(Destination,Length,Fill) memset((Destination),(Fill),(Length))
 #define RtlMoveMemory(Destination,Source,Length) memmove((Destination),(Source),(Length))

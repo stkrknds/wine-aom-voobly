@@ -728,8 +728,11 @@ static NTSTATUS libunwind_virtual_unwind( DWORD ip, DWORD *frame, CONTEXT *conte
 /***********************************************************************
  *           unwind_builtin_dll
  */
-NTSTATUS CDECL unwind_builtin_dll( ULONG type, struct _DISPATCHER_CONTEXT *dispatch, CONTEXT *context )
+NTSTATUS unwind_builtin_dll( void *args )
 {
+    struct unwind_builtin_dll_params *params = args;
+    DISPATCHER_CONTEXT *dispatch = params->dispatch;
+    CONTEXT *context = params->context;
     DWORD ip = context->Pc - (dispatch->ControlPcIsUnwound ? 2 : 0);
 #ifdef linux
     const struct exidx_entry *entry = find_exidx_entry( (void *)ip );
@@ -1546,15 +1549,6 @@ void signal_free_thread( TEB *teb )
 
 
 /**********************************************************************
- *		signal_init_thread
- */
-void signal_init_thread( TEB *teb )
-{
-    __asm__ __volatile__( "mcr p15, 0, %0, c13, c0, 2" : : "r" (teb) );
-}
-
-
-/**********************************************************************
  *		signal_init_process
  */
 void signal_init_process(void)
@@ -1599,6 +1593,8 @@ void DECLSPEC_HIDDEN call_init_thunk( LPTHREAD_START_ROUTINE entry, void *arg, B
     struct arm_thread_data *thread_data = (struct arm_thread_data *)&teb->GdiTebBatch;
     struct syscall_frame *frame = thread_data->syscall_frame;
     CONTEXT *ctx, context = { CONTEXT_ALL };
+
+    __asm__ __volatile__( "mcr p15, 0, %0, c13, c0, 2" : : "r" (teb) );
 
     context.R0 = (DWORD)entry;
     context.R1 = (DWORD)arg;
@@ -1769,10 +1765,5 @@ __ASM_GLOBAL_FUNC( __wine_longjmp,
 #endif
                    "mov r0, r1\n\t"                /* retval */
                    "bx r2" )
-
-/**********************************************************************
- *           NtCurrentTeb   (NTDLL.@)
- */
-__ASM_GLOBAL_FUNC( NtCurrentTeb, "mrc p15, 0, r0, c13, c0, 2; bx lr" )
 
 #endif  /* __arm__ */
