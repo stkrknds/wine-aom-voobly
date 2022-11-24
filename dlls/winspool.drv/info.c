@@ -240,18 +240,6 @@ static inline PWSTR asciitounicode( UNICODE_STRING * usBufferPtr, LPCSTR src )
     return NULL;
 }
 
-static LPWSTR strdupW(LPCWSTR p)
-{
-    LPWSTR ret;
-    DWORD len;
-
-    if(!p) return NULL;
-    len = (wcslen( p ) + 1) * sizeof(WCHAR);
-    ret = malloc(len);
-    memcpy(ret, p, len);
-    return ret;
-}
-
 static DEVMODEW *dup_devmode( const DEVMODEW *dm )
 {
     DEVMODEW *ret;
@@ -262,56 +250,60 @@ static DEVMODEW *dup_devmode( const DEVMODEW *dm )
     return ret;
 }
 
-/***********************************************************
- * DEVMODEdupWtoA
- * Creates an ansi copy of supplied devmode
+/* stringWtoA
+ * Converts Unicode string to Ansi (possibly in place).
  */
-static DEVMODEA *DEVMODEdupWtoA( const DEVMODEW *dmW )
+static void stringWtoA( const WCHAR *strW, char *strA, size_t size )
 {
-    LPDEVMODEA dmA;
-    DWORD size;
+    DWORD ret;
+    char *str;
+
+    str = (char *)strW == strA ? malloc( size ) : strA;
+    ret = WideCharToMultiByte( CP_ACP, 0, strW, -1, str, size, NULL, NULL );
+    if (str != strA)
+    {
+        memcpy( strA, str, ret );
+        free( str );
+    }
+    memset( strA + ret, 0, size - ret );
+}
+
+/***********************************************************
+ * DEVMODEWtoA
+ * Converts DEVMODEW to DEVMODEA (possibly in place).
+ * Allocates DEVMODEA if needed.
+ */
+static DEVMODEA *DEVMODEWtoA( const DEVMODEW *dmW, DEVMODEA *dmA )
+{
+    DWORD size, sizeW;
 
     if (!dmW) return NULL;
-    size = dmW->dmSize - CCHDEVICENAME -
-                        ((dmW->dmSize > FIELD_OFFSET( DEVMODEW, dmFormName )) ? CCHFORMNAME : 0);
+    sizeW = dmW->dmSize;
+    size = sizeW - CCHDEVICENAME -
+                        ((sizeW > FIELD_OFFSET( DEVMODEW, dmFormName )) ? CCHFORMNAME : 0);
 
-    dmA = calloc( 1, size + dmW->dmDriverExtra );
+    if (!dmA)
+        dmA = calloc( 1, size + dmW->dmDriverExtra );
     if (!dmA) return NULL;
 
-    WideCharToMultiByte( CP_ACP, 0, dmW->dmDeviceName, -1,
-                         (LPSTR)dmA->dmDeviceName, CCHDEVICENAME, NULL, NULL );
+    stringWtoA( dmW->dmDeviceName, (char *)dmA->dmDeviceName, CCHDEVICENAME );
 
-    if (FIELD_OFFSET( DEVMODEW, dmFormName ) >= dmW->dmSize)
+    if (FIELD_OFFSET( DEVMODEW, dmFormName ) >= sizeW)
     {
-        memcpy( &dmA->dmSpecVersion, &dmW->dmSpecVersion,
-                dmW->dmSize - FIELD_OFFSET( DEVMODEW, dmSpecVersion ) );
+        memmove( &dmA->dmSpecVersion, &dmW->dmSpecVersion,
+                sizeW - FIELD_OFFSET( DEVMODEW, dmSpecVersion ) );
     }
     else
     {
-        memcpy( &dmA->dmSpecVersion, &dmW->dmSpecVersion,
+        memmove( &dmA->dmSpecVersion, &dmW->dmSpecVersion,
                 FIELD_OFFSET( DEVMODEW, dmFormName ) - FIELD_OFFSET( DEVMODEW, dmSpecVersion ) );
-        WideCharToMultiByte( CP_ACP, 0, dmW->dmFormName, -1,
-                             (LPSTR)dmA->dmFormName, CCHFORMNAME, NULL, NULL );
-
-        memcpy( &dmA->dmLogPixels, &dmW->dmLogPixels, dmW->dmSize - FIELD_OFFSET( DEVMODEW, dmLogPixels ) );
+        stringWtoA( dmW->dmFormName, (char *)dmA->dmFormName, CCHFORMNAME );
+        memmove( &dmA->dmLogPixels, &dmW->dmLogPixels, sizeW - FIELD_OFFSET( DEVMODEW, dmLogPixels ) );
     }
 
     dmA->dmSize = size;
-    memcpy( (char *)dmA + dmA->dmSize, (const char *)dmW + dmW->dmSize, dmW->dmDriverExtra );
+    memmove( (char *)dmA + dmA->dmSize, (const char *)dmW + sizeW, dmW->dmDriverExtra );
     return dmA;
-}
-
-static void packed_string_WtoA( WCHAR *strW )
-{
-    DWORD len = wcslen( strW ), size = (len + 1) * sizeof(WCHAR), ret;
-    char *str;
-
-    if (!len) return;
-    str = malloc( size );
-    ret = WideCharToMultiByte( CP_ACP, 0, strW, len, str, size - 1, NULL, NULL );
-    memcpy( strW, str, ret );
-    memset( (BYTE *)strW + ret, 0, size - ret );
-    free( str );
 }
 
 /*********************************************************************
@@ -328,7 +320,7 @@ static void packed_struct_WtoA( BYTE *data, const DWORD *string_info )
     while (*string_info != ~0u)
     {
         strW = *(WCHAR **)(data + *string_info);
-        if (strW) packed_string_WtoA( strW );
+        if (strW) stringWtoA( strW, (char *)strW, (wcslen(strW) + 1) * sizeof(WCHAR) );
         string_info++;
     }
 }
@@ -906,7 +898,7 @@ static inline DWORD set_reg_szW(HKEY hkey, const WCHAR *keyname, const WCHAR *va
 
 static inline DWORD set_reg_devmode( HKEY key, const WCHAR *name, const DEVMODEW *dm )
 {
-    DEVMODEA *dmA = DEVMODEdupWtoA( dm );
+    DEVMODEA *dmA = DEVMODEWtoA( dm, NULL );
     DWORD ret = ERROR_FILE_NOT_FOUND;
 
     /* FIXME: Write DEVMODEA not DEVMODEW into reg.  This is what win9x does
@@ -940,7 +932,7 @@ static LPWSTR get_servername_from_name(LPCWSTR name)
     if (name == NULL) return NULL;
     if ((name[0] != '\\') || (name[1] != '\\')) return NULL;
 
-    server = strdupW(&name[2]);     /* skip over both backslash */
+    server = wcsdup(&name[2]);     /* skip over both backslash */
     if (server == NULL) return NULL;
 
     /* strip '\' and the printername */
@@ -1083,10 +1075,10 @@ static HANDLE get_opened_printer_entry(LPWSTR name, LPPRINTER_DEFAULTSW pDefault
     }
 
     /* clone the base name. This is NULL for the printserver */
-    printer->printername = strdupW(printername);
+    printer->printername = wcsdup(printername);
 
     /* clone the full name */
-    printer->name = strdupW(name);
+    printer->name = wcsdup(name);
     if (name && (!printer->name)) {
         handle = 0;
         goto end;
@@ -1294,7 +1286,6 @@ static void convert_printerinfo_W_to_A(LPBYTE out, LPBYTE pPrintersW,
                 {
                     PRINTER_INFO_2W * piW = (PRINTER_INFO_2W *) pPrintersW;
                     PRINTER_INFO_2A * piA = (PRINTER_INFO_2A *) out;
-                    LPDEVMODEA dmA;
 
                     TRACE("(%lu) #%lu: %s\n", level, id, debugstr_w(piW->pPrinterName));
                     if (piW->pServerName) {
@@ -1347,17 +1338,16 @@ static void convert_printerinfo_W_to_A(LPBYTE out, LPBYTE pPrintersW,
                         outlen -= len;
                     }
 
-                    dmA = DEVMODEdupWtoA(piW->pDevMode);
-                    if (dmA) {
+                    if (piW->pDevMode)
+                    {
                         /* align DEVMODEA to a DWORD boundary */
                         len = (4 - ( (DWORD_PTR) ptr & 3)) & 3;
                         ptr += len;
                         outlen -= len;
 
                         piA->pDevMode = (LPDEVMODEA) ptr;
-                        len = dmA->dmSize + dmA->dmDriverExtra;
-                        memcpy(ptr, dmA, len);
-                        free(dmA);
+                        DEVMODEWtoA(piW->pDevMode, piA->pDevMode);
+                        len = piA->pDevMode->dmSize + piA->pDevMode->dmDriverExtra;
 
                         ptr += len;
                         outlen -= len;
@@ -1470,25 +1460,22 @@ static void convert_printerinfo_W_to_A(LPBYTE out, LPBYTE pPrintersW,
                 {
                     PRINTER_INFO_9W * piW = (PRINTER_INFO_9W *) pPrintersW;
                     PRINTER_INFO_9A * piA = (PRINTER_INFO_9A *) out;
-                    LPDEVMODEA dmA;
 
                     TRACE("(%lu) #%lu\n", level, id);
-                    dmA = DEVMODEdupWtoA(piW->pDevMode);
-                    if (dmA) {
+                    if (piW->pDevMode)
+                    {
                         /* align DEVMODEA to a DWORD boundary */
                         len = (4 - ( (DWORD_PTR) ptr & 3)) & 3;
                         ptr += len;
                         outlen -= len;
 
                         piA->pDevMode = (LPDEVMODEA) ptr;
-                        len = dmA->dmSize + dmA->dmDriverExtra;
-                        memcpy(ptr, dmA, len);
-                        free(dmA);
+                        DEVMODEWtoA(piW->pDevMode, piA->pDevMode);
+                        len = piA->pDevMode->dmSize + piA->pDevMode->dmDriverExtra;
 
                         ptr += len;
                         outlen -= len;
                     }
-
                     break;
                 }
 
@@ -1761,7 +1748,7 @@ static void free_printer_info( void *data, DWORD level )
         free( piW->pDriverName );
         free( piW->pComment );
         free( piW->pLocation );
-        free( piW->pDevMode );
+        heap_free( piW->pDevMode );
         free( piW->pSepFile );
         free( piW->pPrintProcessor );
         free( piW->pDatatype );
@@ -1774,7 +1761,7 @@ static void free_printer_info( void *data, DWORD level )
     {
         PRINTER_INFO_9W *piW = (PRINTER_INFO_9W *)data;
 
-        free( piW->pDevMode );
+        heap_free( piW->pDevMode );
         break;
     }
 
@@ -1840,7 +1827,7 @@ INT WINAPI DeviceCapabilitiesA(const char *device, const char *portA, WORD cap,
     }
 cleanup:
     free(device_name);
-    free(devmode);
+    heap_free(devmode);
     free(port);
     return ret;
 }
@@ -1898,18 +1885,15 @@ LONG WINAPI DocumentPropertiesA(HWND hwnd, HANDLE printer, char *device_name, DE
         outputW = malloc(ret);
     }
 
-    if (input) inputW = GdiConvertToDevmodeW(input);
+    if (input && (mode & DM_IN_BUFFER)) inputW = GdiConvertToDevmodeW(input);
 
     ret = DocumentPropertiesW(hwnd, printer, device, outputW, inputW, mode);
 
-    if (ret >= 0 && outputW && (mode & (DM_COPY | DM_UPDATE))) {
-        DEVMODEA *dmA = DEVMODEdupWtoA( outputW );
-        if (dmA) memcpy(output, dmA, dmA->dmSize + dmA->dmDriverExtra);
-        free(dmA);
-    }
+    if (ret >= 0 && outputW && (mode & (DM_COPY | DM_UPDATE)))
+        DEVMODEWtoA( outputW, output );
 
     free(device);
-    free(inputW);
+    heap_free(inputW);
     free(outputW);
 
     if (!mode && ret > 0) ret -= CCHDEVICENAME + CCHFORMNAME;
@@ -2129,7 +2113,7 @@ BOOL WINAPI OpenPrinter2A(LPSTR name, HANDLE *printer,
     if (p_defaultsW)
     {
         RtlFreeUnicodeString(&datatypeU);
-        free(defaultsW.pDevMode);
+        heap_free(defaultsW.pDevMode);
     }
     RtlFreeUnicodeString(&nameU);
 
@@ -2566,8 +2550,8 @@ BOOL WINAPI AddJobW(HANDLE hPrinter, DWORD Level, LPBYTE pData, DWORD cbBuf, LPD
     job->filename = malloc((len + 1) * sizeof(WCHAR));
     memcpy(job->filename, filename, (len + 1) * sizeof(WCHAR));
     job->portname = NULL;
-    job->document_title = strdupW( L"Local Downlevel Document" );
-    job->printer_name = strdupW( printer->name );
+    job->document_title = wcsdup( L"Local Downlevel Document" );
+    job->printer_name = wcsdup( printer->name );
     job->devmode = dup_devmode( printer->devmode );
     list_add_tail(&printer->queue->jobs, &job->entry);
 
@@ -3213,7 +3197,7 @@ BOOL WINAPI SetJobA(HANDLE hPrinter, DWORD JobId, DWORD Level,
         free(info2W->pDatatype);
         free(info2W->pPrintProcessor);
         free(info2W->pParameters);
-        free(info2W->pDevMode);
+        heap_free(info2W->pDevMode);
         free(info2W->pStatus);
         break;
       }
@@ -3248,14 +3232,14 @@ BOOL WINAPI SetJobW(HANDLE hPrinter, DWORD JobId, DWORD Level,
       {
         JOB_INFO_1W *info1 = (JOB_INFO_1W*)pJob;
         free(job->document_title);
-        job->document_title = strdupW(info1->pDocument);
+        job->document_title = wcsdup(info1->pDocument);
         break;
       }
     case 2:
       {
         JOB_INFO_2W *info2 = (JOB_INFO_2W*)pJob;
         free(job->document_title);
-        job->document_title = strdupW(info2->pDocument);
+        job->document_title = wcsdup(info2->pDocument);
         free(job->devmode);
         job->devmode = dup_devmode( info2->pDevMode );
         break;
@@ -3421,7 +3405,7 @@ DWORD WINAPI StartDocPrinterW(HANDLE hPrinter, DWORD Level, LPBYTE pDocInfo)
     printer->doc->hf = hf;
     ret = printer->doc->job_id = addjob->JobId;
     job = get_job(hPrinter, ret);
-    job->portname = strdupW(doc->pOutputFile);
+    job->portname = wcsdup(doc->pOutputFile);
 
 end:
     LeaveCriticalSection(&printer_handles_cs);
@@ -3693,7 +3677,7 @@ static BOOL WINSPOOL_GetDevModeFromReg(HKEY hkey, LPCWSTR ValueName,
     if (ptr && (buflen >= sz)) {
         DEVMODEW *dmW = GdiConvertToDevmodeW((DEVMODEA*)ptr);
         memcpy(ptr, dmW, sz);
-        free(dmW);
+        heap_free(dmW);
     }
     *needed = sz;
     return TRUE;
@@ -7633,7 +7617,7 @@ static BOOL get_job_info_2(job_t *job, JOB_INFO_2W *ji2, LPBYTE buf, DWORD cbBuf
     {
         if (!unicode)
         {
-            dmA = DEVMODEdupWtoA(job->devmode);
+            dmA = DEVMODEWtoA(job->devmode, NULL);
             devmode = (LPDEVMODEW) dmA;
             if (dmA) size = dmA->dmSize + dmA->dmDriverExtra;
         }
@@ -7741,14 +7725,69 @@ end:
     return ret;
 }
 
+static inline const DWORD *job_string_info(DWORD level)
+{
+    static const DWORD info_1[] =
+    {
+        sizeof(JOB_INFO_1W),
+        FIELD_OFFSET(JOB_INFO_1W, pPrinterName),
+        FIELD_OFFSET(JOB_INFO_1W, pMachineName),
+        FIELD_OFFSET(JOB_INFO_1W, pUserName),
+        FIELD_OFFSET(JOB_INFO_1W, pDocument),
+        FIELD_OFFSET(JOB_INFO_1W, pDatatype),
+        FIELD_OFFSET(JOB_INFO_1W, pStatus),
+        ~0u
+    };
+    static const DWORD info_2[] =
+    {
+        sizeof(JOB_INFO_2W),
+        FIELD_OFFSET(JOB_INFO_2W, pPrinterName),
+        FIELD_OFFSET(JOB_INFO_2W, pMachineName),
+        FIELD_OFFSET(JOB_INFO_2W, pUserName),
+        FIELD_OFFSET(JOB_INFO_2W, pDocument),
+        FIELD_OFFSET(JOB_INFO_2W, pNotifyName),
+        FIELD_OFFSET(JOB_INFO_2W, pDatatype),
+        FIELD_OFFSET(JOB_INFO_2W, pPrintProcessor),
+        FIELD_OFFSET(JOB_INFO_2W, pParameters),
+        FIELD_OFFSET(JOB_INFO_2W, pDriverName),
+        FIELD_OFFSET(JOB_INFO_2W, pStatus),
+        ~0u
+    };
+    static const DWORD info_3[] =
+    {
+        sizeof(JOB_INFO_3),
+        ~0u
+    };
+
+    switch (level)
+    {
+    case 1: return info_1;
+    case 2: return info_2;
+    case 3: return info_3;
+    }
+
+    SetLastError( ERROR_INVALID_LEVEL );
+    return NULL;
+}
+
 /*****************************************************************************
  *          GetJobA [WINSPOOL.@]
  *
  */
-BOOL WINAPI GetJobA(HANDLE hPrinter, DWORD JobId, DWORD Level, LPBYTE pJob,
-                    DWORD cbBuf, LPDWORD pcbNeeded)
+BOOL WINAPI GetJobA(HANDLE printer, DWORD job_id, DWORD level, BYTE *data,
+        DWORD size, DWORD *needed)
 {
-    return get_job_info(hPrinter, JobId, Level, pJob, cbBuf, pcbNeeded, FALSE);
+    const DWORD *string_info = job_string_info(level);
+
+    if (!string_info)
+        return FALSE;
+
+    if (!GetJobW(printer, job_id, level, data, size, needed))
+        return FALSE;
+    packed_struct_WtoA(data, string_info);
+    if (level == 2)
+        DEVMODEWtoA(((JOB_INFO_2W *)data)->pDevMode, ((JOB_INFO_2A *)data)->pDevMode);
+    return TRUE;
 }
 
 /*****************************************************************************

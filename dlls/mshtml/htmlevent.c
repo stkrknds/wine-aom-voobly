@@ -68,6 +68,7 @@ typedef enum {
     EVENT_TYPE_MOUSE,
     EVENT_TYPE_FOCUS,
     EVENT_TYPE_UIEVENT,
+    EVENT_TYPE_PAGETRANSITION,
     EVENT_TYPE_MESSAGE,
     EVENT_TYPE_PROGRESS,
     EVENT_TYPE_STORAGE,
@@ -82,6 +83,7 @@ static const WCHAR *event_types[] = {
     L"MouseEvent",
     L"Event", /* FIXME */
     L"UIEvent",
+    L"Event", /* FIXME */
     L"MessageEvent",
     L"ProgressEvent",
     L"StorageEvent",
@@ -115,7 +117,7 @@ typedef struct {
 /* Keep these sorted case sensitively */
 static const event_info_t event_info[] = {
     {L"DOMContentLoaded",  EVENT_TYPE_EVENT,     0,
-        EVENT_DEFAULTLISTENER | EVENT_BUBBLES | EVENT_CANCELABLE},
+        EVENT_BUBBLES | EVENT_CANCELABLE},
     {L"abort",             EVENT_TYPE_EVENT,     DISPID_EVMETH_ONABORT,
         EVENT_BIND_TO_TARGET},
     {L"animationend",      EVENT_TYPE_EVENT,     DISPID_EVPROP_ONANIMATIONEND,
@@ -182,6 +184,10 @@ static const event_info_t event_info[] = {
         EVENT_FIXME},
     {L"msthumbnailclick",  EVENT_TYPE_MOUSE,     DISPID_EVPROP_ONMSTHUMBNAILCLICK,
         EVENT_FIXME},
+    {L"pagehide",          EVENT_TYPE_PAGETRANSITION, DISPID_EVPROP_ONPAGEHIDE,
+        0},
+    {L"pageshow",          EVENT_TYPE_PAGETRANSITION, DISPID_EVPROP_ONPAGESHOW,
+        0},
     {L"paste",             EVENT_TYPE_CLIPBOARD, DISPID_EVMETH_ONPASTE,
         EVENT_FIXME | EVENT_BUBBLES | EVENT_CANCELABLE},
     {L"progress",          EVENT_TYPE_PROGRESS,  DISPID_EVPROP_PROGRESS,
@@ -205,7 +211,9 @@ static const event_info_t event_info[] = {
     {L"timeout",           EVENT_TYPE_PROGRESS,  DISPID_EVPROP_TIMEOUT,
         EVENT_BIND_TO_TARGET},
     {L"unload",            EVENT_TYPE_UIEVENT,   DISPID_EVMETH_ONUNLOAD,
-        EVENT_FIXME},
+        EVENT_BIND_TO_TARGET},
+    {L"visibilitychange",  EVENT_TYPE_EVENT,     DISPID_EVPROP_VISIBILITYCHANGE,
+        EVENT_FIXME | EVENT_BUBBLES},
 
     /* EVENTID_LAST special entry */
     {NULL,                 EVENT_TYPE_EVENT,     0, 0}
@@ -2209,6 +2217,98 @@ static void DOMKeyboardEvent_destroy(DOMEvent *event)
 
 typedef struct {
     DOMEvent event;
+    IWinePageTransitionEvent IWinePageTransitionEvent_iface;
+} DOMPageTransitionEvent;
+
+static inline DOMPageTransitionEvent *impl_from_IWinePageTransitionEvent(IWinePageTransitionEvent *iface)
+{
+    return CONTAINING_RECORD(iface, DOMPageTransitionEvent, IWinePageTransitionEvent_iface);
+}
+
+static HRESULT WINAPI DOMPageTransitionEvent_QueryInterface(IWinePageTransitionEvent *iface, REFIID riid, void **ppv)
+{
+    DOMPageTransitionEvent *This = impl_from_IWinePageTransitionEvent(iface);
+    return IDOMEvent_QueryInterface(&This->event.IDOMEvent_iface, riid, ppv);
+}
+
+static ULONG WINAPI DOMPageTransitionEvent_AddRef(IWinePageTransitionEvent *iface)
+{
+    DOMPageTransitionEvent *This = impl_from_IWinePageTransitionEvent(iface);
+    return IDOMEvent_AddRef(&This->event.IDOMEvent_iface);
+}
+
+static ULONG WINAPI DOMPageTransitionEvent_Release(IWinePageTransitionEvent *iface)
+{
+    DOMPageTransitionEvent *This = impl_from_IWinePageTransitionEvent(iface);
+    return IDOMEvent_Release(&This->event.IDOMEvent_iface);
+}
+
+static HRESULT WINAPI DOMPageTransitionEvent_GetTypeInfoCount(IWinePageTransitionEvent *iface, UINT *pctinfo)
+{
+    DOMPageTransitionEvent *This = impl_from_IWinePageTransitionEvent(iface);
+    return IDispatchEx_GetTypeInfoCount(&This->event.dispex.IDispatchEx_iface, pctinfo);
+}
+
+static HRESULT WINAPI DOMPageTransitionEvent_GetTypeInfo(IWinePageTransitionEvent *iface, UINT iTInfo,
+                                                   LCID lcid, ITypeInfo **ppTInfo)
+{
+    DOMPageTransitionEvent *This = impl_from_IWinePageTransitionEvent(iface);
+    return IDispatchEx_GetTypeInfo(&This->event.dispex.IDispatchEx_iface, iTInfo, lcid, ppTInfo);
+}
+
+static HRESULT WINAPI DOMPageTransitionEvent_GetIDsOfNames(IWinePageTransitionEvent *iface, REFIID riid,
+        LPOLESTR *rgszNames, UINT cNames, LCID lcid, DISPID *rgDispId)
+{
+    DOMPageTransitionEvent *This = impl_from_IWinePageTransitionEvent(iface);
+    return IDispatchEx_GetIDsOfNames(&This->event.dispex.IDispatchEx_iface, riid, rgszNames, cNames,
+            lcid, rgDispId);
+}
+
+static HRESULT WINAPI DOMPageTransitionEvent_Invoke(IWinePageTransitionEvent *iface, DISPID dispIdMember,
+        REFIID riid, LCID lcid, WORD wFlags, DISPPARAMS *pDispParams, VARIANT *pVarResult,
+        EXCEPINFO *pExcepInfo, UINT *puArgErr)
+{
+    DOMPageTransitionEvent *This = impl_from_IWinePageTransitionEvent(iface);
+    return IDispatchEx_Invoke(&This->event.dispex.IDispatchEx_iface, dispIdMember, riid, lcid,
+            wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
+}
+
+static HRESULT WINAPI DOMPageTransitionEvent_get_persisted(IWinePageTransitionEvent *iface, VARIANT_BOOL *p)
+{
+    DOMPageTransitionEvent *This = impl_from_IWinePageTransitionEvent(iface);
+
+    FIXME("(%p)->(%p): always returning FALSE\n", This, p);
+
+    *p = VARIANT_FALSE;
+    return S_OK;
+}
+
+static const IWinePageTransitionEventVtbl DOMPageTransitionEventVtbl = {
+    DOMPageTransitionEvent_QueryInterface,
+    DOMPageTransitionEvent_AddRef,
+    DOMPageTransitionEvent_Release,
+    DOMPageTransitionEvent_GetTypeInfoCount,
+    DOMPageTransitionEvent_GetTypeInfo,
+    DOMPageTransitionEvent_GetIDsOfNames,
+    DOMPageTransitionEvent_Invoke,
+    DOMPageTransitionEvent_get_persisted
+};
+
+static DOMPageTransitionEvent *DOMPageTransitionEvent_from_DOMEvent(DOMEvent *event)
+{
+    return CONTAINING_RECORD(event, DOMPageTransitionEvent, event);
+}
+
+static void *DOMPageTransitionEvent_query_interface(DOMEvent *event, REFIID riid)
+{
+    DOMPageTransitionEvent *page_transition_event = DOMPageTransitionEvent_from_DOMEvent(event);
+    if(IsEqualGUID(&IID_IWinePageTransitionEvent, riid))
+        return &page_transition_event->IWinePageTransitionEvent_iface;
+    return NULL;
+}
+
+typedef struct {
+    DOMEvent event;
     IDOMCustomEvent IDOMCustomEvent_iface;
     VARIANT detail;
 } DOMCustomEvent;
@@ -2835,6 +2935,20 @@ static dispex_static_data_t DOMKeyboardEvent_dispex = {
     DOMKeyboardEvent_iface_tids
 };
 
+static void DOMPageTransitionEvent_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
+{
+    if(mode >= COMPAT_MODE_IE11)
+        dispex_info_add_interface(info, IWinePageTransitionEvent_tid, NULL);
+}
+
+dispex_static_data_t DOMPageTransitionEvent_dispex = {
+    L"PageTransitionEvent",
+    NULL,
+    DispDOMEvent_tid,
+    DOMEvent_iface_tids,
+    DOMPageTransitionEvent_init_dispex_info
+};
+
 static const tid_t DOMCustomEvent_iface_tids[] = {
     IDOMEvent_tid,
     IDOMCustomEvent_tid,
@@ -2959,6 +3073,15 @@ static DOMEvent *keyboard_event_ctor(void *iface, nsIDOMEvent *nsevent, eventid_
     return &keyboard_event->ui_event.event;
 }
 
+static DOMEvent *page_transition_event_ctor(void *iface, nsIDOMEvent *nsevent, eventid_t event_id, compat_mode_t compat_mode)
+{
+    DOMPageTransitionEvent *page_transition_event = event_ctor(sizeof(DOMCustomEvent), &DOMPageTransitionEvent_dispex,
+            DOMPageTransitionEvent_query_interface, NULL, nsevent, event_id, compat_mode);
+    if(!page_transition_event) return NULL;
+    page_transition_event->IWinePageTransitionEvent_iface.lpVtbl = &DOMPageTransitionEventVtbl;
+    return &page_transition_event->event;
+}
+
 static DOMEvent *custom_event_ctor(void *iface, nsIDOMEvent *nsevent, eventid_t event_id, compat_mode_t compat_mode)
 {
     DOMCustomEvent *custom_event = event_ctor(sizeof(DOMCustomEvent), &DOMCustomEvent_dispex,
@@ -3013,6 +3136,7 @@ static const struct {
     [EVENT_TYPE_CLIPBOARD]      = { NULL,                         generic_event_ctor },
     [EVENT_TYPE_FOCUS]          = { NULL,                         generic_event_ctor },
     [EVENT_TYPE_DRAG]           = { NULL,                         generic_event_ctor },
+    [EVENT_TYPE_PAGETRANSITION] = { NULL,                         page_transition_event_ctor },
     [EVENT_TYPE_CUSTOM]         = { &IID_nsIDOMCustomEvent,       custom_event_ctor },
     [EVENT_TYPE_PROGRESS]       = { &IID_nsIDOMProgressEvent,     progress_event_ctor },
     [EVENT_TYPE_MESSAGE]        = { NULL,                         message_event_ctor },
@@ -3683,10 +3807,7 @@ HRESULT ensure_doc_nsevent_handler(HTMLDocumentNode *doc, nsIDOMNode *nsnode, ev
 
     if(event_info[eid].flags & EVENT_DEFAULTLISTENER) {
         nsnode = NULL;
-    }else if(event_info[eid].flags & EVENT_BIND_TO_TARGET) {
-        if(!nsnode)
-            nsnode = doc->node.nsnode;
-    }else {
+    }else if(!(event_info[eid].flags & EVENT_BIND_TO_TARGET)) {
         return S_OK;
     }
 

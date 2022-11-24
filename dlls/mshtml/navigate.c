@@ -1107,6 +1107,9 @@ static HRESULT read_stream_data(nsChannelBSC *This, IStream *stream)
     if(!This->response_processed) {
         IWinInetHttpInfo *wininet_info;
 
+        if(This->is_doc_channel)
+            This->bsc.window->performance_timing->response_start_time = get_time_stamp();
+
         This->response_processed = TRUE;
         if(This->bsc.binding) {
             hres = IBinding_QueryInterface(This->bsc.binding, &IID_IWinInetHttpInfo, (void**)&wininet_info);
@@ -1357,8 +1360,10 @@ static HRESULT nsChannelBSC_start_binding(BSCallback *bsc)
 {
     nsChannelBSC *This = nsChannelBSC_from_BSCallback(bsc);
 
-    if(This->is_doc_channel)
+    if(This->is_doc_channel) {
         This->bsc.window->base.outer_window->base.inner_window->doc->skip_mutation_notif = FALSE;
+        This->bsc.window->performance_timing->navigation_start_time = get_time_stamp();
+    }
 
     return S_OK;
 }
@@ -1520,13 +1525,16 @@ static HRESULT nsChannelBSC_stop_binding(BSCallback *bsc, HRESULT result)
 {
     nsChannelBSC *This = nsChannelBSC_from_BSCallback(bsc);
 
-    if(result != E_ABORT && This->is_doc_channel && This->bsc.window) {
-        if(FAILED(result))
-            handle_navigation_error(This, result);
-        else if(This->nschannel) {
-            result = async_stop_request(This);
-            if(SUCCEEDED(result))
-                return S_OK;
+    if(This->is_doc_channel && This->bsc.window) {
+        This->bsc.window->performance_timing->response_end_time = get_time_stamp();
+        if(result != E_ABORT) {
+            if(FAILED(result))
+                handle_navigation_error(This, result);
+            else if(This->nschannel) {
+                result = async_stop_request(This);
+                if(SUCCEEDED(result))
+                    return S_OK;
+            }
         }
     }
 
@@ -1715,7 +1723,21 @@ static HRESULT nsChannelBSC_on_progress(BSCallback *bsc, ULONG progress, ULONG t
         This->nschannel->content_type = heap_strdupWtoA(status_text);
         break;
     case BINDSTATUS_REDIRECTING:
+        if(This->is_doc_channel && !This->bsc.window->performance_timing->redirect_time)
+            This->bsc.window->performance_timing->redirect_time = get_time_stamp();
         return handle_redirect(This, status_text);
+    case BINDSTATUS_FINDINGRESOURCE:
+        if(This->is_doc_channel && !This->bsc.window->performance_timing->dns_lookup_time)
+            This->bsc.window->performance_timing->dns_lookup_time = get_time_stamp();
+        break;
+    case BINDSTATUS_CONNECTING:
+        if(This->is_doc_channel)
+            This->bsc.window->performance_timing->connect_time = get_time_stamp();
+        break;
+    case BINDSTATUS_SENDINGREQUEST:
+        if(This->is_doc_channel)
+            This->bsc.window->performance_timing->request_time = get_time_stamp();
+        break;
     case BINDSTATUS_BEGINDOWNLOADDATA: {
         IWinInetHttpInfo *http_info;
         DWORD status, size = sizeof(DWORD);
@@ -1769,6 +1791,9 @@ static HRESULT nsChannelBSC_on_response(BSCallback *bsc, DWORD response_code,
     nsChannelBSC *This = nsChannelBSC_from_BSCallback(bsc);
     char *str;
     HRESULT hres;
+
+    if(This->is_doc_channel)
+        This->bsc.window->performance_timing->response_start_time = get_time_stamp();
 
     This->response_processed = TRUE;
     This->nschannel->response_status = response_code;
