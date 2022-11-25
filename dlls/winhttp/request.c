@@ -1449,7 +1449,7 @@ static void CALLBACK connection_collector( TP_CALLBACK_INSTANCE *instance, void 
                 {
                     TRACE("freeing %p\n", netconn);
                     list_remove(&netconn->entry);
-                    netconn_close(netconn);
+                    netconn_release(netconn);
                 }
                 else remaining_connections++;
             }
@@ -1591,7 +1591,7 @@ static DWORD open_connection( struct request *request )
 
         if (netconn_is_alive( netconn )) break;
         TRACE("connection %p no longer alive, closing\n", netconn);
-        netconn_close( netconn );
+        netconn_release( netconn );
         netconn = NULL;
     }
 
@@ -1654,7 +1654,7 @@ static DWORD open_connection( struct request *request )
                 {
                     request->netconn = NULL;
                     free( addressW );
-                    netconn_close( netconn );
+                    netconn_release( netconn );
                     return ret;
                 }
             }
@@ -1668,7 +1668,7 @@ static DWORD open_connection( struct request *request )
             {
                 request->netconn = NULL;
                 free( addressW );
-                netconn_close( netconn );
+                netconn_release( netconn );
                 return ret;
             }
         }
@@ -1687,7 +1687,7 @@ static DWORD open_connection( struct request *request )
     if (netconn->secure && !(request->server_cert = netconn_get_certificate( netconn )))
     {
         free( addressW );
-        netconn_close( netconn );
+        netconn_release( netconn );
         return ERROR_WINHTTP_SECURE_FAILURE;
     }
 
@@ -1704,10 +1704,8 @@ void close_connection( struct request *request )
 {
     if (!request->netconn) return;
 
-    send_callback( &request->hdr, WINHTTP_CALLBACK_STATUS_CLOSING_CONNECTION, 0, 0 );
-    netconn_close( request->netconn );
+    netconn_release( request->netconn );
     request->netconn = NULL;
-    send_callback( &request->hdr, WINHTTP_CALLBACK_STATUS_CONNECTION_CLOSED, 0, 0 );
 }
 
 static DWORD add_host_header( struct request *request, DWORD modifier )
@@ -1868,7 +1866,7 @@ static DWORD refill_buffer( struct request *request, BOOL notify )
 
 static void finished_reading( struct request *request )
 {
-    BOOL close = FALSE;
+    BOOL close = FALSE, notify;
     WCHAR connection[20];
     DWORD size = sizeof(connection);
 
@@ -1884,7 +1882,18 @@ static void finished_reading( struct request *request )
     else if (!wcscmp( request->version, L"HTTP/1.0" )) close = TRUE;
 
     if (close)
-        netconn_close( request->netconn );
+    {
+        size = sizeof(connection);
+        notify = (!query_headers( request, WINHTTP_QUERY_CONNECTION | WINHTTP_QUERY_FLAG_REQUEST_HEADERS,
+                                  NULL, connection, &size, NULL )
+                  || !query_headers( request, WINHTTP_QUERY_PROXY_CONNECTION | WINHTTP_QUERY_FLAG_REQUEST_HEADERS,
+                                     NULL, connection, &size, NULL ))
+                 && !wcsicmp( connection, L"close" );
+
+        if (notify) send_callback( &request->hdr, WINHTTP_CALLBACK_STATUS_CLOSING_CONNECTION, 0, 0 );
+        netconn_release( request->netconn );
+        if (notify) send_callback( &request->hdr, WINHTTP_CALLBACK_STATUS_CONNECTION_CLOSED, 0, 0 );
+    }
     else
         cache_connection( request->netconn );
     request->netconn = NULL;
@@ -2715,7 +2724,7 @@ static DWORD handle_redirect( struct request *request, DWORD status )
                 goto end;
             }
 
-            netconn_close( request->netconn );
+            netconn_release( request->netconn );
             request->netconn = NULL;
             request->content_length = request->content_read = 0;
             request->read_pos = request->read_size = 0;
@@ -3155,7 +3164,7 @@ static void socket_handle_closing( struct object_header *hdr )
     pending_tasks = cancel_queue( &socket->recv_q ) || pending_tasks;
 
     if (pending_tasks)
-        netconn_cancel_io( socket->request->netconn );
+        netconn_cancel_io( socket->netconn );
 }
 
 static BOOL socket_query_option( struct object_header *hdr, DWORD option, void *buffer, DWORD *buflen )
@@ -3181,7 +3190,8 @@ static void socket_destroy( struct object_header *hdr )
     stop_queue( &socket->send_q );
     stop_queue( &socket->recv_q );
 
-    release_object( &socket->request->hdr );
+    netconn_release( socket->netconn );
+    free( socket->read_buffer );
     free( socket->send_frame_buffer );
     free( socket );
 }
@@ -3203,7 +3213,7 @@ static BOOL socket_set_option( struct object_header *hdr, DWORD option, void *bu
             return FALSE;
         }
         socket->keepalive_interval = interval;
-        netconn_set_timeout( socket->request->netconn, FALSE, socket->keepalive_interval );
+        netconn_set_timeout( socket->netconn, FALSE, socket->keepalive_interval );
         SetLastError( ERROR_SUCCESS );
         TRACE( "WINHTTP_OPTION_WEB_SOCKET_KEEPALIVE_INTERVAL %lu.\n", interval);
         return TRUE;
@@ -3253,16 +3263,29 @@ HINTERNET WINAPI WinHttpWebSocketCompleteUpgrade( HINTERNET hrequest, DWORD_PTR 
     socket->hdr.callback = request->hdr.callback;
     socket->hdr.notify_mask = request->hdr.notify_mask;
     socket->hdr.context = context;
+    socket->hdr.flags = request->connect->hdr.flags & WINHTTP_FLAG_ASYNC;
     socket->keepalive_interval = 30000;
     socket->send_buffer_size = request->websocket_send_buffer_size;
+    if (request->read_size)
+    {
+        if (!(socket->read_buffer = malloc( request->read_size )))
+        {
+            ERR( "No memory.\n" );
+            free( socket );
+            release_object( &request->hdr );
+            return NULL;
+        }
+        socket->bytes_in_read_buffer = request->read_size;
+        memcpy( socket->read_buffer, request->read_buf + request->read_pos, request->read_size );
+        request->read_pos = request->read_size = 0;
+    }
     InitializeSRWLock( &socket->send_lock );
     init_queue( &socket->send_q );
     init_queue( &socket->recv_q );
+    netconn_addref( request->netconn );
+    socket->netconn = request->netconn;
 
-    addref_object( &request->hdr );
-    socket->request = request;
-
-    netconn_set_timeout( socket->request->netconn, FALSE, socket->keepalive_interval );
+    netconn_set_timeout( socket->netconn, FALSE, socket->keepalive_interval );
 
     if ((hsocket = alloc_handle( &socket->hdr )))
     {
@@ -3280,7 +3303,7 @@ static DWORD send_bytes( struct socket *socket, char *bytes, int len, int *sent,
 {
     int count;
     DWORD err;
-    err = netconn_send( socket->request->netconn, bytes, len, &count, ovr );
+    err = netconn_send( socket->netconn, bytes, len, &count, ovr );
     if (sent) *sent = count;
     if (err) return err;
     return (count == len || (ovr && count)) ? ERROR_SUCCESS : ERROR_INTERNAL_ERROR;
@@ -3392,7 +3415,7 @@ static DWORD complete_send_frame( struct socket *socket, WSAOVERLAPPED *ovr, con
 {
     DWORD ret, len, i;
 
-    if (!netconn_wait_overlapped_result( socket->request->netconn, ovr, &len ))
+    if (!netconn_wait_overlapped_result( socket->netconn, ovr, &len ))
         return WSAGetLastError();
 
     if (socket->bytes_in_send_frame_buffer)
@@ -3575,7 +3598,7 @@ DWORD WINAPI WinHttpWebSocketSend( HINTERNET hsocket, WINHTTP_WEB_SOCKET_BUFFER_
         return ERROR_INVALID_OPERATION;
     }
 
-    if (socket->request->connect->hdr.flags & WINHTTP_FLAG_ASYNC)
+    if (socket->hdr.flags & WINHTTP_FLAG_ASYNC)
     {
         BOOL async_send, complete_async = FALSE;
         struct socket_send *s;
@@ -3661,17 +3684,18 @@ static DWORD receive_bytes( struct socket *socket, char *buf, DWORD len, DWORD *
     char *ptr = buf;
     int received;
 
-    if (socket->request->read_size)
+    if (socket->bytes_in_read_buffer)
     {
-        size = min( needed, socket->request->read_size );
-        memcpy( ptr, socket->request->read_buf + socket->request->read_pos, size );
-        remove_data( socket->request, size );
+        size = min( needed, socket->bytes_in_read_buffer );
+        memcpy( ptr, socket->read_buffer, size );
+        memmove( socket->read_buffer, socket->read_buffer + size, socket->bytes_in_read_buffer - size );
+        socket->bytes_in_read_buffer -= size;
         needed -= size;
         ptr += size;
     }
     while (size != len)
     {
-        if ((err = netconn_recv( socket->request->netconn, ptr, needed, 0, &received ))) return err;
+        if ((err = netconn_recv( socket->netconn, ptr, needed, 0, &received ))) return err;
         if (!received) break;
         size += received;
         if (!read_full_buffer) break;
@@ -3750,7 +3774,7 @@ static void task_socket_send_pong( void *ctx, BOOL abort )
 
 static DWORD socket_send_pong( struct socket *socket )
 {
-    if (socket->request->connect->hdr.flags & WINHTTP_FLAG_ASYNC)
+    if (socket->hdr.flags & WINHTTP_FLAG_ASYNC)
     {
         BOOL async_send, complete_async = FALSE;
         struct socket_send *s;
@@ -4012,7 +4036,7 @@ DWORD WINAPI WinHttpWebSocketReceive( HINTERNET hsocket, void *buf, DWORD len, D
         return ERROR_INVALID_OPERATION;
     }
 
-    if (socket->request->connect->hdr.flags & WINHTTP_FLAG_ASYNC)
+    if (socket->hdr.flags & WINHTTP_FLAG_ASYNC)
     {
         struct socket_receive *r;
 
@@ -4082,7 +4106,7 @@ static DWORD send_socket_shutdown( struct socket *socket, USHORT status, const v
 
     if (socket->state < SOCKET_STATE_SHUTDOWN) socket->state = SOCKET_STATE_SHUTDOWN;
 
-    if (socket->request->connect->hdr.flags & WINHTTP_FLAG_ASYNC)
+    if (socket->hdr.flags & WINHTTP_FLAG_ASYNC)
     {
         BOOL async_send, complete_async = FALSE;
         struct socket_shutdown *s;
@@ -4240,7 +4264,7 @@ DWORD WINAPI WinHttpWebSocketClose( HINTERNET hsocket, USHORT status, void *reas
     prev_state = socket->state;
     socket->state = SOCKET_STATE_CLOSED;
 
-    if (socket->request->connect->hdr.flags & WINHTTP_FLAG_ASYNC)
+    if (socket->hdr.flags & WINHTTP_FLAG_ASYNC)
     {
         pending_receives = InterlockedIncrement( &socket->hdr.pending_receives );
         cancel_queue( &socket->recv_q );
@@ -4251,12 +4275,12 @@ DWORD WINAPI WinHttpWebSocketClose( HINTERNET hsocket, USHORT status, void *reas
 
     if (pending_receives == 1 && socket->close_frame_received)
     {
-        if (socket->request->connect->hdr.flags & WINHTTP_FLAG_ASYNC)
+        if (socket->hdr.flags & WINHTTP_FLAG_ASYNC)
             socket_close_complete( socket, socket->close_frame_receive_err );
         goto done;
     }
 
-    if (socket->request->connect->hdr.flags & WINHTTP_FLAG_ASYNC)
+    if (socket->hdr.flags & WINHTTP_FLAG_ASYNC)
     {
         struct socket_shutdown *s;
 
