@@ -137,7 +137,7 @@ GLenum wined3d_texture_get_gl_buffer(const struct wined3d_texture *texture)
     return GL_BACK;
 }
 
-static DWORD wined3d_resource_access_from_location(DWORD location)
+static DWORD wined3d_resource_access_from_location(uint32_t location)
 {
     switch (location)
     {
@@ -685,7 +685,7 @@ static void wined3d_texture_evict_sysmem(struct wined3d_texture *texture)
 }
 
 void wined3d_texture_validate_location(struct wined3d_texture *texture,
-        unsigned int sub_resource_idx, DWORD location)
+        unsigned int sub_resource_idx, uint32_t location)
 {
     struct wined3d_texture_sub_resource *sub_resource;
     DWORD previous_locations;
@@ -709,7 +709,7 @@ static void wined3d_texture_set_dirty(struct wined3d_texture *texture)
 }
 
 void wined3d_texture_invalidate_location(struct wined3d_texture *texture,
-        unsigned int sub_resource_idx, DWORD location)
+        unsigned int sub_resource_idx, uint32_t location)
 {
     struct wined3d_texture_sub_resource *sub_resource;
     DWORD previous_locations;
@@ -734,7 +734,7 @@ void wined3d_texture_invalidate_location(struct wined3d_texture *texture,
 }
 
 void wined3d_texture_get_bo_address(const struct wined3d_texture *texture,
-        unsigned int sub_resource_idx, struct wined3d_bo_address *data, DWORD location)
+        unsigned int sub_resource_idx, struct wined3d_bo_address *data, uint32_t location)
 {
     struct wined3d_texture_sub_resource *sub_resource = &texture->sub_resources[sub_resource_idx];
 
@@ -777,7 +777,7 @@ void wined3d_texture_clear_dirty_regions(struct wined3d_texture *texture)
 /* Context activation is done by the caller. Context may be NULL in
  * WINED3D_NO3D mode. */
 BOOL wined3d_texture_load_location(struct wined3d_texture *texture,
-        unsigned int sub_resource_idx, struct wined3d_context *context, DWORD location)
+        unsigned int sub_resource_idx, struct wined3d_context *context, uint32_t location)
 {
     DWORD current = texture->sub_resources[sub_resource_idx].locations;
     BOOL ret;
@@ -1509,7 +1509,7 @@ void wined3d_texture_gl_apply_sampler_desc(struct wined3d_texture_gl *texture_gl
 
 ULONG CDECL wined3d_texture_incref(struct wined3d_texture *texture)
 {
-    ULONG refcount;
+    unsigned int refcount;
 
     TRACE("texture %p, swapchain %p.\n", texture, texture->swapchain);
 
@@ -1602,8 +1602,7 @@ static void wined3d_texture_cleanup_sync(struct wined3d_texture *texture)
 
 ULONG CDECL wined3d_texture_decref(struct wined3d_texture *texture)
 {
-    unsigned int i, sub_resource_count;
-    ULONG refcount;
+    unsigned int i, sub_resource_count, refcount;
 
     TRACE("texture %p, swapchain %p.\n", texture, texture->swapchain);
 
@@ -1786,7 +1785,7 @@ DWORD CDECL wined3d_texture_get_level_count(const struct wined3d_texture *textur
 }
 
 HRESULT CDECL wined3d_texture_set_color_key(struct wined3d_texture *texture,
-        DWORD flags, const struct wined3d_color_key *color_key)
+        uint32_t flags, const struct wined3d_color_key *color_key)
 {
     struct wined3d_device *device = texture->resource.device;
     static const DWORD all_flags = WINED3D_CKEY_DST_BLT | WINED3D_CKEY_DST_OVERLAY
@@ -3460,7 +3459,7 @@ static bool wined3d_texture_gl_clear(struct wined3d_texture *texture,
 
 /* Context activation is done by the caller. */
 static BOOL wined3d_texture_gl_load_location(struct wined3d_texture *texture,
-        unsigned int sub_resource_idx, struct wined3d_context *context, DWORD location)
+        unsigned int sub_resource_idx, struct wined3d_context *context, uint32_t location)
 {
     struct wined3d_texture_sub_resource *sub_resource = &texture->sub_resources[sub_resource_idx];
     struct wined3d_texture_gl *texture_gl = wined3d_texture_gl(texture);
@@ -3834,7 +3833,7 @@ static const struct wined3d_resource_ops texture_resource_ops =
 };
 
 static HRESULT wined3d_texture_init(struct wined3d_texture *texture, const struct wined3d_resource_desc *desc,
-        unsigned int layer_count, unsigned int level_count, DWORD flags, struct wined3d_device *device,
+        unsigned int layer_count, unsigned int level_count, uint32_t flags, struct wined3d_device *device,
         void *parent, const struct wined3d_parent_ops *parent_ops, void *sub_resources,
         const struct wined3d_texture_ops *texture_ops)
 {
@@ -4226,7 +4225,7 @@ HRESULT CDECL wined3d_texture_set_overlay_position(struct wined3d_texture *textu
 
 HRESULT CDECL wined3d_texture_update_overlay(struct wined3d_texture *texture, unsigned int sub_resource_idx,
         const RECT *src_rect, struct wined3d_texture *dst_texture, unsigned int dst_sub_resource_idx,
-        const RECT *dst_rect, DWORD flags)
+        const RECT *dst_rect, uint32_t flags)
 {
     struct wined3d_overlay_info *overlay;
     unsigned int level, dst_level;
@@ -4417,7 +4416,7 @@ HRESULT wined3d_texture_gl_init(struct wined3d_texture_gl *texture_gl, struct wi
 }
 
 HRESULT CDECL wined3d_texture_create(struct wined3d_device *device, const struct wined3d_resource_desc *desc,
-        UINT layer_count, UINT level_count, DWORD flags, const struct wined3d_sub_resource_data *data,
+        UINT layer_count, UINT level_count, uint32_t flags, const struct wined3d_sub_resource_data *data,
         void *parent, const struct wined3d_parent_ops *parent_ops, struct wined3d_texture **texture)
 {
     unsigned int sub_count = level_count * layer_count;
@@ -4763,7 +4762,7 @@ static BOOL wined3d_texture_no3d_prepare_location(struct wined3d_texture *textur
 }
 
 static BOOL wined3d_texture_no3d_load_location(struct wined3d_texture *texture,
-        unsigned int sub_resource_idx, struct wined3d_context *context, DWORD location)
+        unsigned int sub_resource_idx, struct wined3d_context *context, uint32_t location)
 {
     TRACE("texture %p, sub_resource_idx %u, context %p, location %s.\n",
             texture, sub_resource_idx, context, wined3d_debug_location(location));
@@ -5584,7 +5583,7 @@ static BOOL wined3d_texture_vk_prepare_location(struct wined3d_texture *texture,
 }
 
 static BOOL wined3d_texture_vk_load_location(struct wined3d_texture *texture,
-        unsigned int sub_resource_idx, struct wined3d_context *context, DWORD location)
+        unsigned int sub_resource_idx, struct wined3d_context *context, uint32_t location)
 {
     if (!wined3d_texture_vk_prepare_location(texture, sub_resource_idx, context, location))
         return FALSE;
@@ -6068,7 +6067,7 @@ static bool blitter_use_cpu_clear(struct wined3d_rendertarget_view *view)
 
 static void ffp_blitter_clear(struct wined3d_blitter *blitter, struct wined3d_device *device,
         unsigned int rt_count, const struct wined3d_fb_state *fb, unsigned int rect_count, const RECT *clear_rects,
-        const RECT *draw_rect, DWORD flags, const struct wined3d_color *colour, float depth, DWORD stencil)
+        const RECT *draw_rect, uint32_t flags, const struct wined3d_color *colour, float depth, DWORD stencil)
 {
     struct wined3d_rendertarget_view *view, *previous = NULL;
     bool have_identical_size = TRUE;
@@ -6345,7 +6344,7 @@ static void fbo_blitter_destroy(struct wined3d_blitter *blitter, struct wined3d_
 
 static void fbo_blitter_clear(struct wined3d_blitter *blitter, struct wined3d_device *device,
         unsigned int rt_count, const struct wined3d_fb_state *fb, unsigned int rect_count, const RECT *clear_rects,
-        const RECT *draw_rect, DWORD flags, const struct wined3d_color *colour, float depth, DWORD stencil)
+        const RECT *draw_rect, uint32_t flags, const struct wined3d_color *colour, float depth, DWORD stencil)
 {
     struct wined3d_blitter *next;
 
@@ -6458,7 +6457,7 @@ static void raw_blitter_destroy(struct wined3d_blitter *blitter, struct wined3d_
 
 static void raw_blitter_clear(struct wined3d_blitter *blitter, struct wined3d_device *device,
         unsigned int rt_count, const struct wined3d_fb_state *fb, unsigned int rect_count, const RECT *clear_rects,
-        const RECT *draw_rect, DWORD flags, const struct wined3d_color *colour, float depth, DWORD stencil)
+        const RECT *draw_rect, uint32_t flags, const struct wined3d_color *colour, float depth, DWORD stencil)
 {
     struct wined3d_blitter *next;
 
@@ -6826,7 +6825,7 @@ static void vk_blitter_clear_rendertargets(struct wined3d_context_vk *context_vk
 
 static void vk_blitter_clear(struct wined3d_blitter *blitter, struct wined3d_device *device,
         unsigned int rt_count, const struct wined3d_fb_state *fb, unsigned int rect_count, const RECT *clear_rects,
-        const RECT *draw_rect, DWORD flags, const struct wined3d_color *colour, float depth, DWORD stencil)
+        const RECT *draw_rect, uint32_t flags, const struct wined3d_color *colour, float depth, DWORD stencil)
 {
     struct wined3d_device_vk *device_vk = wined3d_device_vk(device);
     struct wined3d_rendertarget_view *view, *previous = NULL;

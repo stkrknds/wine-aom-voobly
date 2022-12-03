@@ -915,7 +915,7 @@
 @ stdcall -syscall NtUserGetCursor()
 @ stdcall -syscall NtUserGetCursorFrameInfo(long long ptr ptr)
 @ stdcall -syscall NtUserGetCursorInfo(ptr)
-@ stub NtUserGetDC
+@ stdcall -syscall NtUserGetDC(long)
 @ stdcall -syscall NtUserGetDCEx(long long long)
 @ stub NtUserGetDManipHookInitFunction
 @ stub NtUserGetDesktopID
@@ -1009,7 +1009,7 @@
 @ stub NtUserGetWindowBand
 @ stub NtUserGetWindowCompositionAttribute
 @ stub NtUserGetWindowCompositionInfo
-@ stub NtUserGetWindowDC
+@ stdcall -syscall NtUserGetWindowDC(long)
 @ stub NtUserGetWindowDisplayAffinity
 @ stub NtUserGetWindowFeedbackSetting
 @ stub NtUserGetWindowGroupId
@@ -1105,7 +1105,7 @@
 @ stub NtUserPostKeyboardInputMessage
 @ stdcall -syscall NtUserPostMessage(long long long long)
 @ stdcall -syscall NtUserPostThreadMessage(long long long long)
-@ stub NtUserPrintWindow
+@ stdcall -syscall NtUserPrintWindow(long long long)
 @ stub NtUserProcessConnect
 @ stub NtUserProcessInkFeedbackCommand
 @ stub NtUserPromoteMouseInPointer
@@ -1300,7 +1300,7 @@
 @ stub NtUserUpdateWindowInputSinkHints
 @ stub NtUserUpdateWindowTrackingInfo
 @ stub NtUserUserHandleGrantAccess
-@ stub NtUserValidateRect
+@ stdcall -syscall NtUserValidateRect(long ptr)
 @ stub NtUserValidateTimerCallback
 @ stdcall -syscall NtUserVkKeyScanEx(long long)
 @ stub NtUserWOWCleanup

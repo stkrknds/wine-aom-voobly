@@ -187,7 +187,7 @@ void wined3d_adapter_cleanup(struct wined3d_adapter *adapter)
 
 ULONG CDECL wined3d_incref(struct wined3d *wined3d)
 {
-    ULONG refcount = InterlockedIncrement(&wined3d->ref);
+    unsigned int refcount = InterlockedIncrement(&wined3d->ref);
 
     TRACE("%p increasing refcount to %u.\n", wined3d, refcount);
 
@@ -196,7 +196,7 @@ ULONG CDECL wined3d_incref(struct wined3d *wined3d)
 
 ULONG CDECL wined3d_decref(struct wined3d *wined3d)
 {
-    ULONG refcount = InterlockedDecrement(&wined3d->ref);
+    unsigned int refcount = InterlockedDecrement(&wined3d->ref);
 
     TRACE("%p decreasing refcount to %u.\n", wined3d, refcount);
 
@@ -1745,7 +1745,7 @@ HRESULT wined3d_output_get_gamma_ramp(struct wined3d_output *output, struct wine
 }
 
 HRESULT CDECL wined3d_adapter_get_identifier(const struct wined3d_adapter *adapter,
-        DWORD flags, struct wined3d_adapter_identifier *identifier)
+        uint32_t flags, struct wined3d_adapter_identifier *identifier)
 {
     TRACE("adapter %p, flags %#x, identifier %p.\n", adapter, flags, identifier);
 
@@ -1933,7 +1933,7 @@ static BOOL wined3d_check_surface_format(const struct wined3d_format *format)
  * restrict it to some should applications need that. */
 HRESULT CDECL wined3d_check_device_format(const struct wined3d *wined3d,
         const struct wined3d_adapter *adapter, enum wined3d_device_type device_type,
-        enum wined3d_format_id adapter_format_id, DWORD usage, unsigned int bind_flags,
+        enum wined3d_format_id adapter_format_id, uint32_t usage, unsigned int bind_flags,
         enum wined3d_resource_type resource_type, enum wined3d_format_id check_format_id)
 {
     const struct wined3d_format *adapter_format, *format;
@@ -1941,7 +1941,7 @@ HRESULT CDECL wined3d_check_device_format(const struct wined3d *wined3d,
     unsigned int format_caps = 0, format_attrs = 0;
     BOOL mipmap_gen_supported = TRUE;
     unsigned int allowed_bind_flags;
-    DWORD allowed_usage;
+    uint32_t allowed_usage;
 
     TRACE("wined3d %p, adapter %p, device_type %s, adapter_format %s, usage %s, "
             "bind_flags %s, resource_type %s, check_format %s.\n",
@@ -2707,7 +2707,7 @@ HRESULT CDECL wined3d_get_device_caps(const struct wined3d_adapter *adapter,
 }
 
 HRESULT CDECL wined3d_device_create(struct wined3d *wined3d, struct wined3d_adapter *adapter,
-        enum wined3d_device_type device_type, HWND focus_window, DWORD flags, BYTE surface_alignment,
+        enum wined3d_device_type device_type, HWND focus_window, uint32_t flags, BYTE surface_alignment,
         const enum wined3d_feature_level *feature_levels, unsigned int feature_level_count,
         struct wined3d_device_parent *device_parent, struct wined3d_device **device)
 {
@@ -3523,7 +3523,7 @@ const struct wined3d_parent_ops wined3d_null_parent_ops =
     wined3d_null_wined3d_object_destroyed,
 };
 
-HRESULT wined3d_init(struct wined3d *wined3d, DWORD flags)
+HRESULT wined3d_init(struct wined3d *wined3d, uint32_t flags)
 {
     wined3d->ref = 1;
     wined3d->flags = flags;

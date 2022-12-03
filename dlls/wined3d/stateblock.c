@@ -360,7 +360,7 @@ static void stateblock_init_lights(struct list *dst_map, const struct list *src_
 
 ULONG CDECL wined3d_stateblock_incref(struct wined3d_stateblock *stateblock)
 {
-    ULONG refcount = InterlockedIncrement(&stateblock->ref);
+    unsigned int refcount = InterlockedIncrement(&stateblock->ref);
 
     TRACE("%p increasing refcount to %u.\n", stateblock, refcount);
 
@@ -577,7 +577,7 @@ void state_cleanup(struct wined3d_state *state)
 
 ULONG CDECL wined3d_stateblock_decref(struct wined3d_stateblock *stateblock)
 {
-    ULONG refcount = InterlockedDecrement(&stateblock->ref);
+    unsigned int refcount = InterlockedDecrement(&stateblock->ref);
 
     TRACE("%p decreasing refcount to %u\n", stateblock, refcount);
 
@@ -1979,7 +1979,7 @@ static void stateblock_state_init_default(struct wined3d_stateblock_state *state
 }
 
 void wined3d_stateblock_state_init(struct wined3d_stateblock_state *state,
-        const struct wined3d_device *device, DWORD flags)
+        const struct wined3d_device *device, uint32_t flags)
 {
     unsigned int i;
 

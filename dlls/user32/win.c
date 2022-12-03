@@ -278,7 +278,7 @@ static BOOL is_default_coord( int x )
  */
 HWND WIN_CreateWindowEx( CREATESTRUCTW *cs, LPCWSTR className, HINSTANCE module, BOOL unicode )
 {
-    UNICODE_STRING class, window_name;
+    UNICODE_STRING class, window_name = {0};
     HWND hwnd, top_child = 0;
     MDICREATESTRUCTW mdi_cs;
     WNDCLASSEXW info;
@@ -401,7 +401,7 @@ HWND WIN_CreateWindowEx( CREATESTRUCTW *cs, LPCWSTR className, HINSTANCE module,
                                  cs->x, cs->y, cs->cx, cs->cy, cs->hwndParent, menu, module,
                                  cs->lpCreateParams, 0, NULL, 0, !unicode );
     if (!hwnd && menu && menu != cs->hMenu) NtUserDestroyMenu( menu );
-    if (!unicode) RtlFreeUnicodeString( &window_name );
+    if (!unicode && window_name.Buffer != name_buf) RtlFreeUnicodeString( &window_name );
     return hwnd;
 }
 
@@ -1426,6 +1426,46 @@ BOOL WINAPI GetProcessDefaultLayout( DWORD *layout )
 BOOL WINAPI SetProcessDefaultLayout( DWORD layout )
 {
     return NtUserSetProcessDefaultLayout( layout );
+}
+
+
+/***********************************************************************
+ *           UpdateWindow (USER32.@)
+ */
+BOOL WINAPI UpdateWindow( HWND hwnd )
+{
+    if (!hwnd)
+    {
+        SetLastError( ERROR_INVALID_WINDOW_HANDLE );
+        return FALSE;
+    }
+
+    return NtUserRedrawWindow( hwnd, NULL, 0, RDW_UPDATENOW | RDW_ALLCHILDREN );
+}
+
+
+/***********************************************************************
+ *           ValidateRgn (USER32.@)
+ */
+BOOL WINAPI ValidateRgn( HWND hwnd, HRGN hrgn )
+{
+    if (!hwnd)
+    {
+        SetLastError( ERROR_INVALID_WINDOW_HANDLE );
+        return FALSE;
+    }
+
+    return NtUserRedrawWindow( hwnd, NULL, hrgn, RDW_VALIDATE );
+}
+
+
+/*************************************************************************
+ *           ScrollWindow (USER32.@)
+ */
+BOOL WINAPI ScrollWindow( HWND hwnd, INT dx, INT dy, const RECT *rect, const RECT *clip_rect )
+{
+    UINT flags = SW_INVALIDATE | SW_ERASE | (rect ? 0 : SW_SCROLLCHILDREN) | SW_NODCCACHE;
+    return NtUserScrollWindowEx( hwnd, dx, dy, rect, clip_rect, 0, NULL, flags );
 }
 
 #ifdef _WIN64

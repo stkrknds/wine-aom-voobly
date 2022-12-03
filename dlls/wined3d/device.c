@@ -163,7 +163,7 @@ void device_context_remove(struct wined3d_device *device, struct wined3d_context
 
 ULONG CDECL wined3d_device_incref(struct wined3d_device *device)
 {
-    ULONG refcount = InterlockedIncrement(&device->ref);
+    unsigned int refcount = InterlockedIncrement(&device->ref);
 
     TRACE("%p increasing refcount to %u.\n", device, refcount);
 
@@ -253,7 +253,7 @@ void wined3d_device_cleanup(struct wined3d_device *device)
 
 ULONG CDECL wined3d_device_decref(struct wined3d_device *device)
 {
-    ULONG refcount = InterlockedDecrement(&device->ref);
+    unsigned int refcount = InterlockedDecrement(&device->ref);
 
     TRACE("%p decreasing refcount to %u.\n", device, refcount);
 
@@ -1187,7 +1187,6 @@ bool wined3d_device_gl_create_bo(struct wined3d_device_gl *device_gl, struct win
 void wined3d_device_gl_delete_opengl_contexts_cs(void *object)
 {
     struct wined3d_device_gl *device_gl = object;
-    struct wined3d_swapchain_gl *swapchain_gl;
     struct wined3d_context_gl *context_gl;
     struct wined3d_context *context;
     struct wined3d_device *device;
@@ -1219,11 +1218,14 @@ void wined3d_device_gl_delete_opengl_contexts_cs(void *object)
     context_release(context);
 
     while (device->context_count)
+        wined3d_context_gl_destroy(wined3d_context_gl(device->contexts[0]));
+
+    if (device_gl->backup_dc)
     {
-        if ((swapchain_gl = wined3d_swapchain_gl(device->contexts[0]->swapchain)))
-            wined3d_swapchain_gl_destroy_contexts(swapchain_gl);
-        else
-            wined3d_context_gl_destroy(wined3d_context_gl(device->contexts[0]));
+        TRACE("Destroying backup wined3d window %p, dc %p.\n", device_gl->backup_wnd, device_gl->backup_dc);
+
+        wined3d_release_dc(device_gl->backup_wnd, device_gl->backup_dc);
+        DestroyWindow(device_gl->backup_wnd);
     }
 }
 
@@ -1248,10 +1250,13 @@ void wined3d_device_gl_create_primary_opengl_context_cs(void *object)
         return;
     }
 
+    context_gl = wined3d_context_gl(context);
+
     if (!wined3d_allocator_init(&device_gl->allocator, ARRAY_SIZE(gl_memory_types), &wined3d_allocator_gl_ops))
     {
         WARN("Failed to initialise allocator.\n");
         context_release(context);
+        wined3d_context_gl_destroy(wined3d_context_gl(device->contexts[0]));
         return;
     }
 
@@ -1261,6 +1266,7 @@ void wined3d_device_gl_create_primary_opengl_context_cs(void *object)
         ERR("Failed to allocate shader private data, hr %#x.\n", hr);
         wined3d_allocator_cleanup(&device_gl->allocator);
         context_release(context);
+        wined3d_context_gl_destroy(wined3d_context_gl(device->contexts[0]));
         return;
     }
 
@@ -1270,10 +1276,9 @@ void wined3d_device_gl_create_primary_opengl_context_cs(void *object)
         device->shader_backend->shader_free_private(device, NULL);
         wined3d_allocator_cleanup(&device_gl->allocator);
         context_release(context);
+        wined3d_context_gl_destroy(wined3d_context_gl(device->contexts[0]));
         return;
     }
-
-    context_gl = wined3d_context_gl(context);
 
     wined3d_ffp_blitter_create(&device->blitter, context_gl->gl_info);
     if (!wined3d_glsl_blitter_create(&device->blitter, device))
@@ -3427,7 +3432,7 @@ static void update_fog_factor(float *fog_factor, struct lights_settings *ls)
 /* Context activation is done by the caller. */
 #define copy_and_next(dest, src, size) memcpy(dest, src, size); dest += (size)
 static HRESULT process_vertices_strided(const struct wined3d_device *device, DWORD dwDestIndex, DWORD dwCount,
-        const struct wined3d_stream_info *stream_info, struct wined3d_buffer *dest, DWORD flags, DWORD dst_fvf)
+        const struct wined3d_stream_info *stream_info, struct wined3d_buffer *dest, uint32_t flags, DWORD dst_fvf)
 {
     enum wined3d_material_color_source diffuse_source, specular_source, ambient_source, emissive_source;
     const struct wined3d_color *material_specular_state_colour;
@@ -3748,7 +3753,7 @@ static HRESULT process_vertices_strided(const struct wined3d_device *device, DWO
 
 HRESULT CDECL wined3d_device_process_vertices(struct wined3d_device *device,
         UINT src_start_idx, UINT dst_idx, UINT vertex_count, struct wined3d_buffer *dst_buffer,
-        const struct wined3d_vertex_declaration *declaration, DWORD flags, DWORD dst_fvf)
+        const struct wined3d_vertex_declaration *declaration, uint32_t flags, DWORD dst_fvf)
 {
     struct wined3d_state *state = device->cs->c.state;
     struct wined3d_stream_info stream_info;
@@ -4337,7 +4342,7 @@ HRESULT CDECL wined3d_device_end_scene(struct wined3d_device *device)
 }
 
 HRESULT CDECL wined3d_device_clear(struct wined3d_device *device, DWORD rect_count,
-        const RECT *rects, DWORD flags, const struct wined3d_color *color, float depth, DWORD stencil)
+        const RECT *rects, uint32_t flags, const struct wined3d_color *color, float depth, DWORD stencil)
 {
     struct wined3d_fb_state *fb = &device->cs->c.state->fb;
 
@@ -5454,7 +5459,7 @@ HRESULT CDECL wined3d_device_set_cursor_properties(struct wined3d_device *device
 }
 
 void CDECL wined3d_device_set_cursor_position(struct wined3d_device *device,
-        int x_screen_space, int y_screen_space, DWORD flags)
+        int x_screen_space, int y_screen_space, uint32_t flags)
 {
     TRACE("device %p, x %d, y %d, flags %#x.\n",
             device, x_screen_space, y_screen_space, flags);
@@ -5848,6 +5853,8 @@ HRESULT CDECL wined3d_device_reset(struct wined3d_device *device,
         device_init_swapchain_state(device, swapchain);
         if (wined3d_settings.logo)
             device_load_logo(device, wined3d_settings.logo);
+
+        hr = device->adapter->adapter_ops->adapter_init_3d(device);
     }
     else
     {
@@ -5857,12 +5864,8 @@ HRESULT CDECL wined3d_device_reset(struct wined3d_device *device,
             wined3d_device_context_set_depth_stencil_view(context, view);
     }
 
-    if (reset_state)
-        hr = device->adapter->adapter_ops->adapter_init_3d(device);
-
-    /* All done. There is no need to reload resources or shaders, this will happen automatically on the
-     * first use
-     */
+    /* All done. There is no need to reload resources or shaders, this will
+     * happen automatically on the first use. */
     return hr;
 }
 
@@ -5892,7 +5895,7 @@ struct wined3d * CDECL wined3d_device_get_wined3d(const struct wined3d_device *d
 }
 
 void CDECL wined3d_device_set_gamma_ramp(const struct wined3d_device *device,
-        UINT swapchain_idx, DWORD flags, const struct wined3d_gamma_ramp *ramp)
+        UINT swapchain_idx, uint32_t flags, const struct wined3d_gamma_ramp *ramp)
 {
     struct wined3d_swapchain *swapchain;
 
@@ -5913,6 +5916,33 @@ void CDECL wined3d_device_get_gamma_ramp(const struct wined3d_device *device,
 
     if ((swapchain = wined3d_device_get_swapchain(device, swapchain_idx)))
         wined3d_swapchain_get_gamma_ramp(swapchain, ramp);
+}
+
+HDC wined3d_device_gl_get_backup_dc(struct wined3d_device_gl *device_gl)
+{
+    TRACE("device_gl %p.\n", device_gl);
+
+    if (!device_gl->backup_dc)
+    {
+        TRACE("Creating the backup window for device %p.\n", device_gl);
+
+        if (!(device_gl->backup_wnd = CreateWindowA(WINED3D_OPENGL_WINDOW_CLASS_NAME, "WineD3D fake window",
+                WS_OVERLAPPEDWINDOW, 10, 10, 10, 10, NULL, NULL, NULL, NULL)))
+        {
+            ERR("Failed to create a window.\n");
+            return NULL;
+        }
+
+        if (!(device_gl->backup_dc = GetDC(device_gl->backup_wnd)))
+        {
+            ERR("Failed to get a DC.\n");
+            DestroyWindow(device_gl->backup_wnd);
+            device_gl->backup_wnd = NULL;
+            return NULL;
+        }
+    }
+
+    return device_gl->backup_dc;
 }
 
 void device_resource_add(struct wined3d_device *device, struct wined3d_resource *resource)

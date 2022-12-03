@@ -1918,6 +1918,13 @@ NTSTATUS WINAPI wow64_NtUserGetCursorInfo( UINT *args )
     return TRUE;
 }
 
+NTSTATUS WINAPI wow64_NtUserGetDC( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+
+    return HandleToUlong( NtUserGetDC( hwnd ));
+}
+
 NTSTATUS WINAPI wow64_NtUserGetDCEx( UINT *args )
 {
     HWND hwnd = get_handle( &args );
@@ -2563,6 +2570,13 @@ NTSTATUS WINAPI wow64_NtUserGetUpdatedClipboardFormats( UINT *args )
     return NtUserGetUpdatedClipboardFormats( formats, size, out_size );
 }
 
+NTSTATUS WINAPI wow64_NtUserGetWindowDC( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+
+    return HandleToUlong( NtUserGetWindowDC( hwnd ));
+}
+
 NTSTATUS WINAPI wow64_NtUserGetWindowPlacement( UINT *args )
 {
     HWND hwnd = get_handle( &args );
@@ -3168,6 +3182,15 @@ NTSTATUS WINAPI wow64_NtUserPostThreadMessage( UINT *args )
     LPARAM lparam = get_ulong( &args );
 
     return NtUserPostThreadMessage( thread, msg, wparam, lparam );
+}
+
+NTSTATUS WINAPI wow64_NtUserPrintWindow( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+    HDC hdc = get_handle( &args );
+    UINT flags = get_ulong( &args );
+
+    return NtUserPrintWindow( hwnd, hdc, flags );
 }
 
 NTSTATUS WINAPI wow64_NtUserQueryInputContext( UINT *args )
@@ -4086,6 +4109,14 @@ NTSTATUS WINAPI wow64_NtUserUpdateInputContext( UINT *args )
     UINT_PTR value = get_ulong( &args );
 
     return NtUserUpdateInputContext( handle, attr, value );
+}
+
+NTSTATUS WINAPI wow64_NtUserValidateRect( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+    const RECT *rect = get_ptr( &args );
+
+    return NtUserValidateRect( hwnd, rect );
 }
 
 NTSTATUS WINAPI wow64_NtUserVkKeyScanEx( UINT *args )

@@ -157,13 +157,13 @@ struct wined3d_cs_present
     RECT src_rect;
     RECT dst_rect;
     unsigned int swap_interval;
-    DWORD flags;
+    uint32_t flags;
 };
 
 struct wined3d_cs_clear
 {
     enum wined3d_cs_op opcode;
-    DWORD flags;
+    uint32_t flags;
     unsigned int rt_count;
     struct wined3d_fb_state fb;
     RECT draw_rect;
@@ -428,7 +428,7 @@ struct wined3d_cs_query_issue
 {
     enum wined3d_cs_op opcode;
     struct wined3d_query *query;
-    DWORD flags;
+    uint32_t flags;
 };
 
 struct wined3d_cs_preload_resource
@@ -450,7 +450,7 @@ struct wined3d_cs_map
     unsigned int sub_resource_idx;
     void **map_ptr;
     const struct wined3d_box *box;
-    DWORD flags;
+    uint32_t flags;
     HRESULT *hr;
 };
 
@@ -479,7 +479,7 @@ struct wined3d_cs_blt_sub_resource
     struct wined3d_resource *src_resource;
     unsigned int src_sub_resource_idx;
     struct wined3d_box src_box;
-    DWORD flags;
+    uint32_t flags;
     struct wined3d_blt_fx fx;
     enum wined3d_texture_filter_type filter;
 };
@@ -719,7 +719,7 @@ static void wined3d_cs_exec_present(struct wined3d_cs *cs, const void *data)
 
 void wined3d_cs_emit_present(struct wined3d_cs *cs, struct wined3d_swapchain *swapchain,
         const RECT *src_rect, const RECT *dst_rect, HWND dst_window_override,
-        unsigned int swap_interval, DWORD flags)
+        unsigned int swap_interval, uint32_t flags)
 {
     struct wined3d_cs_present *op;
     unsigned int i;
@@ -763,7 +763,7 @@ static void wined3d_cs_exec_clear(struct wined3d_cs *cs, const void *data)
 }
 
 void wined3d_cs_emit_clear(struct wined3d_cs *cs, DWORD rect_count, const RECT *rects,
-        DWORD flags, const struct wined3d_color *color, float depth, DWORD stencil)
+        uint32_t flags, const struct wined3d_color *color, float depth, DWORD stencil)
 {
     const struct wined3d_state *state = cs->c.state;
     const struct wined3d_viewport *vp = &state->viewports[0];
@@ -3462,6 +3462,7 @@ struct wined3d_cs *wined3d_cs_create(struct wined3d_device *device,
         }
     }
 
+    TRACE("Created command stream %p.\n", cs);
     return cs;
 
 fail:
@@ -4406,7 +4407,7 @@ static void wined3d_command_list_destroy_object(void *object)
 
 ULONG CDECL wined3d_command_list_incref(struct wined3d_command_list *list)
 {
-    ULONG refcount = InterlockedIncrement(&list->refcount);
+    unsigned int refcount = InterlockedIncrement(&list->refcount);
 
     TRACE("%p increasing refcount to %u.\n", list, refcount);
 
@@ -4415,7 +4416,7 @@ ULONG CDECL wined3d_command_list_incref(struct wined3d_command_list *list)
 
 ULONG CDECL wined3d_command_list_decref(struct wined3d_command_list *list)
 {
-    ULONG refcount = InterlockedDecrement(&list->refcount);
+    unsigned int refcount = InterlockedDecrement(&list->refcount);
     struct wined3d_device *device = list->device;
     const struct wined3d_cs_packet *packet;
     SIZE_T i, offset;

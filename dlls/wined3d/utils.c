@@ -4929,7 +4929,7 @@ const char *wined3d_debug_view_desc(const struct wined3d_view_desc *d, const str
                 d->u.texture.layer_idx, d->u.texture.layer_count);
 }
 
-const char *debug_d3dusage(DWORD usage)
+const char *debug_d3dusage(uint32_t usage)
 {
     struct debug_buffer buffer;
 
@@ -6960,7 +6960,7 @@ int wined3d_ffp_vertex_program_key_compare(const void *key, const struct wine_rb
     return memcmp(ka, kb, sizeof(*ka));
 }
 
-const char *wined3d_debug_location(DWORD location)
+const char *wined3d_debug_location(uint32_t location)
 {
     struct debug_buffer buffer;
     const char *prefix = "";

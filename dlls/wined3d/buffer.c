@@ -131,7 +131,7 @@ static void wined3d_buffer_invalidate_range(struct wined3d_buffer *buffer, DWORD
         ERR("Buffer %p does not have any up to date location.\n", buffer);
 }
 
-void wined3d_buffer_invalidate_location(struct wined3d_buffer *buffer, DWORD location)
+void wined3d_buffer_invalidate_location(struct wined3d_buffer *buffer, uint32_t location)
 {
     wined3d_buffer_invalidate_range(buffer, location, 0, 0);
 }
@@ -494,7 +494,7 @@ static inline unsigned int fixup_transformed_pos(struct wined3d_vec4 *p)
 
 ULONG CDECL wined3d_buffer_incref(struct wined3d_buffer *buffer)
 {
-    ULONG refcount = InterlockedIncrement(&buffer->resource.ref);
+    unsigned int refcount = InterlockedIncrement(&buffer->resource.ref);
 
     TRACE("%p increasing refcount to %u.\n", buffer, refcount);
 
@@ -575,7 +575,7 @@ static void wined3d_buffer_unload_location(struct wined3d_buffer *buffer,
 }
 
 BOOL wined3d_buffer_load_location(struct wined3d_buffer *buffer,
-        struct wined3d_context *context, DWORD location)
+        struct wined3d_context *context, uint32_t location)
 {
     struct wined3d_bo_address src, dst;
     struct wined3d_range range;
@@ -766,7 +766,7 @@ void wined3d_buffer_cleanup(struct wined3d_buffer *buffer)
 
 ULONG CDECL wined3d_buffer_decref(struct wined3d_buffer *buffer)
 {
-    ULONG refcount = InterlockedDecrement(&buffer->resource.ref);
+    unsigned int refcount = InterlockedDecrement(&buffer->resource.ref);
 
     TRACE("%p decreasing refcount to %u.\n", buffer, refcount);
 

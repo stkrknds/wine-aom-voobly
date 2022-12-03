@@ -1933,7 +1933,7 @@ static void shader_dump_sync_flags(struct wined3d_string_buffer *buffer, DWORD s
         shader_addline(buffer, "_unknown_flags(%#x)", sync_flags);
 }
 
-static void shader_dump_precise_flags(struct wined3d_string_buffer *buffer, DWORD flags)
+static void shader_dump_precise_flags(struct wined3d_string_buffer *buffer, uint32_t flags)
 {
     if (!(flags & WINED3DSI_PRECISE_XYZW))
         return;
@@ -3402,7 +3402,7 @@ static HRESULT shader_set_function(struct wined3d_shader *shader, struct wined3d
 
 ULONG CDECL wined3d_shader_incref(struct wined3d_shader *shader)
 {
-    ULONG refcount = InterlockedIncrement(&shader->ref);
+    unsigned int refcount = InterlockedIncrement(&shader->ref);
 
     TRACE("%p increasing refcount to %u.\n", shader, refcount);
 
@@ -3431,7 +3431,7 @@ static void wined3d_shader_destroy_object(void *object)
 
 ULONG CDECL wined3d_shader_decref(struct wined3d_shader *shader)
 {
-    ULONG refcount = InterlockedDecrement(&shader->ref);
+    unsigned int refcount = InterlockedDecrement(&shader->ref);
 
     TRACE("%p decreasing refcount to %u.\n", shader, refcount);
 

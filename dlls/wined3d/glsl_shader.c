@@ -3401,7 +3401,7 @@ static void shader_glsl_get_coord_size(enum wined3d_shader_resource_type resourc
 }
 
 static void shader_glsl_get_sample_function(const struct wined3d_shader_context *ctx,
-        DWORD resource_idx, DWORD sampler_idx, DWORD flags, struct glsl_sample_function *sample_function)
+        DWORD resource_idx, DWORD sampler_idx, uint32_t flags, struct glsl_sample_function *sample_function)
 {
     enum wined3d_shader_resource_type resource_type;
     struct shader_glsl_ctx_priv *priv = ctx->backend_data;
@@ -4847,7 +4847,7 @@ static void shader_glsl_loop(const struct wined3d_shader_instruction *ins)
     const struct wined3d_shader *shader = ins->ctx->shader;
     const struct wined3d_shader_lconst *constant;
     struct wined3d_string_buffer *reg_name;
-    const DWORD *control_values = NULL;
+    const unsigned int *control_values = NULL;
 
     if (ins->ctx->reg_maps->shader_version.major < 4)
     {
@@ -4945,7 +4945,7 @@ static void shader_glsl_rep(const struct wined3d_shader_instruction *ins)
     const struct wined3d_shader *shader = ins->ctx->shader;
     const struct wined3d_shader_lconst *constant;
     struct glsl_src_param src0_param;
-    const DWORD *control_values = NULL;
+    const unsigned int *control_values = NULL;
 
     /* Try to hardcode local values to help the GLSL compiler to unroll and optimize the loop */
     if (ins->src[0].reg.type == WINED3DSPR_CONSTINT)
@@ -7590,7 +7590,7 @@ static void shader_glsl_generate_color_output(struct wined3d_string_buffer *buff
     }
     else
     {
-        DWORD mask = shader->reg_maps.rt_mask;
+        uint32_t mask = shader->reg_maps.rt_mask;
 
         while (mask)
         {
@@ -7841,7 +7841,7 @@ static GLuint shader_glsl_generate_fragment_shader(const struct wined3d_context_
         }
         else
         {
-            DWORD mask = reg_maps->rt_mask;
+            uint32_t mask = reg_maps->rt_mask;
 
             while (mask)
             {
@@ -13271,7 +13271,7 @@ static DWORD glsl_blitter_blit(struct wined3d_blitter *blitter, enum wined3d_bli
 
 static void glsl_blitter_clear(struct wined3d_blitter *blitter, struct wined3d_device *device,
         unsigned int rt_count, const struct wined3d_fb_state *fb, unsigned int rect_count, const RECT *clear_rects,
-        const RECT *draw_rect, DWORD flags, const struct wined3d_color *color, float depth, DWORD stencil)
+        const RECT *draw_rect, uint32_t flags, const struct wined3d_color *color, float depth, DWORD stencil)
 {
     struct wined3d_blitter *next;
 

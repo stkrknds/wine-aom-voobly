@@ -176,6 +176,15 @@ static CRITICAL_SECTION_DEBUG monitor_handles_cs_debug =
 };
 static CRITICAL_SECTION monitor_handles_cs = { &monitor_handles_cs_debug, -1, 0, 0, 0, 0 };
 
+static CRITICAL_SECTION printers_cs;
+static CRITICAL_SECTION_DEBUG printers_cs_debug =
+{
+    0, 0, &printers_cs,
+    { &printers_cs_debug.ProcessLocksList, &printers_cs_debug.ProcessLocksList },
+    0, 0, { (DWORD_PTR)(__FILE__ ": printers_cs") }
+};
+static CRITICAL_SECTION printers_cs = { &printers_cs_debug, -1, 0, 0, 0, 0 };
+
 /* ############################### */
 
 typedef struct {
@@ -193,14 +202,7 @@ typedef struct {
     LPWSTR          dllname;
     PMONITORUI      monitorUI;
     MONITOR2        monitor;
-    BOOL (WINAPI *old_EnumPorts)(LPWSTR,DWORD,LPBYTE,DWORD,LPDWORD,LPDWORD);
-    BOOL (WINAPI *old_OpenPort)(LPWSTR,PHANDLE);
-    BOOL (WINAPI *old_OpenPortEx)(LPWSTR,LPWSTR,PHANDLE,struct _MONITOR *);
-    BOOL (WINAPI *old_AddPort)(LPWSTR,HWND,LPWSTR);
-    BOOL (WINAPI *old_AddPortEx)(LPWSTR,DWORD,LPBYTE,LPWSTR);
-    BOOL (WINAPI *old_ConfigurePort)(LPWSTR,HWND,LPWSTR);
-    BOOL (WINAPI *old_DeletePort)(LPWSTR,HWND,LPWSTR);
-    BOOL (WINAPI *old_XcvOpenPort)(LPCWSTR,ACCESS_MASK,PHANDLE);
+    const MONITOREX *monitorex;
     HANDLE          hmon;
     HMODULE         hdll;
     DWORD           refcount;
@@ -214,17 +216,67 @@ typedef struct {
     LPCWSTR  versionsubdir;
 } printenv_t;
 
+#define MAX_JOB_ID 99999
+
 typedef struct {
+    struct list entry;
+    DWORD id;
+    WCHAR *filename;
+    WCHAR *port;
+    WCHAR *document_title;
+    DEVMODEW *devmode;
+    HANDLE hf;
+} job_info_t;
+
+typedef struct {
+    WCHAR *name;
+    struct list entry;
+    LONG ref;
+
+    WCHAR *port;
+
+    CRITICAL_SECTION jobs_cs;
+    struct list jobs;
+} printer_info_t;
+
+typedef struct {
+    enum
+    {
+        HANDLE_SERVER,
+        HANDLE_PRINTER,
+        HANDLE_XCV,
+        HANDLE_JOB,
+    } type;
+} handle_header_t;
+
+typedef handle_header_t server_t;
+
+typedef struct {
+    handle_header_t header;
+    monitor_t *pm;
+    HANDLE hxcv;
+} xcv_t;
+
+typedef struct {
+    handle_header_t header;
+    HANDLE hf;
+} job_t;
+
+typedef struct {
+    handle_header_t header;
+    printer_info_t *info;
     LPWSTR name;
-    LPWSTR printername;
-    monitor_t * pm;
-    HANDLE hXcv;
+    DEVMODEW *devmode;
+    job_info_t *doc;
 } printer_t;
 
 /* ############################### */
 
 static struct list monitor_handles = LIST_INIT( monitor_handles );
 static monitor_t * pm_localport;
+
+static struct list printers = LIST_INIT(printers);
+static LONG last_job_id;
 
 static const WCHAR fmt_driversW[] =
     L"System\\CurrentControlSet\\control\\Print\\Environments\\%s\\Drivers%s";
@@ -274,6 +326,7 @@ static const DWORD di_sizeof[] = {0, sizeof(DRIVER_INFO_1W), sizeof(DRIVER_INFO_
                                      sizeof(DRIVER_INFO_5W), sizeof(DRIVER_INFO_6W),
                                   0, sizeof(DRIVER_INFO_8W)};
 
+static BOOL WINAPI fpClosePrinter(HANDLE);
 
 /******************************************************************
  *  apd_copyfile [internal]
@@ -443,6 +496,117 @@ static void monitor_unloadall(void)
     LeaveCriticalSection(&monitor_handles_cs);
 }
 
+static printer_info_t *find_printer_info(const WCHAR *name, unsigned int len)
+{
+    printer_info_t *info;
+
+    EnterCriticalSection(&printers_cs);
+    LIST_FOR_EACH_ENTRY(info, &printers, printer_info_t, entry)
+    {
+        if (!wcsncmp(info->name, name, len) && (len == -1 || !info->name[len]))
+        {
+            InterlockedIncrement(&info->ref);
+            LeaveCriticalSection(&printers_cs);
+            return info;
+        }
+    }
+    LeaveCriticalSection(&printers_cs);
+    return NULL;
+}
+
+static printer_info_t* get_printer_info(const WCHAR *name)
+{
+    HKEY hkey, hprinter = NULL;
+    printer_info_t *info;
+    WCHAR port[MAX_PATH];
+    LSTATUS ret;
+    DWORD size;
+
+    EnterCriticalSection(&printers_cs);
+    info = find_printer_info(name, -1);
+    if (info)
+    {
+        LeaveCriticalSection(&printers_cs);
+        return info;
+    }
+
+    ret = RegCreateKeyW(HKEY_LOCAL_MACHINE, printersW, &hkey);
+    if (ret == ERROR_SUCCESS)
+        ret = RegOpenKeyW(hkey, name, &hprinter);
+    RegCloseKey(hkey);
+    size = sizeof(port);
+    if (ret == ERROR_SUCCESS)
+        ret = RegQueryValueExW(hprinter, L"Port", 0, NULL, (BYTE*)port, &size);
+    RegCloseKey(hprinter);
+    if (ret != ERROR_SUCCESS)
+    {
+        LeaveCriticalSection(&printers_cs);
+        return NULL;
+    }
+
+    if ((info = calloc(1, sizeof(*info))) && (info->name = wcsdup(name)) &&
+            (info->port = wcsdup(port)))
+    {
+        info->ref = 1;
+        list_add_head(&printers, &info->entry);
+        InitializeCriticalSection(&info->jobs_cs);
+        list_init(&info->jobs);
+    }
+    else if (info)
+    {
+        free(info->name);
+        free(info);
+        info = NULL;
+    }
+    LeaveCriticalSection(&printers_cs);
+
+    return info;
+}
+
+static void free_job(job_info_t *job)
+{
+    list_remove(&job->entry);
+    free(job->filename);
+    free(job->port);
+    free(job->document_title);
+    free(job->devmode);
+    CloseHandle(job->hf);
+    free(job);
+}
+
+static void release_printer_info(printer_info_t *info)
+{
+    if (!info)
+        return;
+
+    if (!InterlockedDecrement(&info->ref))
+    {
+        EnterCriticalSection(&printers_cs);
+        list_remove(&info->entry);
+        LeaveCriticalSection(&printers_cs);
+
+        free(info->name);
+        free(info->port);
+        DeleteCriticalSection(&info->jobs_cs);
+        while (!list_empty(&info->jobs))
+        {
+            job_info_t *job = LIST_ENTRY(list_head(&info->jobs), job_info_t, entry);
+            free_job(job);
+        }
+        free(info);
+    }
+}
+
+static DEVMODEW * dup_devmode(const DEVMODEW *dm)
+{
+    DEVMODEW *ret;
+
+    if (!dm) return NULL;
+    ret = malloc(dm->dmSize + dm->dmDriverExtra);
+    if (ret) memcpy(ret, dm, dm->dmSize + dm->dmDriverExtra);
+    return ret;
+}
+
 static LONG WINAPI CreateKey(HANDLE hcKey, LPCWSTR pszSubKey, DWORD dwOptions,
                 REGSAM samDesired, PSECURITY_ATTRIBUTES pSecurityAttributes,
                 PHANDLE phckResult, PDWORD pdwDisposition, HANDLE hSpooler)
@@ -528,6 +692,48 @@ static MONITORREG monreg =
     EnumValue,
     QueryValue
 };
+
+static BOOL WINAPI monitor2_EnumPorts(HANDLE hmon, WCHAR *name, DWORD level,
+        BYTE *buf, DWORD size, DWORD *needed, DWORD *count)
+{
+    return ((MONITOREX*)hmon)->Monitor.pfnEnumPorts(name, level,
+            buf, size, needed, count);
+}
+
+static BOOL WINAPI monitor2_OpenPort(HANDLE hmon, WCHAR *name, HANDLE *hport)
+{
+    return ((MONITOREX*)hmon)->Monitor.pfnOpenPort(name, hport);
+}
+
+static BOOL WINAPI monitor2_AddPort(HANDLE hmon, WCHAR *name,
+        HWND hwnd, WCHAR *monitor_name)
+{
+    return ((MONITOREX*)hmon)->Monitor.pfnAddPort(name, hwnd, monitor_name);
+}
+
+static BOOL WINAPI monitor2_AddPortEx(HANDLE hmon, WCHAR *name, DWORD level,
+        BYTE *buf, WCHAR *monitor_name)
+{
+    return ((MONITOREX*)hmon)->Monitor.pfnAddPortEx(name, level, buf, monitor_name);
+}
+
+static BOOL WINAPI monitor2_ConfigurePort(HANDLE hmon, WCHAR *name,
+        HWND hwnd, WCHAR *port_name)
+{
+    return ((MONITOREX*)hmon)->Monitor.pfnConfigurePort(name, hwnd, port_name);
+}
+
+static BOOL WINAPI monitor2_DeletePort(HANDLE hmon, WCHAR *name,
+        HWND hwnd, WCHAR *port_name)
+{
+    return ((MONITOREX*)hmon)->Monitor.pfnDeletePort(name, hwnd, port_name);
+}
+
+static BOOL WINAPI monitor2_XcvOpenPort(HANDLE hmon, const WCHAR *obj,
+        ACCESS_MASK granted_access, HANDLE *hxcv)
+{
+    return ((MONITOREX*)hmon)->Monitor.pfnXcvOpenPort(obj, granted_access, hxcv);
+}
 
 /******************************************************************
  * monitor_load [internal]
@@ -664,35 +870,39 @@ static monitor_t * monitor_load(LPCWSTR name, LPWSTR dllname)
             }
         }
         else if (pInitializePrintMonitor && regroot) {
-            MONITOREX *pmonitorEx;
 
-            pmonitorEx = pInitializePrintMonitor(regroot);
+            pm->monitorex = pInitializePrintMonitor(regroot);
             TRACE("%p: LPMONITOREX from %s,InitializePrintMonitor(%s)\n",
-                    pmonitorEx, debugstr_w(driver), debugstr_w(regroot));
-            if (pmonitorEx)
+                    pm->monitorex, debugstr_w(driver), debugstr_w(regroot));
+            if (pm->monitorex)
             {
-                /* Layout of MONITOREX and MONITOR2 mostly matches */
-                memcpy(&pm->monitor, pmonitorEx, min(pmonitorEx->dwMonitorSize + sizeof(void *), sizeof(pm->monitor)));
-                /* MONITOREX.dwMonitorSize doesn't include the size field, while MONITOR2.cbSize does */
-                pm->monitor.cbSize += sizeof(void *);
+                pm->hmon = (HANDLE)pm->monitorex;
 
-                pm->old_EnumPorts = pmonitorEx->Monitor.pfnEnumPorts;
-                pm->old_OpenPort = pmonitorEx->Monitor.pfnOpenPort;
-                pm->old_OpenPortEx = pmonitorEx->Monitor.pfnOpenPortEx;
-                pm->old_AddPort = pmonitorEx->Monitor.pfnAddPort;
-                pm->old_AddPortEx = pmonitorEx->Monitor.pfnAddPortEx;
-                pm->old_ConfigurePort = pmonitorEx->Monitor.pfnConfigurePort;
-                pm->old_DeletePort = pmonitorEx->Monitor.pfnDeletePort;
-                pm->old_XcvOpenPort = pmonitorEx->Monitor.pfnXcvOpenPort;
-
-                pm->monitor.pfnEnumPorts = NULL;
-                pm->monitor.pfnOpenPort = NULL;
-                pm->monitor.pfnOpenPortEx = NULL;
-                pm->monitor.pfnAddPort = NULL;
-                pm->monitor.pfnAddPortEx = NULL;
-                pm->monitor.pfnConfigurePort = NULL;
-                pm->monitor.pfnDeletePort = NULL;
-                pm->monitor.pfnXcvOpenPort = NULL;
+                pm->monitor.cbSize = sizeof(pm->monitor);
+                if (pm->monitorex->Monitor.pfnEnumPorts)
+                    pm->monitor.pfnEnumPorts = monitor2_EnumPorts;
+                if (pm->monitorex->Monitor.pfnOpenPort)
+                    pm->monitor.pfnOpenPort = monitor2_OpenPort;
+                pm->monitor.pfnStartDocPort = pm->monitorex->Monitor.pfnStartDocPort;
+                pm->monitor.pfnWritePort = pm->monitorex->Monitor.pfnWritePort;
+                pm->monitor.pfnReadPort = pm->monitorex->Monitor.pfnReadPort;
+                pm->monitor.pfnEndDocPort = pm->monitorex->Monitor.pfnEndDocPort;
+                pm->monitor.pfnClosePort = pm->monitorex->Monitor.pfnClosePort;
+                if (pm->monitorex->Monitor.pfnAddPort)
+                    pm->monitor.pfnAddPort = monitor2_AddPort;
+                if (pm->monitorex->Monitor.pfnAddPortEx)
+                    pm->monitor.pfnAddPortEx = monitor2_AddPortEx;
+                if (pm->monitorex->Monitor.pfnConfigurePort)
+                    pm->monitor.pfnConfigurePort = monitor2_ConfigurePort;
+                if (pm->monitorex->Monitor.pfnDeletePort)
+                    pm->monitor.pfnDeletePort = monitor2_DeletePort;
+                pm->monitor.pfnGetPrinterDataFromPort =
+                    pm->monitorex->Monitor.pfnGetPrinterDataFromPort;
+                pm->monitor.pfnSetPortTimeOuts = pm->monitorex->Monitor.pfnSetPortTimeOuts;
+                if (pm->monitorex->Monitor.pfnXcvOpenPort)
+                    pm->monitor.pfnXcvOpenPort = monitor2_XcvOpenPort;
+                pm->monitor.pfnXcvDataPort = pm->monitorex->Monitor.pfnXcvDataPort;
+                pm->monitor.pfnXcvClosePort = pm->monitorex->Monitor.pfnXcvClosePort;
             }
         }
 
@@ -787,8 +997,6 @@ static monitor_t * monitor_loadui(monitor_t * pm)
     /* building (",XcvMonitor %s",pm->name) not needed yet */
     if (pm->monitor.pfnXcvOpenPort)
         res = pm->monitor.pfnXcvOpenPort(pm->hmon, L"", SERVER_ACCESS_ADMINISTER, &hXcv);
-    else if (pm->old_XcvOpenPort)
-        res = pm->old_XcvOpenPort(L"", SERVER_ACCESS_ADMINISTER, &hXcv);
     TRACE("got %lu with %p\n", res, hXcv);
     if (res) {
         res = pm->monitor.pfnXcvDataPort(hXcv, L"MonitorUI", NULL, 0, (BYTE *) buffer, sizeof(buffer), &len);
@@ -818,6 +1026,11 @@ static monitor_t * monitor_load_by_port(LPCWSTR portname)
     DWORD   len;
 
     TRACE("(%s)\n", debugstr_w(portname));
+
+    /* wine specific ports */
+    if (portname[0] == '|' || portname[0] == '/' ||
+            !wcsncmp(portname, L"LPR:", 4) || !wcsncmp(portname, L"CUPS:", 5))
+        return monitor_load(L"Local Port", NULL);
 
     /* Try the Local Monitor first */
     if (RegOpenKeyW(HKEY_LOCAL_MACHINE, winnt_cv_portsW, &hroot) == ERROR_SUCCESS) {
@@ -1105,19 +1318,6 @@ static DWORD get_local_printprocessors(LPWSTR regpathW, LPBYTE pPPInfo, DWORD cb
     return needed;
 }
 
-static BOOL wrap_EnumPorts(monitor_t *pm, LPWSTR name, DWORD level, LPBYTE buffer,
-                           DWORD size, LPDWORD needed, LPDWORD returned)
-{
-    if (pm->monitor.pfnEnumPorts)
-        return pm->monitor.pfnEnumPorts(pm->hmon, name, level, buffer, size, needed, returned);
-
-    if (pm->old_EnumPorts)
-        return pm->old_EnumPorts(name, level, buffer, size, needed, returned);
-
-    WARN("EnumPorts is not implemented by monitor\n");
-    return FALSE;
-}
-
 /******************************************************************
  * enumerate the local Ports from all loaded monitors (internal)
  *
@@ -1154,16 +1354,18 @@ static DWORD get_ports_from_all_monitors(DWORD level, LPBYTE pPorts, DWORD cbBuf
 
     LIST_FOR_EACH_ENTRY(pm, &monitor_handles, monitor_t, entry)
     {
-        if (pm->monitor.pfnEnumPorts || pm->old_EnumPorts) {
+        if (pm->monitor.pfnEnumPorts) {
             pi_needed = 0;
             pi_returned = 0;
-            res = wrap_EnumPorts(pm, NULL, level, pi_buffer, pi_allocated, &pi_needed, &pi_returned);
+            res = pm->monitor.pfnEnumPorts(pm->hmon, NULL, level, pi_buffer,
+                    pi_allocated, &pi_needed, &pi_returned);
             if (!res && (GetLastError() == ERROR_INSUFFICIENT_BUFFER)) {
                 /* Do not use realloc (we do not need the old data in the buffer) */
                 free(pi_buffer);
                 pi_buffer = malloc(pi_needed);
                 pi_allocated = (pi_buffer) ? pi_needed : 0;
-                res = wrap_EnumPorts(pm, NULL, level, pi_buffer, pi_allocated, &pi_needed, &pi_returned);
+                res = pm->monitor.pfnEnumPorts(pm->hmon, NULL, level,
+                        pi_buffer, pi_allocated, &pi_needed, &pi_returned);
             }
             TRACE("(%s) got %ld with %ld (need %ld byte for %ld entries)\n",
                   debugstr_w(pm->name), res, GetLastError(), pi_needed, pi_returned);
@@ -1357,141 +1559,193 @@ static HMODULE driver_load(const printenv_t * env, LPWSTR dllname)
     return hui;
 }
 
-/******************************************************************
- *  printer_free
- *  free the data pointer of an opened printer
- */
-static VOID printer_free(printer_t * printer)
+static job_info_t * get_job(printer_info_t *info, DWORD job_id)
 {
-    if (printer->hXcv)
+    job_info_t *job;
+
+    LIST_FOR_EACH_ENTRY(job, &info->jobs, job_info_t, entry)
     {
-        if (printer->pm->monitor.pfnXcvClosePort)
-            printer->pm->monitor.pfnXcvClosePort(printer->hXcv);
+        if(job->id == job_id)
+            return job;
     }
-
-    monitor_unload(printer->pm);
-
-    free(printer->printername);
-    free(printer->name);
-    free(printer);
+    return NULL;
 }
 
-/******************************************************************
- *  printer_alloc_handle
- *  alloc a printer handle and remember the data pointer in the printer handle table
- *
- */
-static HANDLE printer_alloc_handle(LPCWSTR name, LPPRINTER_DEFAULTSW pDefault)
+static HANDLE server_alloc_handle(const WCHAR *name, BOOL *stop_search)
 {
-    WCHAR servername[MAX_COMPUTERNAME_LENGTH + 1];
-    printer_t *printer = NULL;
-    LPCWSTR printername;
-    HKEY    hkeyPrinters;
-    HKEY    hkeyPrinter;
-    DWORD   len;
+    server_t *server;
 
-    if (copy_servername_from_name(name, servername)) {
-        FIXME("server %s not supported\n", debugstr_w(servername));
+    *stop_search = FALSE;
+    if (name)
+        return NULL;
+
+    server = malloc(sizeof(*server));
+    if (!server)
+    {
+        *stop_search = TRUE;
+        return NULL;
+    }
+    server->type = HANDLE_SERVER;
+    return (HANDLE)server;
+}
+
+static HANDLE xcv_alloc_handle(const WCHAR *name, PRINTER_DEFAULTSW *def, BOOL *stop_search)
+{
+    static const WCHAR xcv_monitor[] = L"XcvMonitor ";
+    static const WCHAR xcv_port[] = L"XcvPort ";
+    BOOL mon, port;
+    xcv_t *xcv;
+
+    *stop_search = FALSE;
+    if (name[0] != ',')
+        return NULL;
+
+    name++;
+    while (*name == ' ')
+        name++;
+
+    mon = !wcsncmp(name, xcv_monitor, ARRAY_SIZE(xcv_monitor) - 1);
+    if (mon)
+    {
+        name += ARRAY_SIZE(xcv_monitor) - 1;
+    }
+    else
+    {
+        port = !wcsncmp(name, xcv_port, ARRAY_SIZE(xcv_port) - 1);
+        name += ARRAY_SIZE(xcv_port) - 1;
+    }
+    if (!port && !mon)
+        return NULL;
+
+    *stop_search = TRUE;
+    xcv = calloc(1, sizeof(*xcv));
+    if (!xcv)
+        return NULL;
+    xcv->header.type = HANDLE_XCV;
+
+    if (mon)
+        xcv->pm = monitor_load(name, NULL);
+    else
+        xcv->pm = monitor_load_by_port(name);
+    if (!xcv->pm)
+    {
+        free(xcv);
+        SetLastError(ERROR_UNKNOWN_PORT);
+        return NULL;
+    }
+
+    if (xcv->pm->monitor.pfnXcvOpenPort)
+    {
+        xcv->pm->monitor.pfnXcvOpenPort(xcv->pm->hmon, name,
+                def ? def->DesiredAccess : 0, &xcv->hxcv);
+    }
+    if (!xcv->hxcv)
+    {
+        fpClosePrinter((HANDLE)xcv);
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return NULL;
+    }
+    return (HANDLE)xcv;
+}
+
+static HANDLE job_alloc_handle(const WCHAR *name, BOOL *stop_search)
+{
+    static const WCHAR jobW[] = L"Job ";
+
+    unsigned int name_len, job_id;
+    printer_info_t *printer_info;
+    job_info_t *job_info;
+    job_t *job;
+
+    *stop_search = FALSE;
+    name_len = 0;
+    for (name_len = 0; name[name_len] != ','; name_len++)
+    {
+        if (!name[name_len])
+            return NULL;
+    }
+
+    for (job_id = name_len + 1; name[job_id] == ' '; job_id++);
+    if (!name[job_id])
+        return NULL;
+
+    if (wcsncmp(name + job_id, jobW, ARRAY_SIZE(jobW) - 1))
+        return NULL;
+
+    *stop_search = TRUE;
+    job_id += ARRAY_SIZE(jobW) - 1;
+    job_id = wcstoul(name + job_id, NULL, 10);
+
+    printer_info = find_printer_info(name, name_len);
+    if (!printer_info)
+    {
         SetLastError(ERROR_INVALID_PRINTER_NAME);
         return NULL;
     }
 
-    printername = get_basename_from_name(name);
-    if (name != printername) TRACE("converted %s to %s\n", debugstr_w(name), debugstr_w(printername));
+    EnterCriticalSection(&printer_info->jobs_cs);
 
-    /* an empty printername is invalid */
-    if (printername && (!printername[0])) {
-        SetLastError(ERROR_INVALID_PARAMETER);
+    job_info = get_job(printer_info, job_id);
+    if (!job_info)
+    {
+        LeaveCriticalSection(&printer_info->jobs_cs);
+        release_printer_info(printer_info);
+        SetLastError(ERROR_INVALID_PRINTER_NAME);
         return NULL;
     }
 
-    printer = calloc(1, sizeof(printer_t));
-    if (!printer) goto end;
+    job = malloc(sizeof(*job));
+    if (!job)
+    {
+        LeaveCriticalSection(&printer_info->jobs_cs);
+        release_printer_info(printer_info);
+        return NULL;
+    }
+    job->header.type = HANDLE_JOB;
+    job->hf = CreateFileW(job_info->filename, GENERIC_READ,
+            FILE_SHARE_WRITE | FILE_SHARE_READ | FILE_SHARE_DELETE,
+            NULL, OPEN_EXISTING, 0, NULL);
 
-    /* clone the base name. This is NULL for the printserver */
-    printer->printername = wcsdup(printername);
+    LeaveCriticalSection(&printer_info->jobs_cs);
+    release_printer_info(printer_info);
+
+    if (job->hf == INVALID_HANDLE_VALUE)
+    {
+        free(job);
+        return NULL;
+    }
+    return (HANDLE)job;
+}
+
+static HANDLE printer_alloc_handle(const WCHAR *name, const WCHAR *basename,
+                                   PRINTER_DEFAULTSW *def)
+{
+    printer_t *printer;
+
+    printer = calloc(1, sizeof(*printer));
+    if (!printer)
+        return NULL;
+    printer->header.type = HANDLE_PRINTER;
 
     /* clone the full name */
     printer->name = wcsdup(name);
-    if (name && (!printer->name)) {
-        printer_free(printer);
-        printer = NULL;
-    }
-    if (printername) {
-        len = ARRAY_SIZE(L",XcvMonitor ") - 1;
-        if (wcsncmp(printername, L",XcvMonitor ", len) == 0) {
-            /* OpenPrinter(",XcvMonitor ", ...) detected */
-            TRACE(",XcvMonitor: %s\n", debugstr_w(&printername[len]));
-            printer->pm = monitor_load(&printername[len], NULL);
-            if (printer->pm == NULL) {
-                printer_free(printer);
-                SetLastError(ERROR_UNKNOWN_PORT);
-                printer = NULL;
-                goto end;
-            }
-        }
-        else
-        {
-            len = ARRAY_SIZE(L",XcvPort ") - 1;
-            if (wcsncmp( printername, L",XcvPort ", len) == 0) {
-                /* OpenPrinter(",XcvPort ", ...) detected */
-                TRACE(",XcvPort: %s\n", debugstr_w(&printername[len]));
-                printer->pm = monitor_load_by_port(&printername[len]);
-                if (printer->pm == NULL) {
-                    printer_free(printer);
-                    SetLastError(ERROR_UNKNOWN_PORT);
-                    printer = NULL;
-                    goto end;
-                }
-            }
-        }
-
-        if (printer->pm) {
-            if (printer->pm->monitor.pfnXcvOpenPort)
-                printer->pm->monitor.pfnXcvOpenPort(printer->pm->hmon, &printername[len],
-                                                   pDefault ? pDefault->DesiredAccess : 0,
-                                                   &printer->hXcv);
-            else if (printer->pm->old_XcvOpenPort)
-                printer->pm->old_XcvOpenPort(&printername[len],
-                                                   pDefault ? pDefault->DesiredAccess : 0,
-                                                   &printer->hXcv);
-            if (printer->hXcv == NULL) {
-                printer_free(printer);
-                SetLastError(ERROR_INVALID_PARAMETER);
-                printer = NULL;
-                goto end;
-            }
-        }
-        else
-        {
-            /* Does the Printer exist? */
-            if (RegCreateKeyW(HKEY_LOCAL_MACHINE, printersW, &hkeyPrinters) != ERROR_SUCCESS) {
-                ERR("Can't create Printers key\n");
-                printer_free(printer);
-                SetLastError(ERROR_INVALID_PRINTER_NAME);
-                printer = NULL;
-                goto end;
-            }
-            if (RegOpenKeyW(hkeyPrinters, printername, &hkeyPrinter) != ERROR_SUCCESS) {
-                WARN("Printer not found in Registry: %s\n", debugstr_w(printername));
-                RegCloseKey(hkeyPrinters);
-                printer_free(printer);
-                SetLastError(ERROR_INVALID_PRINTER_NAME);
-                printer = NULL;
-                goto end;
-            }
-            RegCloseKey(hkeyPrinter);
-            RegCloseKey(hkeyPrinters);
-        }
-    }
-    else
+    if (name && !printer->name)
     {
-        TRACE("using the local printserver\n");
+        fpClosePrinter((HANDLE)printer);
+        return NULL;
     }
 
-end:
+    printer->info = get_printer_info(basename);
+    if (!printer->info)
+    {
+        fpClosePrinter((HANDLE)printer);
+        SetLastError(ERROR_INVALID_PRINTER_NAME);
+        return NULL;
+    }
 
-    TRACE("==> %p\n", printer);
+    if (def && def->pDevMode)
+        printer->devmode = dup_devmode(def->pDevMode);
+
     return (HANDLE)printer;
 }
 
@@ -1773,18 +2027,6 @@ static BOOL WINAPI fpAddMonitor(LPWSTR pName, DWORD Level, LPBYTE pMonitors)
     return (res);
 }
 
-static BOOL wrap_AddPort(monitor_t *pm, LPWSTR name, HWND hwnd, LPWSTR monitor_name)
-{
-    if (pm->monitor.pfnAddPort)
-        return pm->monitor.pfnAddPort(pm->hmon, name, hwnd, monitor_name);
-
-    if (pm->old_AddPort)
-        return pm->old_AddPort(name, hwnd, monitor_name);
-
-    WARN("AddPort is not implemented by monitor\n");
-    return FALSE;
-}
-
 /******************************************************************************
  * fpAddPort [exported through PRINTPROVIDOR]
  *
@@ -1823,8 +2065,8 @@ static BOOL WINAPI fpAddPort(LPWSTR pName, HWND hWnd, LPWSTR pMonitorName)
     }
 
     pm = monitor_load(pMonitorName, NULL);
-    if (pm && (pm->monitor.pfnAddPort || pm->old_AddPort)) {
-        res = wrap_AddPort(pm, pName, hWnd, pMonitorName);
+    if (pm && pm->monitor.pfnAddPort) {
+        res = pm->monitor.pfnAddPort(pm->hmon, pName, hWnd, pMonitorName);
         TRACE("got %ld with %lu (%s)\n", res, GetLastError(), debugstr_w(pm->dllname));
     }
     else
@@ -1849,18 +2091,6 @@ static BOOL WINAPI fpAddPort(LPWSTR pName, HWND hWnd, LPWSTR pMonitorName)
 
     TRACE("returning %ld with %lu\n", res, GetLastError());
     return res;
-}
-
-static BOOL wrap_AddPortEx(monitor_t *pm, LPWSTR name, DWORD level, LPBYTE buffer, LPWSTR monitor_name)
-{
-    if (pm->monitor.pfnAddPortEx)
-        return pm->monitor.pfnAddPortEx(pm->hmon, name, level, buffer, monitor_name);
-
-    if (pm->old_AddPortEx)
-        return pm->old_AddPortEx(name, level, buffer, monitor_name);
-
-    WARN("AddPortEx is not implemented by monitor\n");
-    return FALSE;
 }
 
 /******************************************************************************
@@ -1912,9 +2142,9 @@ static BOOL WINAPI fpAddPortEx(LPWSTR pName, DWORD level, LPBYTE pBuffer, LPWSTR
 
     /* load the Monitor */
     pm = monitor_load(pMonitorName, NULL);
-    if (pm && (pm->monitor.pfnAddPortEx || pm->old_AddPortEx))
+    if (pm && pm->monitor.pfnAddPortEx)
     {
-        res = wrap_AddPortEx(pm, pName, level, pBuffer, pMonitorName);
+        res = pm->monitor.pfnAddPortEx(pm->hmon, pName, level, pBuffer, pMonitorName);
         TRACE("got %ld with %lu (%s)\n", res, GetLastError(), debugstr_w(pm->dllname));
     }
     else
@@ -1964,44 +2194,6 @@ static BOOL WINAPI fpAddPrinterDriverEx(LPWSTR pName, DWORD level, LPBYTE pDrive
 }
 
 /******************************************************************************
- * fpClosePrinter [exported through PRINTPROVIDOR]
- *
- * Close a printer handle and free associated resources
- *
- * PARAMS
- *  hPrinter [I] Printerhandle to close
- *
- * RESULTS
- *  Success: TRUE
- *  Failure: FALSE
- *
- */
-static BOOL WINAPI fpClosePrinter(HANDLE hPrinter)
-{
-    printer_t *printer = (printer_t *) hPrinter;
-
-    TRACE("(%p)\n", hPrinter);
-
-    if (printer) {
-        printer_free(printer);
-        return TRUE;
-    }
-    return FALSE;
-}
-
-static BOOL wrap_ConfigurePort(monitor_t *pm, LPWSTR name, HWND hwnd, LPWSTR port_name)
-{
-    if (pm->monitor.pfnConfigurePort)
-        return pm->monitor.pfnConfigurePort(pm->hmon, name, hwnd, port_name);
-
-    if (pm->old_ConfigurePort)
-        return pm->old_ConfigurePort(name, hwnd, port_name);
-
-    WARN("ConfigurePort is not implemented by monitor\n");
-    return FALSE;
-}
-
-/******************************************************************************
  * fpConfigurePort [exported through PRINTPROVIDOR]
  *
  * Display the Configuration-Dialog for a specific Port
@@ -2039,11 +2231,11 @@ static BOOL WINAPI fpConfigurePort(LPWSTR pName, HWND hWnd, LPWSTR pPortName)
     }
 
     pm = monitor_load_by_port(pPortName);
-    if (pm && (pm->monitor.pfnConfigurePort || pm->old_ConfigurePort))
+    if (pm && pm->monitor.pfnConfigurePort)
     {
         TRACE("use %s for %s (monitor %p: %s)\n", debugstr_w(pm->name),
                 debugstr_w(pPortName), pm, debugstr_w(pm->dllname));
-        res = wrap_ConfigurePort(pm, pName, hWnd, pPortName);
+        res = pm->monitor.pfnConfigurePort(pm->hmon, pName, hWnd, pPortName);
         TRACE("got %ld with %lu\n", res, GetLastError());
     }
     else
@@ -2145,18 +2337,6 @@ static BOOL WINAPI fpDeleteMonitor(LPWSTR pName, LPWSTR pEnvironment, LPWSTR pMo
     return FALSE;
 }
 
-static BOOL wrap_DeletePort(monitor_t *pm, LPWSTR name, HWND hwnd, LPWSTR port_name)
-{
-    if (pm->monitor.pfnDeletePort)
-        return pm->monitor.pfnDeletePort(pm->hmon, name, hwnd, port_name);
-
-    if (pm->old_ConfigurePort)
-        return pm->old_DeletePort(name, hwnd, port_name);
-
-    WARN("DeletePort is not implemented by monitor\n");
-    return FALSE;
-}
-
 /*****************************************************************************
  * fpDeletePort [exported through PRINTPROVIDOR]
  *
@@ -2195,11 +2375,11 @@ static BOOL WINAPI fpDeletePort(LPWSTR pName, HWND hWnd, LPWSTR pPortName)
     }
 
     pm = monitor_load_by_port(pPortName);
-    if (pm && (pm->monitor.pfnDeletePort || pm->old_DeletePort))
+    if (pm && pm->monitor.pfnDeletePort)
     {
         TRACE("use %s for %s (monitor %p: %s)\n", debugstr_w(pm->name),
                 debugstr_w(pPortName), pm, debugstr_w(pm->dllname));
-        res = wrap_DeletePort(pm, pName, hWnd, pPortName);
+        res = pm->monitor.pfnDeletePort(pm->hmon, pName, hWnd, pPortName);
         TRACE("got %ld with %lu\n", res, GetLastError());
     }
     else
@@ -2554,15 +2734,43 @@ static BOOL WINAPI fpGetPrintProcessorDirectory(LPWSTR pName, LPWSTR pEnvironmen
  *
  *
  */
-static BOOL WINAPI fpOpenPrinter(LPWSTR lpPrinterName, HANDLE *pPrinter,
-                                 LPPRINTER_DEFAULTSW pDefaults)
+static BOOL WINAPI fpOpenPrinter(WCHAR *name, HANDLE *hprinter,
+                                 PRINTER_DEFAULTSW *def)
 {
+    WCHAR servername[MAX_COMPUTERNAME_LENGTH + 1];
+    const WCHAR *basename;
+    BOOL stop_search;
 
-    TRACE("(%s, %p, %p)\n", debugstr_w(lpPrinterName), pPrinter, pDefaults);
+    TRACE("(%s, %p, %p)\n", debugstr_w(name), hprinter, def);
 
-    *pPrinter = printer_alloc_handle(lpPrinterName, pDefaults);
+    if (copy_servername_from_name(name, servername))
+    {
+        FIXME("server %s not supported\n", debugstr_w(servername));
+        SetLastError(ERROR_INVALID_PRINTER_NAME);
+        return FALSE;
+    }
 
-    return (*pPrinter != 0);
+    basename = get_basename_from_name(name);
+    if (name != basename) TRACE("converted %s to %s\n",
+            debugstr_w(name), debugstr_w(basename));
+
+    /* an empty basename is invalid */
+    if (basename && (!basename[0]))
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    *hprinter = server_alloc_handle(basename, &stop_search);
+    if (!*hprinter && !stop_search)
+        *hprinter = xcv_alloc_handle(basename, def, &stop_search);
+    if (!*hprinter && !stop_search)
+        *hprinter = job_alloc_handle(basename, &stop_search);
+    if (!*hprinter && !stop_search)
+        *hprinter = printer_alloc_handle(name, basename, def);
+
+    TRACE("==> %p\n", *hprinter);
+    return *hprinter != 0;
 }
 
 /******************************************************************************
@@ -2603,13 +2811,13 @@ static BOOL WINAPI fpXcvData(HANDLE hXcv, LPCWSTR pszDataName, PBYTE pInputData,
                     DWORD cbInputData, PBYTE pOutputData, DWORD cbOutputData,
                     PDWORD pcbOutputNeeded, PDWORD pdwStatus)
 {
-    printer_t *printer = (printer_t * ) hXcv;
+    xcv_t *xcv = (xcv_t *)hXcv;
 
     TRACE("(%p, %s, %p, %ld, %p, %ld, %p, %p)\n", hXcv, debugstr_w(pszDataName),
           pInputData, cbInputData, pOutputData,
           cbOutputData, pcbOutputNeeded, pdwStatus);
 
-    if (!printer || (!printer->hXcv)) {
+    if (!xcv || xcv->header.type != HANDLE_XCV) {
         SetLastError(ERROR_INVALID_HANDLE);
         return FALSE;
     }
@@ -2626,8 +2834,8 @@ static BOOL WINAPI fpXcvData(HANDLE hXcv, LPCWSTR pszDataName, PBYTE pInputData,
 
     *pcbOutputNeeded = 0;
 
-    if (printer->pm->monitor.pfnXcvDataPort)
-        *pdwStatus = printer->pm->monitor.pfnXcvDataPort(printer->hXcv, pszDataName,
+    if (xcv->pm->monitor.pfnXcvDataPort)
+        *pdwStatus = xcv->pm->monitor.pfnXcvDataPort(xcv->hxcv, pszDataName,
             pInputData, cbInputData, pOutputData, cbOutputData, pcbOutputNeeded);
 
     return TRUE;
@@ -2789,10 +2997,593 @@ static BOOL WINAPI fpEnumForms( HANDLE printer, DWORD level, BYTE *form, DWORD s
     return TRUE;
 }
 
+static size_t get_spool_filename(DWORD job_id, WCHAR *buf, size_t len)
+{
+    static const WCHAR spool_path[] = L"spool\\PRINTERS\\";
+    size_t ret;
+
+    ret = GetSystemDirectoryW(NULL, 0) + ARRAY_SIZE(spool_path) + 10;
+    if (len < ret)
+        return ret;
+
+    ret = GetSystemDirectoryW(buf, ret);
+    if (buf[ret - 1] != '\\')
+        buf[ret++] = '\\';
+    memcpy(buf + ret, spool_path, sizeof(spool_path));
+    ret += ARRAY_SIZE(spool_path) - 1;
+    swprintf(buf + ret, 10, L"%05d.SPL", job_id);
+    ret += 10;
+    return ret;
+}
+
+static job_info_t* add_job(printer_t *printer, DOC_INFO_1W *info, BOOL create)
+{
+    DWORD job_id, last_id;
+    size_t len;
+    job_info_t *job;
+
+    job = calloc(1, sizeof(*job));
+    if (!job)
+        return NULL;
+    len = get_spool_filename(0, NULL, 0);
+    job->filename = malloc(len * sizeof(WCHAR));
+    if (!job->filename)
+    {
+        free(job);
+        return NULL;
+    }
+    job->port = wcsdup(info->pOutputFile);
+    if (info->pOutputFile && !job->port)
+    {
+        free(job->filename);
+        free(job);
+        return NULL;
+    }
+
+    while (1)
+    {
+        last_id = last_job_id;
+        job_id = last_id < MAX_JOB_ID ? last_id + 1 : 1;
+        if (InterlockedCompareExchange(&last_job_id, job_id, last_id) == last_id)
+            break;
+    }
+
+    job->id = job_id;
+    get_spool_filename(job_id, job->filename, len);
+    if (create)
+    {
+        job->hf = CreateFileW(job->filename, GENERIC_WRITE, FILE_SHARE_READ,
+                NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (job->hf == INVALID_HANDLE_VALUE)
+        {
+            free(job->filename);
+            free(job);
+            return NULL;
+        }
+    }
+    else
+    {
+        job->hf = NULL;
+    }
+    job->document_title = wcsdup(info->pDocName);
+    job->devmode = dup_devmode(printer->devmode);
+
+    EnterCriticalSection(&printer->info->jobs_cs);
+    list_add_tail(&printer->info->jobs, &job->entry);
+    LeaveCriticalSection(&printer->info->jobs_cs);
+    return job;
+}
+
+static BOOL WINAPI fpAddJob(HANDLE hprinter, DWORD level, BYTE *data, DWORD size, DWORD *needed)
+{
+    ADDJOB_INFO_1W *addjob = (ADDJOB_INFO_1W *)data;
+    printer_t *printer = (printer_t *)hprinter;
+    DOC_INFO_1W doc_info;
+    job_info_t *job;
+    size_t len;
+
+    TRACE("(%p %ld %p %ld %p)\n", hprinter, level, data, size, needed);
+
+    if (!printer || printer->header.type != HANDLE_PRINTER)
+    {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+
+    if (level != 1)
+    {
+        SetLastError(ERROR_INVALID_LEVEL);
+        return FALSE;
+    }
+
+    if (!needed)
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    len = get_spool_filename(0, NULL, 0);
+    *needed = sizeof(*addjob) + len * sizeof(WCHAR);
+    if (size < *needed)
+    {
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        return FALSE;
+    }
+
+    memset(&doc_info, 0, sizeof(doc_info));
+    doc_info.pDocName = (WCHAR *)L"Local Downlevel Document";
+    job = add_job(printer, &doc_info, FALSE);
+    if (!job)
+        return FALSE;
+
+    addjob->JobId = job->id;
+    addjob->Path = (WCHAR *)(addjob + 1);
+    memcpy(addjob->Path, job->filename, len * sizeof(WCHAR));
+    return TRUE;
+}
+
+static DWORD WINAPI fpStartDocPrinter(HANDLE hprinter, DWORD level, BYTE *doc_info)
+{
+    printer_t *printer = (printer_t *)hprinter;
+    DOC_INFO_1W *info = (DOC_INFO_1W *)doc_info;
+
+    TRACE("(%p %ld %p {pDocName = %s, pOutputFile = %s, pDatatype = %s})\n",
+            hprinter, level, doc_info, debugstr_w(info->pDocName),
+            debugstr_w(info->pOutputFile), debugstr_w(info->pDatatype));
+
+    if (!printer || printer->header.type != HANDLE_PRINTER)
+    {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return 0;
+    }
+
+    if (level < 1 || level > 3)
+    {
+        SetLastError(ERROR_INVALID_LEVEL);
+        return 0;
+    }
+
+    if (printer->doc)
+    {
+        SetLastError(ERROR_INVALID_PRINTER_STATE);
+        return 0;
+    }
+
+    printer->doc = add_job(printer, info, TRUE);
+    return printer->doc ? printer->doc->id : 0;
+}
+
+static BOOL WINAPI fpWritePrinter(HANDLE hprinter, void *buf, DWORD size, DWORD *written)
+{
+    printer_t *printer = (printer_t *)hprinter;
+
+    TRACE("(%p, %p, %ld, %p)\n", hprinter, buf, size, written);
+
+    if(!printer || printer->header.type != HANDLE_PRINTER)
+    {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+
+    if(!printer->doc)
+    {
+        SetLastError(ERROR_SPL_NO_STARTDOC);
+        return FALSE;
+    }
+
+    return WriteFile(printer->doc->hf, buf, size, written, NULL);
+}
+
+static BOOL WINAPI fpSetJob(HANDLE hprinter, DWORD job_id,
+        DWORD level, BYTE *data, DWORD command)
+{
+    printer_t *printer = (printer_t *)hprinter;
+    BOOL ret = FALSE;
+    job_info_t *job;
+
+    TRACE("(%p, %ld, %ld, %p, %ld)\n", hprinter, job_id, level, data, command);
+    FIXME("Ignoring everything other than document title\n");
+
+    if (!printer || printer->header.type != HANDLE_PRINTER)
+    {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return 0;
+    }
+
+    EnterCriticalSection(&printer->info->jobs_cs);
+    job = get_job(printer->info, job_id);
+    if (!job)
+    {
+        LeaveCriticalSection(&printer->info->jobs_cs);
+        return FALSE;
+    }
+
+    switch(level)
+    {
+    case 0:
+        ret = TRUE;
+        break;
+    case 1:
+    {
+        JOB_INFO_1W *info1 = (JOB_INFO_1W *)job;
+        WCHAR *title = wcsdup(info1->pDocument);
+
+        if (title)
+        {
+            free(job->document_title);
+            job->document_title = title;
+            ret = TRUE;
+        }
+        break;
+    }
+    case 2:
+    {
+        JOB_INFO_2W *info2 = (JOB_INFO_2W *)job;
+        WCHAR *title = wcsdup(info2->pDocument);
+        DEVMODEW *devmode = dup_devmode(info2->pDevMode);
+
+        if (!title || !devmode)
+        {
+            free(title);
+            free(devmode);
+        }
+        else
+        {
+            free(job->document_title);
+            free(job->devmode);
+            job->document_title = title;
+            job->devmode = devmode;
+            ret = TRUE;
+        }
+        break;
+      }
+    case 3:
+        FIXME("level 3 stub\n");
+        ret = TRUE;
+        break;
+    default:
+        SetLastError(ERROR_INVALID_LEVEL);
+        break;
+    }
+
+    LeaveCriticalSection(&printer->info->jobs_cs);
+    return ret;
+}
+
+static BOOL WINAPI fpGetJob(HANDLE hprinter, DWORD job_id, DWORD level,
+        BYTE *data, DWORD size, DWORD *needed)
+{
+    printer_t *printer = (printer_t *)hprinter;
+    BOOL ret = TRUE;
+    DWORD s = 0;
+    job_info_t *job;
+    WCHAR *p;
+
+    TRACE("%p %ld %ld %p %ld %p\n", hprinter, job_id, level, data, size, needed);
+
+    if (!printer || printer->header.type != HANDLE_PRINTER)
+    {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+
+    if (!needed)
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    EnterCriticalSection(&printer->info->jobs_cs);
+    job = get_job(printer->info, job_id);
+    if (!job)
+    {
+        LeaveCriticalSection(&printer->info->jobs_cs);
+        return FALSE;
+    }
+
+    switch(level)
+    {
+    case 1:
+        s = sizeof(JOB_INFO_1W);
+        s += job->document_title ? (wcslen(job->document_title) + 1) * sizeof(WCHAR) : 0;
+        s += printer->info->name ?
+            (wcslen(printer->info->name) + 1) * sizeof(WCHAR) : 0;
+
+        if (size >= s)
+        {
+            JOB_INFO_1W *info = (JOB_INFO_1W *)data;
+
+            p = (WCHAR *)(info + 1);
+            memset(info, 0, sizeof(*info));
+            info->JobId = job->id;
+            if (job->document_title)
+            {
+                info->pDocument = p;
+                wcscpy(p, job->document_title);
+                p += wcslen(job->document_title) + 1;
+            }
+            if (printer->info->name)
+            {
+                info->pPrinterName = p;
+                wcscpy(p, printer->info->name);
+            }
+        }
+        break;
+    case 2:
+        s = sizeof(JOB_INFO_2W);
+        s += job->document_title ? (wcslen(job->document_title) + 1) * sizeof(WCHAR) : 0;
+        s += printer->info->name ?
+            (wcslen(printer->info->name) + 1) * sizeof(WCHAR) : 0;
+        if (job->devmode)
+        {
+            /* align DEVMODE to a DWORD boundary */
+            s += (4 - (s & 3)) & 3;
+            s += job->devmode->dmSize + job->devmode->dmDriverExtra;
+        }
+
+        if (size >= s)
+        {
+            JOB_INFO_2W *info = (JOB_INFO_2W *)data;
+
+            p = (WCHAR *)(info + 1);
+            memset(info, 0, sizeof(*info));
+            info->JobId = job->id;
+            if (job->document_title)
+            {
+                info->pDocument = p;
+                wcscpy(p, job->document_title);
+                p += wcslen(job->document_title) + 1;
+            }
+            if (printer->info->name)
+            {
+                info->pPrinterName = p;
+                wcscpy(p, printer->info->name);
+                p += wcslen(printer->info->name) + 1;
+            }
+            if (job->devmode)
+            {
+                DEVMODEW *devmode = (DEVMODEW *)(data + s - job->devmode->dmSize
+                        - job->devmode->dmDriverExtra);
+                info->pDevMode = devmode;
+                memcpy(devmode, job->devmode, job->devmode->dmSize + job->devmode->dmDriverExtra);
+            }
+        }
+        break;
+    case 3:
+        FIXME("level 3 stub\n");
+        s = sizeof(JOB_INFO_3);
+
+        if (size >= s)
+            memset(data, 0, sizeof(JOB_INFO_3));
+        break;
+    default:
+        SetLastError(ERROR_INVALID_LEVEL);
+        ret = FALSE;
+        break;
+    }
+
+    LeaveCriticalSection(&printer->info->jobs_cs);
+
+    *needed = s;
+    if (size < s)
+    {
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        ret = FALSE;
+    }
+    return ret;
+}
+
+static BOOL WINAPI fpScheduleJob(HANDLE hprinter, DWORD job_id)
+{
+    BOOL ret_startdoc = FALSE, ret_open = FALSE, ret = TRUE;
+    printer_t *printer = (printer_t *)hprinter;
+    const WCHAR *port_name, *port;
+    WCHAR output[1024];
+    DOC_INFO_1W info;
+    job_info_t *job;
+    monitor_t *mon;
+    BYTE buf[4096];
+    HANDLE hport;
+    DWORD r, w;
+    HANDLE hf;
+    HKEY hkey;
+
+    TRACE("%p %ld\n", hprinter, job_id);
+
+    if (!printer || printer->header.type != HANDLE_PRINTER)
+    {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+
+    EnterCriticalSection(&printer->info->jobs_cs);
+    job = get_job(printer->info, job_id);
+    if (!job)
+    {
+        LeaveCriticalSection(&printer->info->jobs_cs);
+        return FALSE;
+    }
+
+    port = job->port;
+    if (!port)
+        port = printer->info->port;
+    TRACE("need to schedule job %ld filename %s to port %s\n", job->id,
+            debugstr_w(job->filename), debugstr_w(port));
+
+    hf = CreateFileW(job->filename, GENERIC_READ, FILE_SHARE_READ,
+            NULL, OPEN_EXISTING, 0, NULL);
+    if (hf == INVALID_HANDLE_VALUE)
+    {
+        WARN("can't open spool file: %s\n", debugstr_w(job->filename));
+        DeleteFileW(job->filename);
+        free_job(job);
+        LeaveCriticalSection(&printer->info->jobs_cs);
+        return FALSE;
+    }
+
+    /* TODO: use print processor */
+    port_name = port;
+    if ((isalpha(port[0]) && port[1] == ':') ||
+            !wcsncmp(port, L"FILE:", ARRAY_SIZE(L"FILE:") - 1))
+    {
+        port_name = L"FILE:";
+    }
+    else if (!RegOpenKeyW(HKEY_CURRENT_USER, L"Software\\Wine\\Printing\\Spooler", &hkey))
+    {
+        DWORD type, count = sizeof(output);
+        if (!RegQueryValueExW(hkey, port, NULL, &type, (BYTE *)output, &count))
+        {
+            TRACE("overriding port %s -> %s\n", debugstr_w(port), debugstr_w(output));
+            port_name = output;
+        }
+        RegCloseKey(hkey);
+    }
+
+    if (!(mon = monitor_load_by_port(port_name)) || !mon->monitor.pfnOpenPort ||
+            !mon->monitor.pfnStartDocPort || !mon->monitor.pfnWritePort ||
+            !mon->monitor.pfnEndDocPort || !mon->monitor.pfnClosePort)
+    {
+        FIXME("port not supported: %s\n", debugstr_w(port_name));
+        ret = FALSE;
+    }
+
+    if (ret)
+        ret = ret_open = mon->monitor.pfnOpenPort(mon->hmon, (WCHAR *)port_name, &hport);
+
+    if (ret)
+    {
+        info.pDocName = job->document_title;
+        info.pOutputFile = (WCHAR *)port;
+        info.pDatatype = NULL;
+        ret = ret_startdoc = mon->monitor.pfnStartDocPort(hport, printer->info->name,
+                job_id, 1, (BYTE *)&info);
+    }
+
+    while (ret && ReadFile(hf, buf, sizeof(buf), &r, NULL) && r)
+        ret = mon->monitor.pfnWritePort(hport, buf, r, &w) && r == w;
+
+    if (ret_startdoc)
+        mon->monitor.pfnEndDocPort(hport);
+    if (ret_open)
+        mon->monitor.pfnClosePort(hport);
+    if (mon)
+        monitor_unload(mon);
+
+    CloseHandle(hf);
+    DeleteFileW(job->filename);
+    free_job(job);
+    LeaveCriticalSection(&printer->info->jobs_cs);
+    return ret;
+}
+
+static BOOL WINAPI fpReadPrinter(HANDLE hprinter, void *buf, DWORD size, DWORD *bytes_read)
+{
+    job_t *job = (job_t *)hprinter;
+
+    TRACE("%p %p %lu %p\n", hprinter, buf, size, bytes_read);
+
+    if (!job || (job->header.type != HANDLE_JOB))
+    {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+
+    return ReadFile(job->hf, buf, size, bytes_read, NULL);
+}
+
+static BOOL WINAPI fpEndDocPrinter(HANDLE hprinter)
+{
+    printer_t *printer = (printer_t *)hprinter;
+    BOOL ret;
+
+    TRACE("%p\n", hprinter);
+
+    if (!printer || printer->header.type != HANDLE_PRINTER)
+    {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+
+    if (!printer->doc)
+    {
+        SetLastError(ERROR_SPL_NO_STARTDOC);
+        return FALSE;
+    }
+
+    CloseHandle(printer->doc->hf);
+    printer->doc->hf = NULL;
+    ret = fpScheduleJob(hprinter, printer->doc->id);
+    printer->doc = NULL;
+    return ret;
+}
+
+/******************************************************************************
+ * fpClosePrinter [exported through PRINTPROVIDOR]
+ *
+ * Close a printer handle and free associated resources
+ *
+ * PARAMS
+ *  hPrinter [I] Printerhandle to close
+ *
+ * RESULTS
+ *  Success: TRUE
+ *  Failure: FALSE
+ *
+ */
+static BOOL WINAPI fpClosePrinter(HANDLE hprinter)
+{
+    handle_header_t *header = (handle_header_t *)hprinter;
+
+    TRACE("(%p)\n", hprinter);
+
+    if (!header)
+        return FALSE;
+
+    if (header->type == HANDLE_SERVER)
+    {
+        free(header);
+    }
+    else if (header->type == HANDLE_XCV)
+    {
+        xcv_t *xcv = (xcv_t *)hprinter;
+
+        if (xcv->hxcv && xcv->pm->monitor.pfnXcvClosePort)
+            xcv->pm->monitor.pfnXcvClosePort(xcv->hxcv);
+
+        monitor_unload(xcv->pm);
+        free(xcv);
+    }
+    else if (header->type == HANDLE_JOB)
+    {
+        job_t *job = (job_t *)hprinter;
+
+        CloseHandle(job->hf);
+        free(job);
+    }
+    else if (header->type == HANDLE_PRINTER)
+    {
+        printer_t *printer = (printer_t *)hprinter;
+
+        if(printer->doc)
+            fpEndDocPrinter(hprinter);
+
+        release_printer_info(printer->info);
+        free(printer->name);
+        free(printer->devmode);
+        free(printer);
+    }
+    else
+    {
+        ERR("invalid handle type\n");
+        return FALSE;
+    }
+    return TRUE;
+}
+
 static const PRINTPROVIDOR backend = {
         fpOpenPrinter,
-        NULL,   /* fpSetJob */
-        NULL,   /* fpGetJob */
+        fpSetJob,
+        fpGetJob,
         NULL,   /* fpEnumJobs */
         NULL,   /* fpAddPrinter */
         NULL,   /* fpDeletePrinter */
@@ -2809,15 +3600,15 @@ static const PRINTPROVIDOR backend = {
         fpGetPrintProcessorDirectory,
         NULL,   /* fpDeletePrintProcessor */
         NULL,   /* fpEnumPrintProcessorDatatypes */
-        NULL,   /* fpStartDocPrinter */
+        fpStartDocPrinter,
         NULL,   /* fpStartPagePrinter */
-        NULL,   /* fpWritePrinter */
+        fpWritePrinter,
         NULL,   /* fpEndPagePrinter */
         NULL,   /* fpAbortPrinter */
-        NULL,   /* fpReadPrinter */
-        NULL,   /* fpEndDocPrinter */
-        NULL,   /* fpAddJob */
-        NULL,   /* fpScheduleJob */
+        fpReadPrinter,
+        fpEndDocPrinter,
+        fpAddJob,
+        fpScheduleJob,
         NULL,   /* fpGetPrinterData */
         NULL,   /* fpSetPrinterData */
         NULL,   /* fpWaitForPrinterChange */

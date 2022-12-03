@@ -155,6 +155,7 @@
     SYSCALL_ENTRY( NtUserGetCursor ) \
     SYSCALL_ENTRY( NtUserGetCursorFrameInfo ) \
     SYSCALL_ENTRY( NtUserGetCursorInfo ) \
+    SYSCALL_ENTRY( NtUserGetDC ) \
     SYSCALL_ENTRY( NtUserGetDCEx ) \
     SYSCALL_ENTRY( NtUserGetDisplayConfigBufferSizes ) \
     SYSCALL_ENTRY( NtUserGetDoubleClickTime ) \
@@ -194,6 +195,7 @@
     SYSCALL_ENTRY( NtUserGetUpdateRect ) \
     SYSCALL_ENTRY( NtUserGetUpdateRgn ) \
     SYSCALL_ENTRY( NtUserGetUpdatedClipboardFormats ) \
+    SYSCALL_ENTRY( NtUserGetWindowDC ) \
     SYSCALL_ENTRY( NtUserGetWindowPlacement ) \
     SYSCALL_ENTRY( NtUserGetWindowRgnEx ) \
     SYSCALL_ENTRY( NtUserHideCaret ) \
@@ -221,6 +223,7 @@
     SYSCALL_ENTRY( NtUserPerMonitorDPIPhysicalToLogicalPoint ) \
     SYSCALL_ENTRY( NtUserPostMessage ) \
     SYSCALL_ENTRY( NtUserPostThreadMessage ) \
+    SYSCALL_ENTRY( NtUserPrintWindow ) \
     SYSCALL_ENTRY( NtUserQueryInputContext ) \
     SYSCALL_ENTRY( NtUserRedrawWindow ) \
     SYSCALL_ENTRY( NtUserRegisterClassExWOW ) \
@@ -286,6 +289,7 @@
     SYSCALL_ENTRY( NtUserUnregisterClass ) \
     SYSCALL_ENTRY( NtUserUnregisterHotKey ) \
     SYSCALL_ENTRY( NtUserUpdateInputContext ) \
+    SYSCALL_ENTRY( NtUserValidateRect ) \
     SYSCALL_ENTRY( NtUserVkKeyScanEx ) \
     SYSCALL_ENTRY( NtUserWaitForInputIdle ) \
     SYSCALL_ENTRY( NtUserWindowFromDC ) \
