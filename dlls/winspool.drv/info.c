@@ -2568,6 +2568,37 @@ static void set_devices_and_printerports(PRINTER_INFO_2W *pi)
     }
 }
 
+static BOOL validate_print_proc(WCHAR *server, const WCHAR *name)
+{
+    PRINTPROCESSOR_INFO_1W *ppi;
+    DWORD size, i, no;
+
+    if (!EnumPrintProcessorsW(server, NULL, 1, NULL, 0, &size, &no)
+            && GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+    {
+        return FALSE;
+    }
+    ppi = malloc(size);
+    if (!ppi)
+    {
+        SetLastError(ERROR_OUTOFMEMORY);
+        return FALSE;
+    }
+    if (!EnumPrintProcessorsW(server, NULL, 1, (BYTE*)ppi, size, &size, &no))
+    {
+        free(ppi);
+        return FALSE;
+    }
+
+    for (i = 0; i < no; i++)
+    {
+        if (!wcsicmp(ppi[i].pName, name))
+            break;
+    }
+    free(ppi);
+    return i != no;
+}
+
 /*****************************************************************************
  *          AddPrinterW  [WINSPOOL.@]
  */
@@ -2628,7 +2659,7 @@ HANDLE WINAPI AddPrinterW(LPWSTR pName, DWORD Level, LPBYTE pPrinter)
     RegCloseKey(hkeyDriver);
     RegCloseKey(hkeyDrivers);
 
-    if (wcsicmp( pi->pPrintProcessor, L"WinPrint" ))
+    if (!validate_print_proc(pName, pi->pPrintProcessor))
     {
         FIXME("Can't find processor %s\n", debugstr_w(pi->pPrintProcessor));
 	SetLastError(ERROR_UNKNOWN_PRINTPROCESSOR);
@@ -4768,12 +4799,19 @@ BOOL WINAPI AddPrintProcessorA(LPSTR pName, LPSTR pEnvironment, LPSTR pPathName,
 /*****************************************************************************
  *          AddPrintProcessorW  [WINSPOOL.@]
  */
-BOOL WINAPI AddPrintProcessorW(LPWSTR pName, LPWSTR pEnvironment, LPWSTR pPathName,
-                               LPWSTR pPrintProcessorName)
+BOOL WINAPI AddPrintProcessorW(WCHAR *name, WCHAR *env, WCHAR *path, WCHAR *print_proc)
 {
-    FIXME("(%s,%s,%s,%s): stub\n", debugstr_w(pName), debugstr_w(pEnvironment),
-          debugstr_w(pPathName), debugstr_w(pPrintProcessorName));
-    return TRUE;
+    TRACE("(%s,%s,%s,%s)\n", debugstr_w(name), debugstr_w(env),
+            debugstr_w(path), debugstr_w(print_proc));
+
+    if (!path || !print_proc)
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    if ((backend == NULL)  && !load_backend()) return FALSE;
+    return backend->fpAddPrintProcessor(name, env, path, print_proc);
 }
 
 /*****************************************************************************
@@ -7601,4 +7639,22 @@ HANDLE WINAPI GetSpoolFileHandle( HANDLE printer )
 {
     FIXME( "%p: stub\n", printer );
     return INVALID_HANDLE_VALUE;
+}
+
+/*****************************************************************************
+ *          SeekPrinter [WINSPOOL.@]
+ */
+BOOL WINAPI SeekPrinter(HANDLE printer, LARGE_INTEGER distance,
+        LARGE_INTEGER *pos, DWORD method, BOOL bwrite)
+{
+    HANDLE handle = get_backend_handle(printer);
+
+    TRACE("(%p %I64d %p %lx %x)\n", printer, distance.QuadPart, pos, method, bwrite);
+
+    if (!handle)
+    {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+    return backend->fpSeekPrinter(handle, distance, pos, method, bwrite);
 }

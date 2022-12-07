@@ -241,7 +241,7 @@ static BOOL wined3d_buffer_gl_create_buffer_object(struct wined3d_buffer_gl *buf
 
 static BOOL buffer_process_converted_attribute(struct wined3d_buffer *buffer,
         const enum wined3d_buffer_conversion_type conversion_type,
-        const struct wined3d_stream_info_element *attrib, DWORD *stride_this_run)
+        const struct wined3d_stream_info_element *attrib, UINT *stride_this_run)
 {
     const struct wined3d_format *format = attrib->format;
     BOOL ret = FALSE;
@@ -298,7 +298,7 @@ static BOOL buffer_process_converted_attribute(struct wined3d_buffer *buffer,
 #define WINED3D_BUFFER_FIXUP_XYZRHW     0x02
 
 static BOOL buffer_check_attribute(struct wined3d_buffer *This, const struct wined3d_stream_info *si,
-        const struct wined3d_state *state, UINT attrib_idx, DWORD fixup_flags, DWORD *stride_this_run)
+        const struct wined3d_state *state, UINT attrib_idx, DWORD fixup_flags, UINT *stride_this_run)
 {
     const struct wined3d_stream_info_element *attrib = &si->elements[attrib_idx];
     enum wined3d_format_id format;
@@ -1287,7 +1287,7 @@ static HRESULT wined3d_buffer_init(struct wined3d_buffer *buffer, struct wined3d
             WINED3D_MULTISAMPLE_NONE, 0, desc->usage, desc->bind_flags, access,
             desc->byte_width, 1, 1, desc->byte_width, parent, parent_ops, &buffer_resource_ops)))
     {
-        WARN("Failed to initialize resource, hr %#x.\n", hr);
+        WARN("Failed to initialize resource, hr %#lx.\n", hr);
         return hr;
     }
     buffer->buffer_ops = buffer_ops;

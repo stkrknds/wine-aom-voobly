@@ -16,12 +16,17 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#define  COBJMACROS
+
+#include "dispex.h"
 #include "wshom_private.h"
 #include "wshom.h"
 
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(wshom);
+
+static IWshNetwork2 WshNetwork2;
 
 static HRESULT WINAPI WshNetwork2_QueryInterface(IWshNetwork2 *iface, REFIID riid, void **ppv)
 {
@@ -30,17 +35,16 @@ static HRESULT WINAPI WshNetwork2_QueryInterface(IWshNetwork2 *iface, REFIID rii
     if(IsEqualGUID(riid, &IID_IUnknown) ||
            IsEqualGUID(riid, &IID_IDispatch) ||
            IsEqualGUID(riid, &IID_IWshNetwork) ||
-           IsEqualGUID(riid, &IID_IWshNetwork2))
-    {
+           IsEqualGUID(riid, &IID_IWshNetwork2)) {
         *ppv = iface;
-    }else {
-        FIXME("Unknown iface %s\n", debugstr_guid(riid));
+        IUnknown_AddRef((IUnknown*)*ppv);
+        return S_OK;
+    }
+    else {
+        WARN("interface not supported %s\n", debugstr_guid(riid));
         *ppv = NULL;
         return E_NOINTERFACE;
     }
-
-    IUnknown_AddRef((IUnknown*)*ppv);
-    return S_OK;
 }
 
 static ULONG WINAPI WshNetwork2_AddRef(IWshNetwork2 *iface)
@@ -72,16 +76,39 @@ static HRESULT WINAPI WshNetwork2_GetTypeInfo(IWshNetwork2 *iface, UINT iTInfo, 
 static HRESULT WINAPI WshNetwork2_GetIDsOfNames(IWshNetwork2 *iface, REFIID riid, LPOLESTR *rgszNames,
         UINT cNames, LCID lcid, DISPID *rgDispId)
 {
-    FIXME("%p, %s, %p, %u, %lx, %p.\n", iface, debugstr_guid(riid), rgszNames, cNames, lcid, rgDispId);
-    return E_NOTIMPL;
+    ITypeInfo *typeinfo;
+    HRESULT hr;
+
+    TRACE("%p, %s, %p, %u, %lx, %p.\n", iface, debugstr_guid(riid), rgszNames, cNames, lcid, rgDispId);
+
+    hr = get_typeinfo(IWshNetwork2_tid, &typeinfo);
+    if(SUCCEEDED(hr))
+    {
+        hr = ITypeInfo_GetIDsOfNames(typeinfo, rgszNames, cNames, rgDispId);
+        ITypeInfo_Release(typeinfo);
+    }
+
+    return hr;
 }
 
 static HRESULT WINAPI WshNetwork2_Invoke(IWshNetwork2 *iface, DISPID dispIdMember, REFIID riid, LCID lcid,
         WORD wFlags, DISPPARAMS *pDispParams, VARIANT *pVarResult, EXCEPINFO *pExcepInfo, UINT *puArgErr)
 {
-    FIXME("%p, %ld, %s, %lx, %d, %p, %p, %p, %p.\n", iface, dispIdMember, debugstr_guid(riid),
+    ITypeInfo *typeinfo;
+    HRESULT hr;
+
+    TRACE("%p, %ld, %s, %lx, %d, %p, %p, %p, %p.\n", iface, dispIdMember, debugstr_guid(riid),
           lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
-    return E_NOTIMPL;
+
+    hr = get_typeinfo(IWshNetwork2_tid, &typeinfo);
+    if(SUCCEEDED(hr))
+    {
+        hr = ITypeInfo_Invoke(typeinfo, &WshNetwork2, dispIdMember, wFlags,
+                pDispParams, pVarResult, pExcepInfo, puArgErr);
+        ITypeInfo_Release(typeinfo);
+    }
+
+    return hr;
 }
 
 static HRESULT WINAPI WshNetwork2_get_UserDomain(IWshNetwork2 *iface, BSTR *user_domain)

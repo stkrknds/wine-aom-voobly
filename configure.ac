@@ -895,7 +895,7 @@ do
         fi
         llvm_extra_cflags="-target $llvm_target -fuse-ld=lld"
         case $llvm_target in
-          *windows) llvm_cflags="-Wl,-subsystem:console" ;;
+          *windows) llvm_cflags="-Wl,-subsystem:console -Wl,-WX" ;;
         esac
         WINE_TRY_PE_CFLAGS([$llvm_extra_cflags $llvm_cflags],
                            [target=$llvm_target
@@ -2025,7 +2025,7 @@ CFLAGS="$ac_save_CFLAGS"
 
 dnl Check for -ldl
 AC_SEARCH_LIBS(dlopen, dl)
-WINE_CHECK_LIB_FUNCS(dlinfo,[$DL_LIBS])
+WINE_CHECK_LIB_FUNCS(dladdr1 dlinfo,[$DL_LIBS])
 
 dnl Check for -lnsl for Solaris
 AC_SEARCH_LIBS(gethostbyname, nsl)

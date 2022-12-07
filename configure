@@ -10692,7 +10692,7 @@ then :
         fi
         llvm_extra_cflags="-target $llvm_target -fuse-ld=lld"
         case $llvm_target in
-          *windows) llvm_cflags="-Wl,-subsystem:console" ;;
+          *windows) llvm_cflags="-Wl,-subsystem:console -Wl,-WX" ;;
         esac
         { as_ac_var=`printf "%s\n" "ac_cv_${wine_arch}_cflags_$llvm_extra_cflags $llvm_cflags" | $as_tr_sh`
 { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking whether $CC supports $llvm_extra_cflags $llvm_cflags" >&5
@@ -19795,6 +19795,12 @@ fi
 
 ac_wine_check_funcs_save_LIBS="$LIBS"
 LIBS="$LIBS $DL_LIBS"
+ac_fn_c_check_func "$LINENO" "dladdr1" "ac_cv_func_dladdr1"
+if test "x$ac_cv_func_dladdr1" = xyes
+then :
+  printf "%s\n" "#define HAVE_DLADDR1 1" >>confdefs.h
+
+fi
 ac_fn_c_check_func "$LINENO" "dlinfo" "ac_cv_func_dlinfo"
 if test "x$ac_cv_func_dlinfo" = xyes
 then :

@@ -1,7 +1,7 @@
 /*
- * Ntdll Unix interface
+ * Default entry point for a .so dll
  *
- * Copyright (C) 2020 Alexandre Julliard
+ * Copyright 2022 Alexandre Julliard
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -18,35 +18,21 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#ifndef __NTDLL_UNIXLIB_H
-#define __NTDLL_UNIXLIB_H
+#if 0
+#pragma makedep unix
+#endif
 
-#include "wine/unixlib.h"
+/* this is actually part of a static lib linked into a .dll.so module, not a real Unix library */
+#undef WINE_UNIX_LIB
 
-struct _DISPATCHER_CONTEXT;
+#include <stdarg.h>
+#include "windef.h"
+#include "winbase.h"
 
-struct load_so_dll_params
+extern void __wine_init_so_dll(void) DECLSPEC_HIDDEN;
+
+BOOL WINAPI DECLSPEC_HIDDEN __wine_spec_dll_entry( HINSTANCE inst, DWORD reason, LPVOID reserved )
 {
-    UNICODE_STRING              nt_name;
-    void                      **module;
-};
-
-struct unwind_builtin_dll_params
-{
-    ULONG                       type;
-    struct _DISPATCHER_CONTEXT *dispatch;
-    CONTEXT                    *context;
-};
-
-enum ntdll_unix_funcs
-{
-    unix_load_so_dll,
-    unix_unwind_builtin_dll,
-    unix_system_time_precise,
-};
-
-extern unixlib_handle_t ntdll_unix_handle;
-
-#define NTDLL_UNIX_CALL( func, params ) __wine_unix_call_dispatcher( ntdll_unix_handle, unix_ ## func, params )
-
-#endif /* __NTDLL_UNIXLIB_H */
+    if (reason == DLL_PROCESS_ATTACH) __wine_init_so_dll();
+    return DllMain( inst, reason, reserved );
+}
