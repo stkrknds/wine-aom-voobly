@@ -2297,6 +2297,14 @@ HWND WINAPI NtUserChildWindowFromPointEx( HWND parent, LONG x, LONG y, UINT flag
 }
 
 /*******************************************************************
+ *           NtUserRealChildWindowFromPoint (win32u.@)
+ */
+HWND WINAPI NtUserRealChildWindowFromPoint( HWND parent, LONG x, LONG y )
+{
+    return NtUserChildWindowFromPointEx( parent, x, y, CWP_SKIPTRANSPARENT | CWP_SKIPINVISIBLE );
+}
+
+/*******************************************************************
  *           get_work_rect
  *
  * Get the work area that a maximized window can cover, depending on style.
@@ -2485,6 +2493,20 @@ static void make_rect_onscreen( RECT *rect )
         rect->top += info.rcWork.bottom - rect->bottom;
         rect->bottom = info.rcWork.bottom;
     }
+}
+
+/***********************************************************************
+ *           NtUserGetInternalWindowPos (win32u.@)
+ */
+UINT WINAPI NtUserGetInternalWindowPos( HWND hwnd, RECT *rect, POINT *pt )
+{
+    WINDOWPLACEMENT placement;
+
+    placement.length = sizeof(placement);
+    if (!NtUserGetWindowPlacement( hwnd, &placement )) return 0;
+    if (rect) *rect = placement.rcNormalPosition;
+    if (pt) *pt = placement.ptMinPosition;
+    return placement.showCmd;
 }
 
 /* make sure the specified point is visible on screen */

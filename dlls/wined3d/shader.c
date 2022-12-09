@@ -21,7 +21,6 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
-#define WINE_NO_LONG_TYPES /* temporary */
 
 #include <stdio.h>
 #include <string.h>
@@ -1884,7 +1883,7 @@ unsigned int shader_find_free_input_register(const struct wined3d_shader_reg_map
     return wined3d_log2i(map);
 }
 
-static void shader_dump_global_flags(struct wined3d_string_buffer *buffer, DWORD global_flags)
+static void shader_dump_global_flags(struct wined3d_string_buffer *buffer, uint32_t global_flags)
 {
     if (global_flags & WINED3DSGF_REFACTORING_ALLOWED)
     {
@@ -1912,7 +1911,7 @@ static void shader_dump_global_flags(struct wined3d_string_buffer *buffer, DWORD
         shader_addline(buffer, "unknown_flags(%#x)", global_flags);
 }
 
-static void shader_dump_sync_flags(struct wined3d_string_buffer *buffer, DWORD sync_flags)
+static void shader_dump_sync_flags(struct wined3d_string_buffer *buffer, uint32_t sync_flags)
 {
     if (sync_flags & WINED3DSSF_GLOBAL_UAV)
     {
@@ -1951,7 +1950,7 @@ static void shader_dump_precise_flags(struct wined3d_string_buffer *buffer, uint
     shader_addline(buffer, "]");
 }
 
-static void shader_dump_uav_flags(struct wined3d_string_buffer *buffer, DWORD uav_flags)
+static void shader_dump_uav_flags(struct wined3d_string_buffer *buffer, uint32_t uav_flags)
 {
     if (uav_flags & WINED3DSUF_GLOBALLY_COHERENT)
     {
@@ -2652,7 +2651,7 @@ HRESULT shader_generate_code(const struct wined3d_shader *shader, struct wined3d
 static void shader_dump_ins_modifiers(struct wined3d_string_buffer *buffer,
         const struct wined3d_shader_dst_param *dst)
 {
-    DWORD mmask = dst->modifiers;
+    uint32_t mmask = dst->modifiers;
 
     switch (dst->shift)
     {
@@ -3893,7 +3892,7 @@ static HRESULT geometry_shader_init_stream_output(struct wined3d_shader *shader,
 
     if (FAILED(hr = geometry_shader_init_so_desc(&shader->u.gs, shader->device, so_desc)))
     {
-        WARN("Failed to initialise stream output description, hr %#x.\n", hr);
+        WARN("Failed to initialise stream output description, hr %#lx.\n", hr);
         return hr;
     }
 
@@ -3981,18 +3980,18 @@ void find_ps_compile_args(const struct wined3d_state *state, const struct wined3
     {
         for (i = 0; i < shader->limits->sampler; ++i)
         {
-            DWORD flags = state->texture_states[i][WINED3D_TSS_TEXTURE_TRANSFORM_FLAGS];
+            uint32_t flags = state->texture_states[i][WINED3D_TSS_TEXTURE_TRANSFORM_FLAGS];
 
             if (flags & WINED3D_TTFF_PROJECTED)
             {
-                DWORD tex_transform = flags & ~WINED3D_TTFF_PROJECTED;
+                uint32_t tex_transform = flags & ~WINED3D_TTFF_PROJECTED;
 
                 if (!state->shader[WINED3D_SHADER_TYPE_VERTEX])
                 {
                     enum wined3d_shader_resource_type resource_type = shader->reg_maps.resource_info[i].type;
                     unsigned int j;
                     unsigned int index = state->texture_states[i][WINED3D_TSS_TEXCOORD_INDEX];
-                    DWORD max_valid = WINED3D_TTFF_COUNT4;
+                    uint32_t max_valid = WINED3D_TTFF_COUNT4;
 
                     for (j = 0; j < state->vertex_declaration->element_count; ++j)
                     {
@@ -4332,7 +4331,7 @@ HRESULT CDECL wined3d_shader_create_cs(struct wined3d_device *device, const stru
 
     if (FAILED(hr = shader_init(object, device, desc, parent, parent_ops)))
     {
-        WARN("Failed to initialize compute shader, hr %#x.\n", hr);
+        WARN("Failed to initialize compute shader, hr %#lx.\n", hr);
         heap_free(object);
         return hr;
     }
@@ -4366,7 +4365,7 @@ HRESULT CDECL wined3d_shader_create_ds(struct wined3d_device *device, const stru
 
     if (FAILED(hr = shader_init(object, device, desc, parent, parent_ops)))
     {
-        WARN("Failed to initialize domain shader, hr %#x.\n", hr);
+        WARN("Failed to initialize domain shader, hr %#lx.\n", hr);
         heap_free(object);
         return hr;
     }
@@ -4401,7 +4400,7 @@ HRESULT CDECL wined3d_shader_create_gs(struct wined3d_device *device, const stru
 
     if (FAILED(hr = geometry_shader_init(object, device, desc, so_desc, parent, parent_ops)))
     {
-        WARN("Failed to initialize geometry shader, hr %#x.\n", hr);
+        WARN("Failed to initialize geometry shader, hr %#lx.\n", hr);
         heap_free(object);
         return hr;
     }
@@ -4428,7 +4427,7 @@ HRESULT CDECL wined3d_shader_create_hs(struct wined3d_device *device, const stru
 
     if (FAILED(hr = shader_init(object, device, desc, parent, parent_ops)))
     {
-        WARN("Failed to initialize hull shader, hr %#x.\n", hr);
+        WARN("Failed to initialize hull shader, hr %#lx.\n", hr);
         heap_free(object);
         return hr;
     }
@@ -4462,7 +4461,7 @@ HRESULT CDECL wined3d_shader_create_ps(struct wined3d_device *device, const stru
 
     if (FAILED(hr = pixel_shader_init(object, device, desc, parent, parent_ops)))
     {
-        WARN("Failed to initialize pixel shader, hr %#x.\n", hr);
+        WARN("Failed to initialize pixel shader, hr %#lx.\n", hr);
         heap_free(object);
         return hr;
     }
@@ -4489,7 +4488,7 @@ HRESULT CDECL wined3d_shader_create_vs(struct wined3d_device *device, const stru
 
     if (FAILED(hr = vertex_shader_init(object, device, desc, parent, parent_ops)))
     {
-        WARN("Failed to initialize vertex shader, hr %#x.\n", hr);
+        WARN("Failed to initialize vertex shader, hr %#lx.\n", hr);
         heap_free(object);
         return hr;
     }

@@ -1138,7 +1138,7 @@ struct wined3d_shader_sampler_map
 struct wined3d_shader_immediate_constant_buffer
 {
     unsigned int vec4_count;
-    DWORD data[MAX_IMMEDIATE_CONSTANT_BUFFER_SIZE];
+    uint32_t data[MAX_IMMEDIATE_CONSTANT_BUFFER_SIZE];
 };
 
 struct wined3d_shader_indexable_temp
@@ -1266,9 +1266,9 @@ struct wined3d_shader_register
 struct wined3d_shader_dst_param
 {
     struct wined3d_shader_register reg;
-    DWORD write_mask;
-    DWORD modifiers;
-    DWORD shift;
+    uint32_t write_mask;
+    uint32_t modifiers;
+    unsigned int shift;
 };
 
 struct wined3d_shader_src_param
@@ -2909,7 +2909,7 @@ struct wined3d_blitter_ops
     void (*blitter_destroy)(struct wined3d_blitter *blitter, struct wined3d_context *context);
     void (*blitter_clear)(struct wined3d_blitter *blitter, struct wined3d_device *device,
             unsigned int rt_count, const struct wined3d_fb_state *fb, unsigned int rect_count, const RECT *clear_rects,
-            const RECT *draw_rect, uint32_t flags, const struct wined3d_color *colour, float depth, DWORD stencil);
+            const RECT *draw_rect, uint32_t flags, const struct wined3d_color *colour, float depth, unsigned int stencil);
     DWORD (*blitter_blit)(struct wined3d_blitter *blitter, enum wined3d_blit_op op, struct wined3d_context *context,
             struct wined3d_texture *src_texture, unsigned int src_sub_resource_idx, DWORD src_location,
             const RECT *src_rect, struct wined3d_texture *dst_texture, unsigned int dst_sub_resource_idx,
@@ -3910,7 +3910,7 @@ struct wined3d_state
 
     struct wined3d_light_state light_state;
 
-    DWORD render_states[WINEHIGHEST_RENDER_STATE + 1];
+    unsigned int render_states[WINEHIGHEST_RENDER_STATE + 1];
     struct wined3d_blend_state *blend_state;
     struct wined3d_color blend_factor;
     unsigned int sample_mask;
@@ -4342,8 +4342,8 @@ static inline float wined3d_alpha_ref(const struct wined3d_state *state)
     return (state->render_states[WINED3D_RS_ALPHAREF] & 0xff) / 255.0f;
 }
 
-const char *wined3d_debug_resource_access(DWORD access) DECLSPEC_HIDDEN;
-const char *wined3d_debug_bind_flags(DWORD bind_flags) DECLSPEC_HIDDEN;
+const char *wined3d_debug_resource_access(uint32_t access) DECLSPEC_HIDDEN;
+const char *wined3d_debug_bind_flags(uint32_t bind_flags) DECLSPEC_HIDDEN;
 const char *wined3d_debug_view_desc(const struct wined3d_view_desc *d,
         const struct wined3d_resource *resource) DECLSPEC_HIDDEN;
 const char *wined3d_debug_vkresult(VkResult vr) DECLSPEC_HIDDEN;
@@ -4557,11 +4557,11 @@ struct wined3d_texture
     unsigned int pow2_width;
     unsigned int pow2_height;
     UINT layer_count;
-    UINT level_count;
+    unsigned int level_count;
     unsigned int download_count;
     unsigned int sysmem_count;
     float pow2_matrix[16];
-    UINT lod;
+    unsigned int lod;
     DWORD sampler;
     uint32_t flags;
     DWORD update_map_binding;
@@ -5770,7 +5770,7 @@ const char *debug_d3dinput_classification(enum wined3d_input_classification clas
 const char *debug_d3dprimitivetype(enum wined3d_primitive_type primitive_type) DECLSPEC_HIDDEN;
 const char *debug_d3drenderstate(enum wined3d_render_state state) DECLSPEC_HIDDEN;
 const char *debug_d3dsamplerstate(enum wined3d_sampler_state state) DECLSPEC_HIDDEN;
-const char *debug_d3dstate(DWORD state) DECLSPEC_HIDDEN;
+const char *debug_d3dstate(uint32_t state) DECLSPEC_HIDDEN;
 const char *debug_d3dtexturefiltertype(enum wined3d_texture_filter_type filter_type) DECLSPEC_HIDDEN;
 const char *debug_d3dtexturestate(enum wined3d_texture_stage_state state) DECLSPEC_HIDDEN;
 const char *debug_d3dtop(enum wined3d_texture_op d3dtop) DECLSPEC_HIDDEN;
@@ -5788,7 +5788,7 @@ void dump_color_fixup_desc(struct color_fixup_desc fixup) DECLSPEC_HIDDEN;
 BOOL is_invalid_op(const struct wined3d_state *state, int stage,
         enum wined3d_texture_op op, DWORD arg1, DWORD arg2, DWORD arg3) DECLSPEC_HIDDEN;
 void set_tex_op_nvrc(const struct wined3d_gl_info *gl_info, const struct wined3d_state *state,
-        BOOL is_alpha, int stage, enum wined3d_texture_op op, DWORD arg1, DWORD arg2, DWORD arg3,
+        BOOL is_alpha, int stage, enum wined3d_texture_op op, uint32_t arg1, uint32_t arg2, uint32_t arg3,
         INT texture_idx, DWORD dst) DECLSPEC_HIDDEN;
 void texture_activate_dimensions(struct wined3d_texture *texture,
         const struct wined3d_gl_info *gl_info) DECLSPEC_HIDDEN;

@@ -744,6 +744,7 @@ BOOL    WINAPI NtUserGetGUIThreadInfo( DWORD id, GUITHREADINFO *info );
 BOOL    WINAPI NtUserGetIconInfo( HICON icon, ICONINFO *info, UNICODE_STRING *module,
                                   UNICODE_STRING *res_name, DWORD *bpp, LONG unk );
 BOOL    WINAPI NtUserGetIconSize( HICON handle, UINT step, LONG *width, LONG *height );
+UINT    WINAPI NtUserGetInternalWindowPos( HWND hwnd, RECT *rect, POINT *pt );
 INT     WINAPI NtUserGetKeyNameText( LONG lparam, WCHAR *buffer, INT size );
 SHORT   WINAPI NtUserGetKeyState( INT vkey );
 HKL     WINAPI NtUserGetKeyboardLayout( DWORD thread_id );
@@ -812,6 +813,7 @@ BOOL    WINAPI NtUserPostMessage( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
 BOOL    WINAPI NtUserPostThreadMessage( DWORD thread, UINT msg, WPARAM wparam, LPARAM lparam );
 BOOL    WINAPI NtUserPrintWindow( HWND hwnd, HDC hdc, UINT flags );
 UINT_PTR WINAPI NtUserQueryInputContext( HIMC handle, UINT attr );
+HWND    WINAPI NtUserRealChildWindowFromPoint( HWND parent, LONG x, LONG y );
 BOOL    WINAPI NtUserRedrawWindow( HWND hwnd, const RECT *rect, HRGN hrgn, UINT flags );
 ATOM    WINAPI NtUserRegisterClassExWOW( const WNDCLASSEXW *wc, UNICODE_STRING *name, UNICODE_STRING *version,
                                          struct client_menu_name *client_menu_name, DWORD fnid, DWORD flags,

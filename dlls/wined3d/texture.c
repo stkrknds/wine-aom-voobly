@@ -19,7 +19,6 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
-#define WINE_NO_LONG_TYPES /* temporary */
 
 #include "wined3d_private.h"
 
@@ -138,7 +137,7 @@ GLenum wined3d_texture_get_gl_buffer(const struct wined3d_texture *texture)
     return GL_BACK;
 }
 
-static DWORD wined3d_resource_access_from_location(uint32_t location)
+static uint32_t wined3d_resource_access_from_location(uint32_t location)
 {
     switch (location)
     {
@@ -429,7 +428,7 @@ static void texture2d_blt_fbo(struct wined3d_device *device, struct wined3d_cont
                     &src_staging_texture);
             if (FAILED(hr))
             {
-                ERR("Failed to create staging texture, hr %#x.\n", hr);
+                ERR("Failed to create staging texture, hr %#lx.\n", hr);
                 goto done;
             }
 
@@ -468,7 +467,7 @@ static void texture2d_blt_fbo(struct wined3d_device *device, struct wined3d_cont
                     &dst_texture);
             if (FAILED(hr))
             {
-                ERR("Failed to create staging texture, hr %#x.\n", hr);
+                ERR("Failed to create staging texture, hr %#lx.\n", hr);
                 goto done;
             }
 
@@ -796,7 +795,7 @@ BOOL wined3d_texture_load_location(struct wined3d_texture *texture,
 
     if (WARN_ON(d3d))
     {
-        DWORD required_access = wined3d_resource_access_from_location(location);
+        uint32_t required_access = wined3d_resource_access_from_location(location);
         if ((texture->resource.access & required_access) != required_access)
             WARN("Operation requires %#x access, but texture only has %#x.\n",
                     required_access, texture->resource.access);
@@ -1177,7 +1176,7 @@ static void wined3d_texture_create_dc(void *object)
     DeleteDC(desc.hDeviceDc);
     if (status)
     {
-        WARN("Failed to create DC, status %#x.\n", status);
+        WARN("Failed to create DC, status %#lx.\n", status);
         return;
     }
 
@@ -1219,7 +1218,7 @@ static void wined3d_texture_destroy_dc(void *object)
     destroy_desc.hDc = dc_info->dc;
     destroy_desc.hBitmap = dc_info->bitmap;
     if ((status = D3DKMTDestroyDCFromMemory(&destroy_desc)))
-        ERR("Failed to destroy dc, status %#x.\n", status);
+        ERR("Failed to destroy dc, status %#lx.\n", status);
     dc_info->dc = NULL;
     dc_info->bitmap = NULL;
 
@@ -1734,10 +1733,10 @@ void CDECL wined3d_texture_get_pitch(const struct wined3d_texture *texture,
             width, height, row_pitch, slice_pitch);
 }
 
-DWORD CDECL wined3d_texture_set_lod(struct wined3d_texture *texture, DWORD lod)
+unsigned int CDECL wined3d_texture_set_lod(struct wined3d_texture *texture, unsigned int lod)
 {
     struct wined3d_resource *resource;
-    DWORD old = texture->lod;
+    unsigned int old = texture->lod;
 
     TRACE("texture %p, lod %u.\n", texture, lod);
 
@@ -1771,14 +1770,14 @@ DWORD CDECL wined3d_texture_set_lod(struct wined3d_texture *texture, DWORD lod)
     return old;
 }
 
-DWORD CDECL wined3d_texture_get_lod(const struct wined3d_texture *texture)
+unsigned int CDECL wined3d_texture_get_lod(const struct wined3d_texture *texture)
 {
     TRACE("texture %p, returning %u.\n", texture, texture->lod);
 
     return texture->lod;
 }
 
-DWORD CDECL wined3d_texture_get_level_count(const struct wined3d_texture *texture)
+UINT CDECL wined3d_texture_get_level_count(const struct wined3d_texture *texture)
 {
     TRACE("texture %p, returning %u.\n", texture, texture->level_count);
 
@@ -3988,7 +3987,7 @@ static HRESULT wined3d_texture_init(struct wined3d_texture *texture, const struc
                 && desc->resource_type != WINED3D_RTYPE_TEXTURE_3D && !once++)
             ERR_(winediag)("The application tried to create a DXTn texture, but the driver does not support them.\n");
 
-        WARN("Failed to initialize resource, returning %#x\n", hr);
+        WARN("Failed to initialize resource, returning %#lx\n", hr);
         return hr;
     }
     wined3d_resource_update_draw_binding(&texture->resource);
@@ -4087,7 +4086,7 @@ static HRESULT wined3d_texture_init(struct wined3d_texture *texture, const struc
         if (FAILED(hr = device_parent->ops->texture_sub_resource_created(device_parent,
                 desc->resource_type, texture, i, &sub_resource->parent, &sub_resource->parent_ops)))
         {
-            WARN("Failed to create sub-resource parent, hr %#x.\n", hr);
+            WARN("Failed to create sub-resource parent, hr %#lx.\n", hr);
             sub_resource->parent = NULL;
             wined3d_texture_cleanup_sync(texture);
             return hr;
@@ -4199,7 +4198,7 @@ HRESULT CDECL wined3d_texture_get_overlay_position(const struct wined3d_texture 
     *x = overlay->dst_rect.left;
     *y = overlay->dst_rect.top;
 
-    TRACE("Returning position %d, %d.\n", *x, *y);
+    TRACE("Returning position %ld, %ld.\n", *x, *y);
 
     return WINED3D_OK;
 }
@@ -4210,7 +4209,7 @@ HRESULT CDECL wined3d_texture_set_overlay_position(struct wined3d_texture *textu
     struct wined3d_overlay_info *overlay;
     LONG w, h;
 
-    TRACE("texture %p, sub_resource_idx %u, x %d, y %d.\n", texture, sub_resource_idx, x, y);
+    TRACE("texture %p, sub_resource_idx %u, x %ld, y %ld.\n", texture, sub_resource_idx, x, y);
 
     if (!(texture->resource.usage & WINED3DUSAGE_OVERLAY)
             || !wined3d_texture_validate_sub_resource_idx(texture, sub_resource_idx))
@@ -6068,7 +6067,7 @@ static bool blitter_use_cpu_clear(struct wined3d_rendertarget_view *view)
 
 static void ffp_blitter_clear(struct wined3d_blitter *blitter, struct wined3d_device *device,
         unsigned int rt_count, const struct wined3d_fb_state *fb, unsigned int rect_count, const RECT *clear_rects,
-        const RECT *draw_rect, uint32_t flags, const struct wined3d_color *colour, float depth, DWORD stencil)
+        const RECT *draw_rect, uint32_t flags, const struct wined3d_color *colour, float depth, unsigned int stencil)
 {
     struct wined3d_rendertarget_view *view, *previous = NULL;
     bool have_identical_size = TRUE;
@@ -6224,7 +6223,7 @@ static DWORD ffp_blitter_blit(struct wined3d_blitter *blitter, enum wined3d_blit
         if (FAILED(hr = wined3d_texture_create(device, &desc, 1, 1, 0,
                 NULL, NULL, &wined3d_null_parent_ops, &staging_texture)))
         {
-            ERR("Failed to create staging texture, hr %#x.\n", hr);
+            ERR("Failed to create staging texture, hr %#lx.\n", hr);
             return dst_location;
         }
 
@@ -6345,7 +6344,7 @@ static void fbo_blitter_destroy(struct wined3d_blitter *blitter, struct wined3d_
 
 static void fbo_blitter_clear(struct wined3d_blitter *blitter, struct wined3d_device *device,
         unsigned int rt_count, const struct wined3d_fb_state *fb, unsigned int rect_count, const RECT *clear_rects,
-        const RECT *draw_rect, uint32_t flags, const struct wined3d_color *colour, float depth, DWORD stencil)
+        const RECT *draw_rect, uint32_t flags, const struct wined3d_color *colour, float depth, unsigned int stencil)
 {
     struct wined3d_blitter *next;
 
@@ -6458,7 +6457,7 @@ static void raw_blitter_destroy(struct wined3d_blitter *blitter, struct wined3d_
 
 static void raw_blitter_clear(struct wined3d_blitter *blitter, struct wined3d_device *device,
         unsigned int rt_count, const struct wined3d_fb_state *fb, unsigned int rect_count, const RECT *clear_rects,
-        const RECT *draw_rect, uint32_t flags, const struct wined3d_color *colour, float depth, DWORD stencil)
+        const RECT *draw_rect, uint32_t flags, const struct wined3d_color *colour, float depth, unsigned int stencil)
 {
     struct wined3d_blitter *next;
 
@@ -6826,7 +6825,7 @@ static void vk_blitter_clear_rendertargets(struct wined3d_context_vk *context_vk
 
 static void vk_blitter_clear(struct wined3d_blitter *blitter, struct wined3d_device *device,
         unsigned int rt_count, const struct wined3d_fb_state *fb, unsigned int rect_count, const RECT *clear_rects,
-        const RECT *draw_rect, uint32_t flags, const struct wined3d_color *colour, float depth, DWORD stencil)
+        const RECT *draw_rect, uint32_t flags, const struct wined3d_color *colour, float depth, unsigned int stencil)
 {
     struct wined3d_device_vk *device_vk = wined3d_device_vk(device);
     struct wined3d_rendertarget_view *view, *previous = NULL;

@@ -164,6 +164,7 @@
     SYSCALL_ENTRY( NtUserGetGUIThreadInfo ) \
     SYSCALL_ENTRY( NtUserGetIconInfo ) \
     SYSCALL_ENTRY( NtUserGetIconSize ) \
+    SYSCALL_ENTRY( NtUserGetInternalWindowPos ) \
     SYSCALL_ENTRY( NtUserGetKeyNameText ) \
     SYSCALL_ENTRY( NtUserGetKeyState ) \
     SYSCALL_ENTRY( NtUserGetKeyboardLayout ) \
@@ -225,6 +226,7 @@
     SYSCALL_ENTRY( NtUserPostThreadMessage ) \
     SYSCALL_ENTRY( NtUserPrintWindow ) \
     SYSCALL_ENTRY( NtUserQueryInputContext ) \
+    SYSCALL_ENTRY( NtUserRealChildWindowFromPoint ) \
     SYSCALL_ENTRY( NtUserRedrawWindow ) \
     SYSCALL_ENTRY( NtUserRegisterClassExWOW ) \
     SYSCALL_ENTRY( NtUserRegisterHotKey ) \
