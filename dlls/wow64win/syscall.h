@@ -259,6 +259,7 @@
     SYSCALL_ENTRY( NtUserSetProcessWindowStation ) \
     SYSCALL_ENTRY( NtUserSetProp ) \
     SYSCALL_ENTRY( NtUserSetScrollInfo ) \
+    SYSCALL_ENTRY( NtUserSetShellWindowEx ) \
     SYSCALL_ENTRY( NtUserSetSysColors ) \
     SYSCALL_ENTRY( NtUserSetSystemMenu ) \
     SYSCALL_ENTRY( NtUserSetSystemTimer ) \
@@ -294,6 +295,7 @@
     SYSCALL_ENTRY( NtUserValidateRect ) \
     SYSCALL_ENTRY( NtUserVkKeyScanEx ) \
     SYSCALL_ENTRY( NtUserWaitForInputIdle ) \
+    SYSCALL_ENTRY( NtUserWaitMessage ) \
     SYSCALL_ENTRY( NtUserWindowFromDC ) \
     SYSCALL_ENTRY( NtUserWindowFromPoint )
 

@@ -2173,8 +2173,8 @@ struct wined3d_stateblock_state
     BOOL alpha_to_coverage;
 
     struct wined3d_texture *textures[WINED3D_MAX_COMBINED_SAMPLERS];
-    DWORD sampler_states[WINED3D_MAX_COMBINED_SAMPLERS][WINED3D_HIGHEST_SAMPLER_STATE + 1];
-    DWORD texture_states[WINED3D_MAX_TEXTURES][WINED3D_HIGHEST_TEXTURE_STATE + 1];
+    uint32_t sampler_states[WINED3D_MAX_COMBINED_SAMPLERS][WINED3D_HIGHEST_SAMPLER_STATE + 1];
+    uint32_t texture_states[WINED3D_MAX_TEXTURES][WINED3D_HIGHEST_TEXTURE_STATE + 1];
 
     struct wined3d_matrix transforms[WINED3D_HIGHEST_TRANSFORM_STATE + 1];
     struct wined3d_vec4 clip_planes[WINED3D_MAX_CLIP_DISTANCES];
@@ -2767,16 +2767,16 @@ HRESULT __cdecl wined3d_stateblock_set_ps_consts_f(struct wined3d_stateblock *st
 HRESULT __cdecl wined3d_stateblock_set_ps_consts_i(struct wined3d_stateblock *stateblock,
         unsigned int start_idx, unsigned int count, const struct wined3d_ivec4 *constants);
 void __cdecl wined3d_stateblock_set_render_state(struct wined3d_stateblock *stateblock,
-        enum wined3d_render_state state, DWORD value);
+        enum wined3d_render_state state, unsigned int value);
 void __cdecl wined3d_stateblock_set_sampler_state(struct wined3d_stateblock *stateblock,
-        UINT sampler_idx, enum wined3d_sampler_state state, DWORD value);
+        UINT sampler_idx, enum wined3d_sampler_state state, unsigned int value);
 void __cdecl wined3d_stateblock_set_scissor_rect(struct wined3d_stateblock *stateblock, const RECT *rect);
 HRESULT __cdecl wined3d_stateblock_set_stream_source(struct wined3d_stateblock *stateblock,
         UINT stream_idx, struct wined3d_buffer *buffer, UINT offset, UINT stride);
 HRESULT __cdecl wined3d_stateblock_set_stream_source_freq(struct wined3d_stateblock *stateblock, UINT stream_idx, UINT divider);
 void __cdecl wined3d_stateblock_set_texture(struct wined3d_stateblock *stateblock, UINT stage, struct wined3d_texture *texture);
 void __cdecl wined3d_stateblock_set_texture_stage_state(struct wined3d_stateblock *stateblock,
-        UINT stage, enum wined3d_texture_stage_state state, DWORD value);
+        UINT stage, enum wined3d_texture_stage_state state, unsigned int value);
 void __cdecl wined3d_stateblock_set_transform(struct wined3d_stateblock *stateblock,
         enum wined3d_transform_state state, const struct wined3d_matrix *matrix);
 void __cdecl wined3d_stateblock_set_vertex_declaration(struct wined3d_stateblock *stateblock,

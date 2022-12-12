@@ -708,7 +708,7 @@
 @ stdcall SetScrollPos(long long long long)
 @ stdcall SetScrollRange(long long long long long)
 @ stdcall SetShellWindow(long)
-@ stdcall SetShellWindowEx (long long)
+@ stdcall SetShellWindowEx(long long) NtUserSetShellWindowEx
 @ stdcall SetSysColors(long ptr ptr) NtUserSetSysColors
 @ stdcall SetSysColorsTemp(ptr ptr long)
 @ stdcall SetSystemCursor(long long)
@@ -820,7 +820,7 @@
 @ stdcall WINNLSGetIMEHotkey(long)
 @ stub WNDPROC_CALLBACK
 @ stdcall WaitForInputIdle(long long)
-@ stdcall WaitMessage()
+@ stdcall WaitMessage() NtUserWaitMessage
 # @ stub Win32PoolAllocationStats
 @ stdcall WinHelpA(long str long long)
 @ stdcall WinHelpW(long wstr long long)

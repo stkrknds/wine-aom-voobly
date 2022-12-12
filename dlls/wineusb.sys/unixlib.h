@@ -42,10 +42,10 @@ struct usb_event
         struct usb_add_device_event
         {
             struct unix_device *device;
-            UINT16 vendor, product, revision;
-            UINT8 class, subclass, protocol;
+            UINT16 vendor, product, revision, usbver;
+            UINT8 class, subclass, protocol, busnum, portnum;
             bool interface;
-            UINT8 interface_index;
+            INT16 interface_index;
         } added_device;
         struct unix_device *removed_device;
         IRP *completed_irp;

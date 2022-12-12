@@ -76,11 +76,11 @@ struct usb_device
     DEVICE_OBJECT *device_obj;
 
     bool interface;
-    uint8_t interface_index;
+    int16_t interface_index;
 
-    uint8_t class, subclass, protocol;
+    uint8_t class, subclass, protocol, busnum, portnum;
 
-    uint16_t vendor, product, revision;
+    uint16_t vendor, product, revision, usbver;
 
     struct unix_device *unix_device;
 
@@ -127,12 +127,19 @@ static void add_unix_device(const struct usb_add_device_event *event)
     InitializeListHead(&device->irp_list);
     device->removed = FALSE;
 
+    device->interface = event->interface;
+    device->interface_index = event->interface_index;
+
     device->class = event->class;
     device->subclass = event->subclass;
     device->protocol = event->protocol;
+    device->busnum = event->busnum;
+    device->portnum = event->portnum;
+
     device->vendor = event->vendor;
     device->product = event->product;
     device->revision = event->revision;
+    device->usbver = event->usbver;
 
     EnterCriticalSection(&wineusb_cs);
     list_add_tail(&device_list, &device->entry);
@@ -359,6 +366,11 @@ static void get_device_id(const struct usb_device *device, struct string_buffer 
         append_id(buffer, L"USB\\VID_%04X&PID_%04X", device->vendor, device->product);
 }
 
+static void get_instance_id(const struct usb_device *device, struct string_buffer *buffer)
+{
+    append_id(buffer, L"%u&%u&%u&%u", device->usbver, device->revision, device->busnum, device->portnum);
+}
+
 static void get_hardware_ids(const struct usb_device *device, struct string_buffer *buffer)
 {
     if (device->interface)
@@ -374,10 +386,20 @@ static void get_hardware_ids(const struct usb_device *device, struct string_buff
 
 static void get_compatible_ids(const struct usb_device *device, struct string_buffer *buffer)
 {
-    append_id(buffer, L"USB\\Class_%02x&SubClass_%02x&Prot_%02x",
-            device->class, device->subclass, device->protocol);
-    append_id(buffer, L"USB\\Class_%02x&SubClass_%02x", device->class, device->subclass);
-    append_id(buffer, L"USB\\Class_%02x", device->class);
+    if (device->interface_index != -1)
+    {
+        append_id(buffer, L"USB\\Class_%02x&SubClass_%02x&Prot_%02x",
+                device->class, device->subclass, device->protocol);
+        append_id(buffer, L"USB\\Class_%02x&SubClass_%02x", device->class, device->subclass);
+        append_id(buffer, L"USB\\Class_%02x", device->class);
+    }
+    else
+    {
+        append_id(buffer, L"USB\\DevClass_%02x&SubClass_%02x&Prot_%02x",
+                device->class, device->subclass, device->protocol);
+        append_id(buffer, L"USB\\DevClass_%02x&SubClass_%02x", device->class, device->subclass);
+        append_id(buffer, L"USB\\DevClass_%02x", device->class);
+    }
     append_id(buffer, L"");
 }
 
@@ -394,7 +416,7 @@ static NTSTATUS query_id(struct usb_device *device, IRP *irp, BUS_QUERY_ID_TYPE 
             break;
 
         case BusQueryInstanceID:
-            append_id(&buffer, L"0");
+            get_instance_id(device, &buffer);
             break;
 
         case BusQueryHardwareIDs:

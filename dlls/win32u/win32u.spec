@@ -1226,7 +1226,7 @@
 @ stdcall -syscall NtUserSetScrollInfo(long long ptr long)
 @ stub NtUserSetSensorPresence
 @ stub NtUserSetSharedWindowData
-@ stub NtUserSetShellWindowEx
+@ stdcall -syscall NtUserSetShellWindowEx(long long)
 @ stdcall -syscall NtUserSetSysColors(long ptr ptr)
 @ stub NtUserSetSystemCursor
 @ stdcall -syscall NtUserSetSystemMenu(long long)
@@ -1308,7 +1308,7 @@
 @ stdcall -syscall NtUserWaitForInputIdle(long long long)
 @ stub NtUserWaitForMsgAndEvent
 @ stub NtUserWaitForRedirectionStartComplete
-@ stub NtUserWaitMessage
+@ stdcall -syscall NtUserWaitMessage()
 @ stdcall -syscall NtUserWindowFromDC(long)
 @ stub NtUserWindowFromPhysicalPoint
 @ stdcall -syscall NtUserWindowFromPoint(long long)

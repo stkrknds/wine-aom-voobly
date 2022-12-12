@@ -273,6 +273,7 @@ static void * const syscalls[] =
     NtUserSetProcessWindowStation,
     NtUserSetProp,
     NtUserSetScrollInfo,
+    NtUserSetShellWindowEx,
     NtUserSetSysColors,
     NtUserSetSystemMenu,
     NtUserSetSystemTimer,
@@ -308,6 +309,7 @@ static void * const syscalls[] =
     NtUserValidateRect,
     NtUserVkKeyScanEx,
     NtUserWaitForInputIdle,
+    NtUserWaitMessage,
     NtUserWindowFromDC,
     NtUserWindowFromPoint,
 };

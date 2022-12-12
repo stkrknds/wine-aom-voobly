@@ -2808,7 +2808,7 @@ struct wined3d_state_entry
 
 struct wined3d_state_entry_template
 {
-    DWORD state;
+    unsigned int state;
     struct wined3d_state_entry content;
     unsigned int extension;
 };
@@ -2955,7 +2955,7 @@ void context_state_fb(struct wined3d_context *context,
 struct wined3d_light_info
 {
     struct wined3d_light OriginalParms; /* Note D3D8LIGHT == D3D9LIGHT */
-    DWORD        OriginalIndex;
+    unsigned int OriginalIndex;
     LONG         glIndex;
     BOOL         enabled;
 
@@ -3897,8 +3897,8 @@ struct wined3d_state
     BOOL ps_consts_b[WINED3D_MAX_CONSTS_B];
 
     struct wined3d_texture *textures[WINED3D_MAX_COMBINED_SAMPLERS];
-    DWORD sampler_states[WINED3D_MAX_COMBINED_SAMPLERS][WINED3D_HIGHEST_SAMPLER_STATE + 1];
-    DWORD texture_states[WINED3D_MAX_TEXTURES][WINED3D_HIGHEST_TEXTURE_STATE + 1];
+    uint32_t sampler_states[WINED3D_MAX_COMBINED_SAMPLERS][WINED3D_HIGHEST_SAMPLER_STATE + 1];
+    uint32_t texture_states[WINED3D_MAX_TEXTURES][WINED3D_HIGHEST_TEXTURE_STATE + 1];
 
     struct wined3d_matrix transforms[WINED3D_HIGHEST_TRANSFORM_STATE + 1];
     struct wined3d_vec4 clip_planes[WINED3D_MAX_CLIP_DISTANCES];
@@ -5937,7 +5937,7 @@ struct wined3d_pixel_shader
 
     /* Some information about the shader behavior */
     BOOL color0_mov;
-    DWORD color0_reg;
+    unsigned int color0_reg;
 
     BOOL force_early_depth_stencil;
     enum wined3d_shader_register_type depth_output;
@@ -6365,7 +6365,7 @@ static inline void context_apply_state(struct wined3d_context *context,
     state_table[rep].apply(context, state, rep);
 }
 
-static inline BOOL is_srgb_enabled(const DWORD *sampler_states)
+static inline BOOL is_srgb_enabled(const uint32_t *sampler_states)
 {
     /* Only use the LSB of the WINED3D_SAMP_SRGB_TEXTURE value. This matches
      * the behaviour of the AMD Windows driver.
