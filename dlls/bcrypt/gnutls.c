@@ -73,6 +73,10 @@ typedef enum
 #define GNUTLS_CIPHER_AES_128_CFB8 29
 #define GNUTLS_CIPHER_AES_192_CFB8 30
 #define GNUTLS_CIPHER_AES_256_CFB8 31
+
+#define GNUTLS_PK_RSA_PSS 6
+#define GNUTLS_PRIVKEY_SIGN_FLAG_RSA_PSS (1 << 7)
+typedef struct gnutls_x509_spki_st *gnutls_x509_spki_t;
 #endif
 
 union key_data
@@ -1071,7 +1075,7 @@ static NTSTATUS key_export_ecc( struct key *key, UCHAR *buf, ULONG len, ULONG *r
         return STATUS_INTERNAL_ERROR;
     }
 
-    if (curve != GNUTLS_ECC_CURVE_SECP256R1)
+    if (curve != GNUTLS_ECC_CURVE_SECP256R1 && curve != GNUTLS_ECC_CURVE_SECP384R1)
     {
         FIXME( "curve %u not supported\n", curve );
         free( x.data ); free( y.data ); free( d.data );
