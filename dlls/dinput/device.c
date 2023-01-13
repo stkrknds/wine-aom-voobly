@@ -1063,7 +1063,8 @@ static HRESULT check_property( struct dinput_device *impl, const GUID *guid, con
         case (DWORD_PTR)DIPROP_DEADZONE:
         case (DWORD_PTR)DIPROP_SATURATION:
         case (DWORD_PTR)DIPROP_CALIBRATIONMODE:
-            if (!impl->object_properties) return DIERR_UNSUPPORTED;
+            /* not supported on the mouse or keyboard */
+            if (!(impl->caps.dwDevType & DIDEVTYPE_HID)) return DIERR_UNSUPPORTED;
             break;
 
         case (DWORD_PTR)DIPROP_FFLOAD:
@@ -1102,6 +1103,7 @@ static BOOL CALLBACK get_object_property( const DIDEVICEOBJECTINSTANCEW *instanc
     {
         .range_min = DIPROPRANGE_NOMIN,
         .range_max = DIPROPRANGE_NOMAX,
+        .granularity = 1,
     };
     struct get_object_property_params *params = context;
     struct dinput_device *impl = impl_from_IDirectInputDevice8W( params->iface );
@@ -1154,7 +1156,7 @@ static BOOL CALLBACK get_object_property( const DIDEVICEOBJECTINSTANCEW *instanc
     case (DWORD_PTR)DIPROP_GRANULARITY:
     {
         DIPROPDWORD *value = (DIPROPDWORD *)params->header;
-        value->dwData = 1;
+        value->dwData = properties->granularity;
         return DIENUM_STOP;
     }
     case (DWORD_PTR)DIPROP_KEYNAME:
