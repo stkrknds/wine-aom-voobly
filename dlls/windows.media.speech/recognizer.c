@@ -156,6 +156,8 @@ struct session
     ISpeechContinuousRecognitionSession ISpeechContinuousRecognitionSession_iface;
     LONG ref;
 
+    IVector_ISpeechRecognitionConstraint *constraints;
+
     struct list completed_handlers;
     struct list result_handlers;
 };
@@ -208,6 +210,7 @@ static ULONG WINAPI session_Release( ISpeechContinuousRecognitionSession *iface 
     {
         typed_event_handlers_clear(&impl->completed_handlers);
         typed_event_handlers_clear(&impl->result_handlers);
+        IVector_ISpeechRecognitionConstraint_Release(impl->constraints);
         free(impl);
     }
 
@@ -244,7 +247,7 @@ static HRESULT WINAPI session_set_AutoStopSilenceTimeout( ISpeechContinuousRecog
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI start_callback( IInspectable *invoker )
+static HRESULT session_start_async( IInspectable *invoker )
 {
     return S_OK;
 }
@@ -252,7 +255,7 @@ static HRESULT WINAPI start_callback( IInspectable *invoker )
 static HRESULT WINAPI session_StartAsync( ISpeechContinuousRecognitionSession *iface, IAsyncAction **action )
 {
     FIXME("iface %p, action %p stub!\n", iface, action);
-    return async_action_create(NULL, start_callback, action);
+    return async_action_create(NULL, session_start_async, action);
 }
 
 static HRESULT WINAPI session_StartWithModeAsync( ISpeechContinuousRecognitionSession *iface,
@@ -263,10 +266,15 @@ static HRESULT WINAPI session_StartWithModeAsync( ISpeechContinuousRecognitionSe
     return E_NOTIMPL;
 }
 
+static HRESULT session_stop_async( IInspectable *invoker )
+{
+    return S_OK;
+}
+
 static HRESULT WINAPI session_StopAsync( ISpeechContinuousRecognitionSession *iface, IAsyncAction **action )
 {
     FIXME("iface %p, action %p stub!\n", iface, action);
-    return E_NOTIMPL;
+    return async_action_create(NULL, session_stop_async, action);
 }
 
 static HRESULT WINAPI session_CancelAsync( ISpeechContinuousRecognitionSession *iface, IAsyncAction **action )
@@ -275,10 +283,15 @@ static HRESULT WINAPI session_CancelAsync( ISpeechContinuousRecognitionSession *
     return E_NOTIMPL;
 }
 
+static HRESULT session_pause_async( IInspectable *invoker )
+{
+    return S_OK;
+}
+
 static HRESULT WINAPI session_PauseAsync( ISpeechContinuousRecognitionSession *iface, IAsyncAction **action )
 {
     FIXME("iface %p, action %p stub!\n", iface, action);
-    return E_NOTIMPL;
+    return async_action_create(NULL, session_pause_async, action);
 }
 
 static HRESULT WINAPI session_Resume( ISpeechContinuousRecognitionSession *iface )
@@ -360,7 +373,6 @@ struct recognizer
     LONG ref;
 
     ISpeechContinuousRecognitionSession *session;
-    IVector_ISpeechRecognitionConstraint *constraints;
 };
 
 /*
@@ -424,7 +436,6 @@ static ULONG WINAPI recognizer_Release( ISpeechRecognizer *iface )
     if (!ref)
     {
         ISpeechContinuousRecognitionSession_Release(impl->session);
-        IVector_ISpeechRecognitionConstraint_Release(impl->constraints);
         free(impl);
     }
 
@@ -452,8 +463,11 @@ static HRESULT WINAPI recognizer_GetTrustLevel( ISpeechRecognizer *iface, TrustL
 static HRESULT WINAPI recognizer_get_Constraints( ISpeechRecognizer *iface, IVector_ISpeechRecognitionConstraint **vector )
 {
     struct recognizer *impl = impl_from_ISpeechRecognizer(iface);
+    struct session *session = impl_from_ISpeechContinuousRecognitionSession(impl->session);
+
     TRACE("iface %p, operation %p.\n", iface, vector);
-    IVector_ISpeechRecognitionConstraint_AddRef((*vector = impl->constraints));
+
+    IVector_ISpeechRecognitionConstraint_AddRef((*vector = session->constraints));
     return S_OK;
 }
 
@@ -475,7 +489,7 @@ static HRESULT WINAPI recognizer_get_UIOptions( ISpeechRecognizer *iface, ISpeec
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI compile_callback( IInspectable *invoker, IInspectable **result )
+static HRESULT recognizer_compile_constraints_async( IInspectable *invoker, IInspectable **result )
 {
     return compilation_result_create(SpeechRecognitionResultStatus_Success, (ISpeechRecognitionCompilationResult **) result);
 }
@@ -485,7 +499,7 @@ static HRESULT WINAPI recognizer_CompileConstraintsAsync( ISpeechRecognizer *ifa
 {
     IAsyncOperation_IInspectable **value = (IAsyncOperation_IInspectable **)operation;
     FIXME("iface %p, operation %p semi-stub!\n", iface, operation);
-    return async_operation_inspectable_create(&IID_IAsyncOperation_SpeechRecognitionCompilationResult, NULL, compile_callback, value);
+    return async_operation_inspectable_create(&IID_IAsyncOperation_SpeechRecognitionCompilationResult, NULL, recognizer_compile_constraints_async, value);
 }
 
 static HRESULT WINAPI recognizer_RecognizeAsync( ISpeechRecognizer *iface,
@@ -797,18 +811,22 @@ static HRESULT WINAPI recognizer_factory_Create( ISpeechRecognizerFactory *iface
     if (language)
         FIXME("language parameter unused. Stub!\n");
 
+    /* Init ISpeechContinuousRecognitionSession */
     session->ISpeechContinuousRecognitionSession_iface.lpVtbl = &session_vtbl;
     session->ref = 1;
+
     list_init(&session->completed_handlers);
     list_init(&session->result_handlers);
 
+    if (FAILED(hr = vector_inspectable_create(&constraints_iids, (IVector_IInspectable**)&session->constraints)))
+        goto error;
+
+    /* Init ISpeechRecognizer */
     impl->ISpeechRecognizer_iface.lpVtbl = &speech_recognizer_vtbl;
     impl->IClosable_iface.lpVtbl = &closable_vtbl;
     impl->ISpeechRecognizer2_iface.lpVtbl = &speech_recognizer2_vtbl;
     impl->session = &session->ISpeechContinuousRecognitionSession_iface;
     impl->ref = 1;
-    if (FAILED(hr = vector_inspectable_create(&constraints_iids, (IVector_IInspectable**)&impl->constraints)))
-        goto error;
 
     TRACE("created SpeechRecognizer %p.\n", impl);
 
@@ -816,6 +834,7 @@ static HRESULT WINAPI recognizer_factory_Create( ISpeechRecognizerFactory *iface
     return S_OK;
 
 error:
+    if (session->constraints) IVector_ISpeechRecognitionConstraint_Release(session->constraints);
     free(session);
     free(impl);
 
