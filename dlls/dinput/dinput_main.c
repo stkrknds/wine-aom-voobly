@@ -52,6 +52,8 @@ struct input_thread_state
 {
     UINT events_count;
     UINT devices_count;
+    HHOOK mouse_ll_hook;
+    HHOOK keyboard_ll_hook;
     struct dinput_device *devices[INPUT_THREAD_MAX_DEVICES];
     HANDLE events[INPUT_THREAD_MAX_DEVICES];
 };
@@ -67,6 +69,7 @@ static HWND di_em_win;
 
 static HANDLE dinput_thread;
 static DWORD dinput_thread_id;
+static UINT input_thread_user_count;
 
 static CRITICAL_SECTION dinput_hook_crit;
 static CRITICAL_SECTION_DEBUG dinput_critsect_debug =
@@ -105,7 +108,7 @@ void dinput_hooks_unacquire_device( IDirectInputDevice8W *iface )
     LeaveCriticalSection( &dinput_hook_crit );
 }
 
-static void dinput_device_internal_unacquire( IDirectInputDevice8W *iface )
+static void dinput_device_internal_unacquire( IDirectInputDevice8W *iface, DWORD status )
 {
     struct dinput_device *impl = impl_from_IDirectInputDevice8W( iface );
 
@@ -115,7 +118,7 @@ static void dinput_device_internal_unacquire( IDirectInputDevice8W *iface )
     if (impl->status == STATUS_ACQUIRED)
     {
         impl->vtbl->unacquire( iface );
-        impl->status = STATUS_UNACQUIRED;
+        impl->status = status;
         list_remove( &impl->entry );
     }
     LeaveCriticalSection( &impl->crit );
@@ -167,7 +170,7 @@ static void unregister_di_em_win_class(void)
         WARN( "Unable to unregister message window class\n" );
 }
 
-static LRESULT CALLBACK LL_hook_proc( int code, WPARAM wparam, LPARAM lparam )
+static LRESULT CALLBACK input_thread_ll_hook_proc( int code, WPARAM wparam, LPARAM lparam )
 {
     struct dinput_device *impl;
     int skip = 0;
@@ -191,60 +194,65 @@ static LRESULT CALLBACK LL_hook_proc( int code, WPARAM wparam, LPARAM lparam )
     return skip ? 1 : CallNextHookEx( 0, code, wparam, lparam );
 }
 
-static LRESULT CALLBACK callwndproc_proc( int code, WPARAM wparam, LPARAM lparam )
+static void dinput_unacquire_window_devices( HWND window )
 {
     struct dinput_device *impl, *next;
+
+    EnterCriticalSection( &dinput_hook_crit );
+
+    LIST_FOR_EACH_ENTRY_SAFE( impl, next, &acquired_device_list, struct dinput_device, entry )
+    {
+        if (!window || window == impl->win)
+        {
+            TRACE( "%p window is not foreground - unacquiring %p\n", impl->win, impl );
+            dinput_device_internal_unacquire( &impl->IDirectInputDevice8W_iface, STATUS_UNACQUIRED );
+        }
+    }
+    LIST_FOR_EACH_ENTRY_SAFE( impl, next, &acquired_mouse_list, struct dinput_device, entry )
+    {
+        if (!window || window == impl->win)
+        {
+            TRACE( "%p window is not foreground - unacquiring %p\n", impl->win, impl );
+            dinput_device_internal_unacquire( &impl->IDirectInputDevice8W_iface, STATUS_UNACQUIRED );
+        }
+    }
+    LIST_FOR_EACH_ENTRY_SAFE( impl, next, &acquired_rawmouse_list, struct dinput_device, entry )
+    {
+        if (!window || window == impl->win)
+        {
+            TRACE( "%p window is not foreground - unacquiring %p\n", impl->win, impl );
+            dinput_device_internal_unacquire( &impl->IDirectInputDevice8W_iface, STATUS_UNACQUIRED );
+        }
+    }
+    LIST_FOR_EACH_ENTRY_SAFE( impl, next, &acquired_keyboard_list, struct dinput_device, entry )
+    {
+        if (!window || window == impl->win)
+        {
+            TRACE( "%p window is not foreground - unacquiring %p\n", impl->win, impl );
+            dinput_device_internal_unacquire( &impl->IDirectInputDevice8W_iface, STATUS_UNACQUIRED );
+        }
+    }
+
+    LeaveCriticalSection( &dinput_hook_crit );
+}
+
+static LRESULT CALLBACK callwndproc_proc( int code, WPARAM wparam, LPARAM lparam )
+{
     CWPSTRUCT *msg = (CWPSTRUCT *)lparam;
-    HWND foreground;
 
     if (code != HC_ACTION || (msg->message != WM_KILLFOCUS &&
         msg->message != WM_ACTIVATEAPP && msg->message != WM_ACTIVATE))
         return CallNextHookEx( 0, code, wparam, lparam );
 
-    foreground = GetForegroundWindow();
-
-    EnterCriticalSection( &dinput_hook_crit );
-    LIST_FOR_EACH_ENTRY_SAFE( impl, next, &acquired_device_list, struct dinput_device, entry )
-    {
-        if (msg->hwnd == impl->win && msg->hwnd != foreground)
-        {
-            TRACE( "%p window is not foreground - unacquiring %p\n", impl->win, impl );
-            dinput_device_internal_unacquire( &impl->IDirectInputDevice8W_iface );
-        }
-    }
-    LIST_FOR_EACH_ENTRY_SAFE( impl, next, &acquired_mouse_list, struct dinput_device, entry )
-    {
-        if (msg->hwnd == impl->win && msg->hwnd != foreground)
-        {
-            TRACE( "%p window is not foreground - unacquiring %p\n", impl->win, impl );
-            dinput_device_internal_unacquire( &impl->IDirectInputDevice8W_iface );
-        }
-    }
-    LIST_FOR_EACH_ENTRY_SAFE( impl, next, &acquired_rawmouse_list, struct dinput_device, entry )
-    {
-        if (msg->hwnd == impl->win && msg->hwnd != foreground)
-        {
-            TRACE( "%p window is not foreground - unacquiring %p\n", impl->win, impl );
-            dinput_device_internal_unacquire( &impl->IDirectInputDevice8W_iface );
-        }
-    }
-    LIST_FOR_EACH_ENTRY_SAFE( impl, next, &acquired_keyboard_list, struct dinput_device, entry )
-    {
-        if (msg->hwnd == impl->win && msg->hwnd != foreground)
-        {
-            TRACE( "%p window is not foreground - unacquiring %p\n", impl->win, impl );
-            dinput_device_internal_unacquire( &impl->IDirectInputDevice8W_iface );
-        }
-    }
-    LeaveCriticalSection( &dinput_hook_crit );
+    if (msg->hwnd != GetForegroundWindow()) dinput_unacquire_window_devices( msg->hwnd );
 
     return CallNextHookEx( 0, code, wparam, lparam );
 }
 
 static void input_thread_update_device_list( struct input_thread_state *state )
 {
+    UINT count = 0, keyboard_count, mouse_count;
     struct dinput_device *device;
-    UINT count = 0;
 
     EnterCriticalSection( &dinput_hook_crit );
     LIST_FOR_EACH_ENTRY( device, &acquired_device_list, struct dinput_device, entry )
@@ -256,15 +264,33 @@ static void input_thread_update_device_list( struct input_thread_state *state )
     }
     state->events_count = count;
     state->devices_count = count;
+
+    keyboard_count = list_count( &acquired_keyboard_list );
+    mouse_count = list_count( &acquired_mouse_list );
     LeaveCriticalSection( &dinput_hook_crit );
+
+    if (keyboard_count && !state->keyboard_ll_hook)
+        state->keyboard_ll_hook = SetWindowsHookExW( WH_KEYBOARD_LL, input_thread_ll_hook_proc, DINPUT_instance, 0 );
+    else if (!keyboard_count && state->keyboard_ll_hook)
+    {
+        UnhookWindowsHookEx( state->keyboard_ll_hook );
+        state->keyboard_ll_hook = NULL;
+    }
+
+    if (mouse_count && !state->mouse_ll_hook)
+        state->mouse_ll_hook = SetWindowsHookExW( WH_MOUSE_LL, input_thread_ll_hook_proc, DINPUT_instance, 0 );
+    else if (!mouse_count && state->mouse_ll_hook)
+    {
+        UnhookWindowsHookEx( state->mouse_ll_hook );
+        state->mouse_ll_hook = NULL;
+    }
 }
 
 static DWORD WINAPI dinput_thread_proc( void *params )
 {
-    HANDLE finished_event, start_event = params;
     struct input_thread_state state = {0};
-    static HHOOK kbd_hook, mouse_hook;
     struct dinput_device *device;
+    HANDLE start_event = params;
     DWORD ret;
     MSG msg;
 
@@ -276,16 +302,18 @@ static DWORD WINAPI dinput_thread_proc( void *params )
 
     while ((ret = MsgWaitForMultipleObjectsEx( state.events_count, state.events, INFINITE, QS_ALLINPUT, 0 )) <= state.events_count)
     {
-        UINT kbd_cnt = 0, mice_cnt = 0;
-
         if (ret < state.events_count)
         {
             if ((device = state.devices[ret]) && FAILED( device->vtbl->read( &device->IDirectInputDevice8W_iface ) ))
             {
                 EnterCriticalSection( &dinput_hook_crit );
-                dinput_device_internal_unacquire( &device->IDirectInputDevice8W_iface );
+                dinput_device_internal_unacquire( &device->IDirectInputDevice8W_iface, STATUS_UNPLUGGED );
                 LeaveCriticalSection( &dinput_hook_crit );
-                device->status = STATUS_UNPLUGGED;
+
+                state.events[ret] = state.events[--state.events_count];
+                state.devices[ret] = state.devices[state.events_count];
+                state.devices[state.events_count] = state.devices[--state.devices_count];
+                dinput_device_internal_release( device );
             }
         }
 
@@ -298,83 +326,61 @@ static DWORD WINAPI dinput_thread_proc( void *params )
                 continue;
             }
 
-            finished_event = (HANDLE)msg.lParam;
-
             TRACE( "Processing hook change notification wparam %#Ix, lparam %#Ix.\n", msg.wParam, msg.lParam );
 
-            if (!msg.wParam)
-            {
-                if (kbd_hook) UnhookWindowsHookEx( kbd_hook );
-                if (mouse_hook) UnhookWindowsHookEx( mouse_hook );
-                kbd_hook = mouse_hook = NULL;
-                goto done;
-            }
+            if (!msg.wParam) goto done;
 
-            EnterCriticalSection( &dinput_hook_crit );
-            kbd_cnt = list_count( &acquired_keyboard_list );
-            mice_cnt = list_count( &acquired_mouse_list );
-            LeaveCriticalSection( &dinput_hook_crit );
-
-            if (kbd_cnt && !kbd_hook)
-                kbd_hook = SetWindowsHookExW( WH_KEYBOARD_LL, LL_hook_proc, DINPUT_instance, 0 );
-            else if (!kbd_cnt && kbd_hook)
-            {
-                UnhookWindowsHookEx( kbd_hook );
-                kbd_hook = NULL;
-            }
-
-            if (mice_cnt && !mouse_hook)
-                mouse_hook = SetWindowsHookExW( WH_MOUSE_LL, LL_hook_proc, DINPUT_instance, 0 );
-            else if (!mice_cnt && mouse_hook)
-            {
-                UnhookWindowsHookEx( mouse_hook );
-                mouse_hook = NULL;
-            }
-
-            SetEvent(finished_event);
+            while (state.devices_count--) dinput_device_internal_release( state.devices[state.devices_count] );
+            input_thread_update_device_list( &state );
+            SetEvent( (HANDLE)msg.lParam );
         }
-
-        while (state.devices_count--) dinput_device_internal_release( state.devices[state.devices_count] );
-        input_thread_update_device_list( &state );
     }
 
-    if (ret != state.events_count) ERR("Unexpected termination, ret %#lx\n", ret);
+    ERR( "Unexpected termination, ret %#lx\n", ret );
+    dinput_unacquire_window_devices( 0 );
 
 done:
     while (state.devices_count--) dinput_device_internal_release( state.devices[state.devices_count] );
+    if (state.keyboard_ll_hook) UnhookWindowsHookEx( state.keyboard_ll_hook );
+    if (state.mouse_ll_hook) UnhookWindowsHookEx( state.mouse_ll_hook );
     DestroyWindow( di_em_win );
     di_em_win = NULL;
     return 0;
 }
 
-static BOOL WINAPI dinput_thread_start_once( INIT_ONCE *once, void *param, void **context )
+void input_thread_add_user(void)
 {
-    HANDLE start_event;
+    EnterCriticalSection( &dinput_hook_crit );
+    if (!input_thread_user_count++)
+    {
+        HANDLE start_event;
 
-    start_event = CreateEventW( NULL, FALSE, FALSE, NULL );
-    if (!start_event) ERR( "failed to create start event, error %lu\n", GetLastError() );
+        TRACE( "Starting input thread.\n" );
 
-    dinput_thread = CreateThread( NULL, 0, dinput_thread_proc, start_event, 0, &dinput_thread_id );
-    if (!dinput_thread) ERR( "failed to create internal thread, error %lu\n", GetLastError() );
+        if (!(start_event = CreateEventW( NULL, FALSE, FALSE, NULL )))
+            ERR( "Failed to create start event, error %lu\n", GetLastError() );
+        else if (!(dinput_thread = CreateThread( NULL, 0, dinput_thread_proc, start_event, 0, &dinput_thread_id )))
+            ERR( "Failed to create internal thread, error %lu\n", GetLastError() );
+        else
+            WaitForSingleObject( start_event, INFINITE );
 
-    WaitForSingleObject( start_event, INFINITE );
-    CloseHandle( start_event );
-
-    return TRUE;
+        CloseHandle( start_event );
+    }
+    LeaveCriticalSection( &dinput_hook_crit );
 }
 
-static void dinput_thread_start(void)
+void input_thread_remove_user(void)
 {
-    static INIT_ONCE init_once = INIT_ONCE_STATIC_INIT;
-    InitOnceExecuteOnce( &init_once, dinput_thread_start_once, NULL, NULL );
-}
+    EnterCriticalSection( &dinput_hook_crit );
+    if (!--input_thread_user_count)
+    {
+        TRACE( "Stopping input thread.\n" );
 
-static void dinput_thread_stop(void)
-{
-    PostThreadMessageW( dinput_thread_id, WM_USER + 0x10, 0, 0 );
-    if (WaitForSingleObject( dinput_thread, 500 ) == WAIT_TIMEOUT)
-        WARN("Timeout while waiting for internal thread\n");
-    CloseHandle( dinput_thread );
+        PostThreadMessageW( dinput_thread_id, WM_USER + 0x10, 0, 0 );
+        WaitForSingleObject( dinput_thread, INFINITE );
+        CloseHandle( dinput_thread );
+    }
+    LeaveCriticalSection( &dinput_hook_crit );
 }
 
 void check_dinput_hooks( IDirectInputDevice8W *iface, BOOL acquired )
@@ -383,8 +389,6 @@ void check_dinput_hooks( IDirectInputDevice8W *iface, BOOL acquired )
     static ULONG foreground_cnt;
     struct dinput_device *impl = impl_from_IDirectInputDevice8W( iface );
     HANDLE hook_change_finished_event = NULL;
-
-    dinput_thread_start();
 
     EnterCriticalSection(&dinput_hook_crit);
 
@@ -468,7 +472,6 @@ BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, void *reserved )
         break;
       case DLL_PROCESS_DETACH:
         if (reserved) break;
-        dinput_thread_stop();
         unregister_di_em_win_class();
         break;
     }

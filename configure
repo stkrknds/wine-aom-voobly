@@ -1210,6 +1210,7 @@ enable_msacm32
 enable_msado15
 enable_msadp32_acm
 enable_msasn1
+enable_msauddecmft
 enable_mscat32
 enable_mscms
 enable_mscoree
@@ -1235,6 +1236,7 @@ enable_msimtf
 enable_msisip
 enable_msisys_ocx
 enable_msls31
+enable_msmpeg2vdec
 enable_msnet32
 enable_mspatcha
 enable_msports
@@ -1448,6 +1450,7 @@ enable_windows_media_devices
 enable_windows_media_speech
 enable_windows_media
 enable_windows_networking
+enable_windows_system_profile_systemmanufacturers
 enable_windowscodecs
 enable_windowscodecsext
 enable_winealsa_drv
@@ -21357,6 +21360,7 @@ wine_fn_config_makefile dlls/msado15/tests enable_tests
 wine_fn_config_makefile dlls/msadp32.acm enable_msadp32_acm
 wine_fn_config_makefile dlls/msasn1 enable_msasn1
 wine_fn_config_makefile dlls/msasn1/tests enable_tests
+wine_fn_config_makefile dlls/msauddecmft enable_msauddecmft
 wine_fn_config_makefile dlls/mscat32 enable_mscat32
 wine_fn_config_makefile dlls/mscms enable_mscms
 wine_fn_config_makefile dlls/mscms/tests enable_tests
@@ -21390,6 +21394,7 @@ wine_fn_config_makefile dlls/msimtf enable_msimtf
 wine_fn_config_makefile dlls/msisip enable_msisip
 wine_fn_config_makefile dlls/msisys.ocx enable_msisys_ocx
 wine_fn_config_makefile dlls/msls31 enable_msls31
+wine_fn_config_makefile dlls/msmpeg2vdec enable_msmpeg2vdec
 wine_fn_config_makefile dlls/msnet32 enable_msnet32
 wine_fn_config_makefile dlls/mspatcha enable_mspatcha
 wine_fn_config_makefile dlls/mspatcha/tests enable_tests
@@ -21748,6 +21753,8 @@ wine_fn_config_makefile dlls/windows.media.speech/tests enable_tests
 wine_fn_config_makefile dlls/windows.media enable_windows_media
 wine_fn_config_makefile dlls/windows.media/tests enable_tests
 wine_fn_config_makefile dlls/windows.networking enable_windows_networking
+wine_fn_config_makefile dlls/windows.system.profile.systemmanufacturers enable_windows_system_profile_systemmanufacturers
+wine_fn_config_makefile dlls/windows.system.profile.systemmanufacturers/tests enable_tests
 wine_fn_config_makefile dlls/windowscodecs enable_windowscodecs
 wine_fn_config_makefile dlls/windowscodecs/tests enable_tests
 wine_fn_config_makefile dlls/windowscodecsext enable_windowscodecsext
