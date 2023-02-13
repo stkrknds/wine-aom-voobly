@@ -510,13 +510,15 @@ static IMFMediaType *mf_media_type_from_wg_format_video(const struct wg_format *
     {
         if (format->u.video.format == video_formats[i].format)
         {
+            int32_t height = abs(format->u.video.height);
+            int32_t width = format->u.video.width;
+
             if (FAILED(MFCreateMediaType(&type)))
                 return NULL;
 
             IMFMediaType_SetGUID(type, &MF_MT_MAJOR_TYPE, &MFMediaType_Video);
             IMFMediaType_SetGUID(type, &MF_MT_SUBTYPE, video_formats[i].subtype);
-            IMFMediaType_SetUINT64(type, &MF_MT_FRAME_SIZE,
-                    make_uint64(format->u.video.width, format->u.video.height));
+            IMFMediaType_SetUINT64(type, &MF_MT_FRAME_SIZE, make_uint64(width, height));
             IMFMediaType_SetUINT64(type, &MF_MT_FRAME_RATE,
                     make_uint64(format->u.video.fps_n, format->u.video.fps_d));
             IMFMediaType_SetUINT32(type, &MF_MT_COMPRESSED, FALSE);
@@ -529,8 +531,8 @@ static IMFMediaType *mf_media_type_from_wg_format_video(const struct wg_format *
                 {
                     .OffsetX = {.value = format->u.video.padding.left},
                     .OffsetY = {.value = format->u.video.padding.top},
-                    .Area.cx = format->u.video.width - format->u.video.padding.right - format->u.video.padding.left,
-                    .Area.cy = format->u.video.height - format->u.video.padding.bottom - format->u.video.padding.top,
+                    .Area.cx = width - format->u.video.padding.right - format->u.video.padding.left,
+                    .Area.cy = height - format->u.video.padding.bottom - format->u.video.padding.top,
                 };
 
                 IMFMediaType_SetBlob(type, &MF_MT_MINIMUM_DISPLAY_APERTURE,
@@ -665,11 +667,23 @@ static void mf_media_type_to_wg_format_audio_mpeg4(IMFMediaType *type, struct wg
     memcpy(format->u.audio_mpeg4.codec_data, user_data->pbAudioSpecificConfig, codec_data_size);
 }
 
+static enum wg_video_format mf_video_format_to_wg(const GUID *subtype)
+{
+    unsigned int i;
+
+    for (i = 0; i < ARRAY_SIZE(video_formats); ++i)
+    {
+        if (IsEqualGUID(subtype, video_formats[i].subtype))
+            return video_formats[i].format;
+    }
+    FIXME("Unrecognized video subtype %s.\n", debugstr_guid(subtype));
+    return WG_VIDEO_FORMAT_UNKNOWN;
+}
+
 static void mf_media_type_to_wg_format_video(IMFMediaType *type, const GUID *subtype, struct wg_format *format)
 {
     UINT64 frame_rate, frame_size;
     MFVideoArea aperture;
-    unsigned int i;
     UINT32 size;
 
     if (FAILED(IMFMediaType_GetUINT64(type, &MF_MT_FRAME_SIZE, &frame_size)))
@@ -699,15 +713,7 @@ static void mf_media_type_to_wg_format_video(IMFMediaType *type, const GUID *sub
         format->u.video.fps_d = (UINT32)frame_rate;
     }
 
-    for (i = 0; i < ARRAY_SIZE(video_formats); ++i)
-    {
-        if (IsEqualGUID(subtype, video_formats[i].subtype))
-        {
-            format->u.video.format = video_formats[i].format;
-            return;
-        }
-    }
-    FIXME("Unrecognized video subtype %s.\n", debugstr_guid(subtype));
+    format->u.video.format = mf_video_format_to_wg(subtype);
 }
 
 static void mf_media_type_to_wg_format_audio_wma(IMFMediaType *type, const GUID *subtype, struct wg_format *format)

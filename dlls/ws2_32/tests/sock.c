@@ -3003,6 +3003,7 @@ static void test_WSASocket(void)
         int family, type, protocol;
         DWORD error;
         int ret_family, ret_type, ret_protocol;
+        int ret_family_alt;
     }
     tests[] =
     {
@@ -3030,14 +3031,14 @@ static void test_WSASocket(void)
         {AF_INET,   SOCK_DGRAM,  IPPROTO_TCP, WSAEPROTONOSUPPORT},
 
         /* 19 */
-        {AF_UNSPEC, SOCK_STREAM, IPPROTO_TCP, 0, AF_INET, SOCK_STREAM, IPPROTO_TCP},
+        {AF_UNSPEC, SOCK_STREAM, IPPROTO_TCP, 0, AF_INET, SOCK_STREAM, IPPROTO_TCP, AF_INET6 /* win11 */},
         {AF_UNSPEC, SOCK_STREAM, 0xdead,      WSAEPROTONOSUPPORT},
         {AF_UNSPEC, 0xdead,      IPPROTO_UDP, WSAESOCKTNOSUPPORT},
         {AF_UNSPEC, SOCK_STREAM, 0,           WSAEINVAL},
         {AF_UNSPEC, SOCK_DGRAM,  0,           WSAEINVAL},
         {AF_UNSPEC, 0xdead,      0,           WSAEINVAL},
-        {AF_UNSPEC, 0,           IPPROTO_TCP, 0, AF_INET, SOCK_STREAM, IPPROTO_TCP},
-        {AF_UNSPEC, 0,           IPPROTO_UDP, 0, AF_INET, SOCK_DGRAM,  IPPROTO_UDP},
+        {AF_UNSPEC, 0,           IPPROTO_TCP, 0, AF_INET, SOCK_STREAM, IPPROTO_TCP, AF_INET6 /* win11 */},
+        {AF_UNSPEC, 0,           IPPROTO_UDP, 0, AF_INET, SOCK_DGRAM,  IPPROTO_UDP, AF_INET6 /* win11 */},
         {AF_UNSPEC, 0,           0xdead,      WSAEPROTONOSUPPORT},
         {AF_UNSPEC, 0,           0,           WSAEINVAL},
     };
@@ -3061,7 +3062,9 @@ static void test_WSASocket(void)
             size = sizeof(info);
             err = getsockopt( sock, SOL_SOCKET, SO_PROTOCOL_INFOA, (char *)&info, &size );
             ok(!err, "Test %u: getsockopt failed, error %u\n", i, WSAGetLastError());
-            ok(info.iAddressFamily == tests[i].ret_family, "Test %u: got wrong family %d\n", i, info.iAddressFamily);
+            ok(info.iAddressFamily == tests[i].ret_family ||
+               (tests[i].ret_family_alt && info.iAddressFamily == tests[i].ret_family_alt),
+               "Test %u: got wrong family %d\n", i, info.iAddressFamily);
             ok(info.iSocketType == tests[i].ret_type, "Test %u: got wrong type %d\n", i, info.iSocketType);
             ok(info.iProtocol == tests[i].ret_protocol, "Test %u: got wrong protocol %d\n", i, info.iProtocol);
 
@@ -12206,6 +12209,8 @@ static void test_bind(void)
     {
         const IP_ADAPTER_UNICAST_ADDRESS *unicast_addr;
 
+        if (adapter->OperStatus != IfOperStatusUp) continue;
+
         for (unicast_addr = adapter->FirstUnicastAddress; unicast_addr != NULL; unicast_addr = unicast_addr->Next)
         {
             short family = unicast_addr->Address.lpSockaddr->sa_family;
@@ -12806,14 +12811,14 @@ static void test_empty_recv(void)
     WSASetLastError(0xdeadbeef);
     ret = WSARecv(client, NULL, 0, NULL, &flags, &overlapped, NULL);
     ok(ret == -1, "expected failure\n");
-    todo_wine ok(WSAGetLastError() == WSAEINVAL, "got error %u\n", WSAGetLastError());
+    ok(WSAGetLastError() == WSAEINVAL, "got error %u\n", WSAGetLastError());
 
     wsabuf.buf = buffer;
     wsabuf.len = 0;
     WSASetLastError(0xdeadbeef);
     ret = WSARecv(client, &wsabuf, 0, NULL, &flags, &overlapped, NULL);
     ok(ret == -1, "expected failure\n");
-    todo_wine ok(WSAGetLastError() == WSAEINVAL, "got error %u\n", WSAGetLastError());
+    ok(WSAGetLastError() == WSAEINVAL, "got error %u\n", WSAGetLastError());
 
     WSASetLastError(0xdeadbeef);
     ret = WSARecv(client, &wsabuf, 1, NULL, &flags, &overlapped, NULL);

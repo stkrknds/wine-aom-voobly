@@ -191,7 +191,7 @@ LONG call_vectored_handlers( EXCEPTION_RECORD *rec, CONTEXT *context )
  *
  * Implementation of RtlRaiseStatus with a specific exception record.
  */
-void raise_status( NTSTATUS status, EXCEPTION_RECORD *rec )
+void DECLSPEC_NORETURN raise_status( NTSTATUS status, EXCEPTION_RECORD *rec )
 {
     EXCEPTION_RECORD ExceptionRec;
 
@@ -208,7 +208,7 @@ void raise_status( NTSTATUS status, EXCEPTION_RECORD *rec )
  *
  * Raise an exception with ExceptionCode = status
  */
-void WINAPI RtlRaiseStatus( NTSTATUS status )
+void DECLSPEC_NORETURN WINAPI RtlRaiseStatus( NTSTATUS status )
 {
     raise_status( status, NULL );
 }
@@ -623,7 +623,7 @@ PRUNTIME_FUNCTION WINAPI RtlLookupFunctionEntry( ULONG_PTR pc, ULONG_PTR *base,
 /*************************************************************
  *            _assert
  */
-void __cdecl _assert( const char *str, const char *file, unsigned int line )
+void DECLSPEC_NORETURN __cdecl _assert( const char *str, const char *file, unsigned int line )
 {
     ERR( "%s:%u: Assertion failed %s\n", file, line, debugstr_a(str) );
     RtlRaiseStatus( EXCEPTION_WINE_ASSERTION );

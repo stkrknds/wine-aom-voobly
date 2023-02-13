@@ -35,6 +35,7 @@
 #include "objbase.h"
 #include "rpcproxy.h"
 #include "devguid.h"
+#include "hidusage.h"
 #include "initguid.h"
 #include "dinputd.h"
 
@@ -50,10 +51,13 @@ WINE_DEFAULT_DEBUG_CHANNEL(dinput);
 
 struct input_thread_state
 {
+    BOOL running;
     UINT events_count;
     UINT devices_count;
     HHOOK mouse_ll_hook;
     HHOOK keyboard_ll_hook;
+    HHOOK callwndproc_hook;
+    RAWINPUTDEVICE rawinput_devices[2];
     struct dinput_device *devices[INPUT_THREAD_MAX_DEVICES];
     HANDLE events[INPUT_THREAD_MAX_DEVICES];
 };
@@ -66,10 +70,9 @@ static inline struct dinput_device *impl_from_IDirectInputDevice8W( IDirectInput
 HINSTANCE DINPUT_instance;
 
 static HWND di_em_win;
-
 static HANDLE dinput_thread;
-static DWORD dinput_thread_id;
 static UINT input_thread_user_count;
+static struct input_thread_state *input_thread_state;
 
 static CRITICAL_SECTION dinput_hook_crit;
 static CRITICAL_SECTION_DEBUG dinput_critsect_debug =
@@ -97,6 +100,8 @@ void dinput_hooks_acquire_device( IDirectInputDevice8W *iface )
     else
         list_add_tail( &acquired_device_list, &impl->entry );
     LeaveCriticalSection( &dinput_hook_crit );
+
+    SendMessageW( di_em_win, WM_USER + 0x10, 1, 0 );
 }
 
 void dinput_hooks_unacquire_device( IDirectInputDevice8W *iface )
@@ -106,6 +111,8 @@ void dinput_hooks_unacquire_device( IDirectInputDevice8W *iface )
     EnterCriticalSection( &dinput_hook_crit );
     list_remove( &impl->entry );
     LeaveCriticalSection( &dinput_hook_crit );
+
+    SendMessageW( di_em_win, WM_USER + 0x10, 1, 0 );
 }
 
 static void dinput_device_internal_unacquire( IDirectInputDevice8W *iface, DWORD status )
@@ -122,52 +129,6 @@ static void dinput_device_internal_unacquire( IDirectInputDevice8W *iface, DWORD
         list_remove( &impl->entry );
     }
     LeaveCriticalSection( &impl->crit );
-}
-
-static LRESULT WINAPI di_em_win_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
-{
-    struct dinput_device *impl;
-    RAWINPUT ri;
-    UINT size = sizeof(ri);
-    int rim = GET_RAWINPUT_CODE_WPARAM( wparam );
-
-    TRACE( "%p %d %Ix %Ix\n", hwnd, msg, wparam, lparam );
-
-    if (msg == WM_INPUT && (rim == RIM_INPUT || rim == RIM_INPUTSINK))
-    {
-        size = GetRawInputData( (HRAWINPUT)lparam, RID_INPUT, &ri, &size, sizeof(RAWINPUTHEADER) );
-        if (size == (UINT)-1 || size < sizeof(RAWINPUTHEADER))
-            WARN( "Unable to read raw input data\n" );
-        else if (ri.header.dwType == RIM_TYPEMOUSE)
-        {
-            EnterCriticalSection( &dinput_hook_crit );
-            LIST_FOR_EACH_ENTRY( impl, &acquired_rawmouse_list, struct dinput_device, entry )
-                dinput_mouse_rawinput_hook( &impl->IDirectInputDevice8W_iface, wparam, lparam, &ri );
-            LeaveCriticalSection( &dinput_hook_crit );
-        }
-    }
-
-    return DefWindowProcW( hwnd, msg, wparam, lparam );
-}
-
-static void register_di_em_win_class(void)
-{
-    WNDCLASSEXW class;
-
-    memset(&class, 0, sizeof(class));
-    class.cbSize = sizeof(class);
-    class.lpfnWndProc = di_em_win_wndproc;
-    class.hInstance = DINPUT_instance;
-    class.lpszClassName = L"DIEmWin";
-
-    if (!RegisterClassExW( &class ) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
-        WARN( "Unable to register message window class\n" );
-}
-
-static void unregister_di_em_win_class(void)
-{
-    if (!UnregisterClassW( L"DIEmWin", NULL ) && GetLastError() != ERROR_CLASS_DOES_NOT_EXIST)
-        WARN( "Unable to unregister message window class\n" );
 }
 
 static LRESULT CALLBACK input_thread_ll_hook_proc( int code, WPARAM wparam, LPARAM lparam )
@@ -251,23 +212,51 @@ static LRESULT CALLBACK callwndproc_proc( int code, WPARAM wparam, LPARAM lparam
 
 static void input_thread_update_device_list( struct input_thread_state *state )
 {
-    UINT count = 0, keyboard_count, mouse_count;
+    RAWINPUTDEVICE rawinput_mouse = {.usUsagePage = HID_USAGE_PAGE_GENERIC, .usUsage = HID_USAGE_GENERIC_MOUSE, .dwFlags = RIDEV_REMOVE};
+    UINT count = 0, keyboard_count = 0, mouse_count = 0, foreground_count = 0;
     struct dinput_device *device;
 
     EnterCriticalSection( &dinput_hook_crit );
     LIST_FOR_EACH_ENTRY( device, &acquired_device_list, struct dinput_device, entry )
     {
+        if (device->dwCoopLevel & DISCL_FOREGROUND) foreground_count++;
         if (!device->read_event || !device->vtbl->read) continue;
         state->events[count] = device->read_event;
         dinput_device_internal_addref( (state->devices[count] = device) );
         if (++count >= INPUT_THREAD_MAX_DEVICES) break;
     }
     state->events_count = count;
-    state->devices_count = count;
 
-    keyboard_count = list_count( &acquired_keyboard_list );
-    mouse_count = list_count( &acquired_mouse_list );
+    LIST_FOR_EACH_ENTRY( device, &acquired_rawmouse_list, struct dinput_device, entry )
+    {
+        if (device->dwCoopLevel & DISCL_FOREGROUND) foreground_count++;
+        if (device->dwCoopLevel & DISCL_BACKGROUND) rawinput_mouse.dwFlags |= RIDEV_INPUTSINK;
+        if (device->dwCoopLevel & DISCL_EXCLUSIVE) rawinput_mouse.dwFlags |= RIDEV_NOLEGACY | RIDEV_CAPTUREMOUSE;
+        rawinput_mouse.dwFlags &= ~RIDEV_REMOVE;
+        rawinput_mouse.hwndTarget = di_em_win;
+        dinput_device_internal_addref( (state->devices[count] = device) );
+        if (++count >= INPUT_THREAD_MAX_DEVICES) break;
+    }
+    LIST_FOR_EACH_ENTRY( device, &acquired_mouse_list, struct dinput_device, entry )
+    {
+        if (device->dwCoopLevel & DISCL_FOREGROUND) foreground_count++;
+        mouse_count++;
+    }
+    LIST_FOR_EACH_ENTRY( device, &acquired_keyboard_list, struct dinput_device, entry )
+    {
+        if (device->dwCoopLevel & DISCL_FOREGROUND) foreground_count++;
+        keyboard_count++;
+    }
+    state->devices_count = count;
     LeaveCriticalSection( &dinput_hook_crit );
+
+    if (foreground_count && !state->callwndproc_hook)
+        state->callwndproc_hook = SetWindowsHookExW( WH_CALLWNDPROC, callwndproc_proc, DINPUT_instance, GetCurrentThreadId() );
+    else if (!foreground_count && state->callwndproc_hook)
+    {
+        UnhookWindowsHookEx( state->callwndproc_hook );
+        state->callwndproc_hook = NULL;
+    }
 
     if (keyboard_count && !state->keyboard_ll_hook)
         state->keyboard_ll_hook = SetWindowsHookExW( WH_KEYBOARD_LL, input_thread_ll_hook_proc, DINPUT_instance, 0 );
@@ -284,23 +273,97 @@ static void input_thread_update_device_list( struct input_thread_state *state )
         UnhookWindowsHookEx( state->mouse_ll_hook );
         state->mouse_ll_hook = NULL;
     }
+
+    if (!rawinput_mouse.hwndTarget != !state->rawinput_devices[0].hwndTarget &&
+        !RegisterRawInputDevices( &rawinput_mouse, 1, sizeof(RAWINPUTDEVICE) ))
+        WARN( "Failed to (un)register rawinput mouse device.\n" );
+
+    state->rawinput_devices[0] = rawinput_mouse;
+}
+
+static LRESULT WINAPI di_em_win_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    struct input_thread_state *state = input_thread_state;
+    int rim = GET_RAWINPUT_CODE_WPARAM( wparam );
+    UINT i, size = sizeof(RAWINPUT);
+    RAWINPUT ri;
+
+    TRACE( "%p %d %Ix %Ix\n", hwnd, msg, wparam, lparam );
+
+    if (msg == WM_INPUT && (rim == RIM_INPUT || rim == RIM_INPUTSINK))
+    {
+        size = GetRawInputData( (HRAWINPUT)lparam, RID_INPUT, &ri, &size, sizeof(RAWINPUTHEADER) );
+        if (size == (UINT)-1 || size < sizeof(RAWINPUTHEADER))
+            WARN( "Unable to read raw input data\n" );
+        else if (ri.header.dwType == RIM_TYPEMOUSE)
+        {
+            for (i = state->events_count; i < state->devices_count; ++i)
+            {
+                struct dinput_device *device = state->devices[i];
+                if (!device->use_raw_input) continue;
+                if (device->instance.dwDevType & DIDEVTYPE_HID) continue;
+                switch (GET_DIDEVICE_TYPE( device->instance.dwDevType ))
+                {
+                case DIDEVTYPE_MOUSE:
+                case DI8DEVTYPE_MOUSE:
+                    dinput_mouse_rawinput_hook( &device->IDirectInputDevice8W_iface, wparam, lparam, &ri );
+                    break;
+                default: break;
+                }
+            }
+        }
+    }
+
+    if (msg == WM_USER + 0x10)
+    {
+        TRACE( "Processing hook change notification wparam %#Ix, lparam %#Ix.\n", wparam, lparam );
+
+        if (!wparam) state->running = FALSE;
+        else
+        {
+            while (state->devices_count--) dinput_device_internal_release( state->devices[state->devices_count] );
+            input_thread_update_device_list( state );
+        }
+
+        return 0;
+    }
+
+    return DefWindowProcW( hwnd, msg, wparam, lparam );
+}
+
+static void register_di_em_win_class(void)
+{
+    WNDCLASSEXW class;
+
+    memset(&class, 0, sizeof(class));
+    class.cbSize = sizeof(class);
+    class.lpfnWndProc = di_em_win_wndproc;
+    class.hInstance = DINPUT_instance;
+    class.lpszClassName = L"DIEmWin";
+
+    if (!RegisterClassExW( &class ) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+        WARN( "Unable to register message window class\n" );
+}
+
+static void unregister_di_em_win_class(void)
+{
+    if (!UnregisterClassW( L"DIEmWin", NULL ) && GetLastError() != ERROR_CLASS_DOES_NOT_EXIST)
+        WARN( "Unable to unregister message window class\n" );
 }
 
 static DWORD WINAPI dinput_thread_proc( void *params )
 {
-    struct input_thread_state state = {0};
+    struct input_thread_state state = {.running = TRUE};
     struct dinput_device *device;
     HANDLE start_event = params;
     DWORD ret;
     MSG msg;
 
     di_em_win = CreateWindowW( L"DIEmWin", L"DIEmWin", 0, 0, 0, 0, 0, HWND_MESSAGE, 0, DINPUT_instance, NULL );
-
-    /* Force creation of the message queue */
-    PeekMessageW( &msg, 0, 0, 0, PM_NOREMOVE );
+    input_thread_state = &state;
     SetEvent( start_event );
 
-    while ((ret = MsgWaitForMultipleObjectsEx( state.events_count, state.events, INFINITE, QS_ALLINPUT, 0 )) <= state.events_count)
+    while (state.running && (ret = MsgWaitForMultipleObjectsEx( state.events_count, state.events, INFINITE, QS_ALLINPUT, 0 )) <= state.events_count)
     {
         if (ret < state.events_count)
         {
@@ -319,28 +382,19 @@ static DWORD WINAPI dinput_thread_proc( void *params )
 
         while (PeekMessageW( &msg, 0, 0, 0, PM_REMOVE ))
         {
-            if (msg.message != WM_USER+0x10)
-            {
-                TranslateMessage(&msg);
-                DispatchMessageW(&msg);
-                continue;
-            }
-
-            TRACE( "Processing hook change notification wparam %#Ix, lparam %#Ix.\n", msg.wParam, msg.lParam );
-
-            if (!msg.wParam) goto done;
-
-            while (state.devices_count--) dinput_device_internal_release( state.devices[state.devices_count] );
-            input_thread_update_device_list( &state );
-            SetEvent( (HANDLE)msg.lParam );
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
         }
     }
 
-    ERR( "Unexpected termination, ret %#lx\n", ret );
-    dinput_unacquire_window_devices( 0 );
+    if (state.running)
+    {
+        ERR( "Unexpected termination, ret %#lx\n", ret );
+        dinput_unacquire_window_devices( 0 );
+    }
 
-done:
     while (state.devices_count--) dinput_device_internal_release( state.devices[state.devices_count] );
+    if (state.callwndproc_hook) UnhookWindowsHookEx( state.callwndproc_hook );
     if (state.keyboard_ll_hook) UnhookWindowsHookEx( state.keyboard_ll_hook );
     if (state.mouse_ll_hook) UnhookWindowsHookEx( state.mouse_ll_hook );
     DestroyWindow( di_em_win );
@@ -359,7 +413,7 @@ void input_thread_add_user(void)
 
         if (!(start_event = CreateEventW( NULL, FALSE, FALSE, NULL )))
             ERR( "Failed to create start event, error %lu\n", GetLastError() );
-        else if (!(dinput_thread = CreateThread( NULL, 0, dinput_thread_proc, start_event, 0, &dinput_thread_id )))
+        else if (!(dinput_thread = CreateThread( NULL, 0, dinput_thread_proc, start_event, 0, NULL )))
             ERR( "Failed to create internal thread, error %lu\n", GetLastError() );
         else
             WaitForSingleObject( start_event, INFINITE );
@@ -376,71 +430,11 @@ void input_thread_remove_user(void)
     {
         TRACE( "Stopping input thread.\n" );
 
-        PostThreadMessageW( dinput_thread_id, WM_USER + 0x10, 0, 0 );
+        SendMessageW( di_em_win, WM_USER + 0x10, 0, 0 );
         WaitForSingleObject( dinput_thread, INFINITE );
         CloseHandle( dinput_thread );
     }
     LeaveCriticalSection( &dinput_hook_crit );
-}
-
-void check_dinput_hooks( IDirectInputDevice8W *iface, BOOL acquired )
-{
-    static HHOOK callwndproc_hook;
-    static ULONG foreground_cnt;
-    struct dinput_device *impl = impl_from_IDirectInputDevice8W( iface );
-    HANDLE hook_change_finished_event = NULL;
-
-    EnterCriticalSection(&dinput_hook_crit);
-
-    if (impl->dwCoopLevel & DISCL_FOREGROUND)
-    {
-        if (acquired)
-            foreground_cnt++;
-        else
-            foreground_cnt--;
-    }
-
-    if (foreground_cnt && !callwndproc_hook)
-        callwndproc_hook = SetWindowsHookExW( WH_CALLWNDPROC, callwndproc_proc,
-                                              DINPUT_instance, GetCurrentThreadId() );
-    else if (!foreground_cnt && callwndproc_hook)
-    {
-        UnhookWindowsHookEx( callwndproc_hook );
-        callwndproc_hook = NULL;
-    }
-
-    if (impl->use_raw_input)
-    {
-        if (acquired)
-        {
-            impl->raw_device.dwFlags = 0;
-            if (impl->dwCoopLevel & DISCL_BACKGROUND)
-                impl->raw_device.dwFlags |= RIDEV_INPUTSINK;
-            if (impl->dwCoopLevel & DISCL_EXCLUSIVE)
-                impl->raw_device.dwFlags |= RIDEV_NOLEGACY;
-            if ((impl->dwCoopLevel & DISCL_EXCLUSIVE) && impl->raw_device.usUsage == 2)
-                impl->raw_device.dwFlags |= RIDEV_CAPTUREMOUSE;
-            if ((impl->dwCoopLevel & DISCL_EXCLUSIVE) && impl->raw_device.usUsage == 6)
-                impl->raw_device.dwFlags |= RIDEV_NOHOTKEYS;
-            impl->raw_device.hwndTarget = di_em_win;
-        }
-        else
-        {
-            impl->raw_device.dwFlags = RIDEV_REMOVE;
-            impl->raw_device.hwndTarget = NULL;
-        }
-
-        if (!RegisterRawInputDevices( &impl->raw_device, 1, sizeof(RAWINPUTDEVICE) ))
-            WARN( "Unable to (un)register raw device %x:%x\n", impl->raw_device.usUsagePage, impl->raw_device.usUsage );
-    }
-
-    hook_change_finished_event = CreateEventW( NULL, FALSE, FALSE, NULL );
-    PostThreadMessageW( dinput_thread_id, WM_USER + 0x10, 1, (LPARAM)hook_change_finished_event );
-
-    LeaveCriticalSection(&dinput_hook_crit);
-
-    WaitForSingleObject(hook_change_finished_event, INFINITE);
-    CloseHandle(hook_change_finished_event);
 }
 
 void check_dinput_events(void)

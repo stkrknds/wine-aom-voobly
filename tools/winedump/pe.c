@@ -154,6 +154,39 @@ static const char *get_magic_type(WORD magic)
     return "???";
 }
 
+static ULONGLONG get_hybrid_metadata(void)
+{
+    unsigned int size;
+
+    if (PE_nt_headers->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
+    {
+        const IMAGE_LOAD_CONFIG_DIRECTORY64 *cfg = get_dir_and_size(IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG, &size);
+        if (!cfg) return 0;
+        size = min( size, cfg->Size );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, CHPEMetadataPointer )) return 0;
+        return cfg->CHPEMetadataPointer;
+    }
+    else
+    {
+        const IMAGE_LOAD_CONFIG_DIRECTORY32 *cfg = get_dir_and_size(IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG, &size);
+        if (!cfg) return 0;
+        size = min( size, cfg->Size );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, CHPEMetadataPointer )) return 0;
+        return cfg->CHPEMetadataPointer;
+    }
+}
+
+static inline const char *longlong_str( ULONGLONG value )
+{
+    static char buffer[20];
+
+    if (sizeof(value) > sizeof(unsigned long) && value >> 32)
+        sprintf(buffer, "%lx%08lx", (unsigned long)(value >> 32), (unsigned long)value);
+    else
+        sprintf(buffer, "%lx", (unsigned long)value);
+    return buffer;
+}
+
 static inline void print_word(const char *title, WORD value)
 {
     printf("  %-34s 0x%-4X         %u\n", title, value, value);
@@ -166,11 +199,7 @@ static inline void print_dword(const char *title, UINT value)
 
 static inline void print_longlong(const char *title, ULONGLONG value)
 {
-    printf("  %-34s 0x", title);
-    if (sizeof(value) > sizeof(unsigned long) && value >> 32)
-        printf("%lx%08lx\n", (unsigned long)(value >> 32), (unsigned long)value);
-    else
-        printf("%lx\n", (unsigned long)value);
+    printf("  %-34s 0x%s\n", title, longlong_str(value));
 }
 
 static inline void print_ver(const char *title, BYTE major, BYTE minor)
@@ -340,12 +369,22 @@ void dump_optional_header(const IMAGE_OPTIONAL_HEADER32 *optionalHeader, UINT he
     }
 }
 
-void dump_file_header(const IMAGE_FILE_HEADER *fileHeader)
+void dump_file_header(const IMAGE_FILE_HEADER *fileHeader, BOOL is_hybrid)
 {
+    const char *name = get_machine_str(fileHeader->Machine);
+
     printf("File Header\n");
 
-    printf("  Machine:                      %04X (%s)\n",
-	   fileHeader->Machine, get_machine_str(fileHeader->Machine));
+    if (is_hybrid)
+    {
+        switch (fileHeader->Machine)
+        {
+        case IMAGE_FILE_MACHINE_I386: name = "CHPE"; break;
+        case IMAGE_FILE_MACHINE_AMD64: name = "ARM64EC"; break;
+        case IMAGE_FILE_MACHINE_ARM64: name = "ARM64X"; break;
+        }
+    }
+    printf("  Machine:                      %04X (%s)\n", fileHeader->Machine, name);
     printf("  Number of Sections:           %d\n", fileHeader->NumberOfSections);
     printf("  TimeDateStamp:                %08X (%s) offset %lu\n",
 	   (UINT)fileHeader->TimeDateStamp, get_time_str(fileHeader->TimeDateStamp),
@@ -377,31 +416,13 @@ void dump_file_header(const IMAGE_FILE_HEADER *fileHeader)
 
 static	void	dump_pe_header(void)
 {
-    dump_file_header(&PE_nt_headers->FileHeader);
+    dump_file_header(&PE_nt_headers->FileHeader, get_hybrid_metadata() != 0);
     dump_optional_header((const IMAGE_OPTIONAL_HEADER32*)&PE_nt_headers->OptionalHeader, PE_nt_headers->FileHeader.SizeOfOptionalHeader);
 }
 
-void dump_section(const IMAGE_SECTION_HEADER *sectHead, const char* strtable)
+void dump_section_characteristics(DWORD characteristics, const char* sep)
 {
-        unsigned offset;
-
-        /* long section name ? */
-        if (strtable && sectHead->Name[0] == '/' &&
-            ((offset = atoi((const char*)sectHead->Name + 1)) < *(const DWORD*)strtable))
-            printf("  %.8s (%s)", sectHead->Name, strtable + offset);
-        else
-	    printf("  %-8.8s", sectHead->Name);
-	printf("   VirtSize: 0x%08x  VirtAddr:  0x%08x\n",
-               (UINT)sectHead->Misc.VirtualSize, (UINT)sectHead->VirtualAddress);
-	printf("    raw data offs:   0x%08x  raw data size: 0x%08x\n",
-	       (UINT)sectHead->PointerToRawData, (UINT)sectHead->SizeOfRawData);
-	printf("    relocation offs: 0x%08x  relocations:   0x%08x\n",
-	       (UINT)sectHead->PointerToRelocations, (UINT)sectHead->NumberOfRelocations);
-	printf("    line # offs:     %-8u  line #'s:      %-8u\n",
-	       (UINT)sectHead->PointerToLinenumbers, (UINT)sectHead->NumberOfLinenumbers);
-	printf("    characteristics: 0x%08x\n", (UINT)sectHead->Characteristics);
-	printf("    ");
-#define X(b,s)	if (sectHead->Characteristics & b) printf("  " s)
+#define X(b,s)	if (characteristics & b) printf("%s%s", sep, s)
 /* #define IMAGE_SCN_TYPE_REG			0x00000000 - Reserved */
 /* #define IMAGE_SCN_TYPE_DSECT			0x00000001 - Reserved */
 /* #define IMAGE_SCN_TYPE_NOLOAD		0x00000002 - Reserved */
@@ -409,57 +430,81 @@ void dump_section(const IMAGE_SECTION_HEADER *sectHead, const char* strtable)
 /* #define IMAGE_SCN_TYPE_NO_PAD		0x00000008 - Reserved */
 /* #define IMAGE_SCN_TYPE_COPY			0x00000010 - Reserved */
 
-	X(IMAGE_SCN_CNT_CODE, 			"CODE");
-	X(IMAGE_SCN_CNT_INITIALIZED_DATA, 	"INITIALIZED_DATA");
-	X(IMAGE_SCN_CNT_UNINITIALIZED_DATA, 	"UNINITIALIZED_DATA");
+    X(IMAGE_SCN_CNT_CODE, 		"CODE");
+    X(IMAGE_SCN_CNT_INITIALIZED_DATA, 	"INITIALIZED_DATA");
+    X(IMAGE_SCN_CNT_UNINITIALIZED_DATA, "UNINITIALIZED_DATA");
 
-	X(IMAGE_SCN_LNK_OTHER, 			"LNK_OTHER");
-	X(IMAGE_SCN_LNK_INFO, 			"LNK_INFO");
+    X(IMAGE_SCN_LNK_OTHER, 		"LNK_OTHER");
+    X(IMAGE_SCN_LNK_INFO, 		"LNK_INFO");
 /* #define	IMAGE_SCN_TYPE_OVER		0x00000400 - Reserved */
-	X(IMAGE_SCN_LNK_REMOVE, 		"LNK_REMOVE");
-	X(IMAGE_SCN_LNK_COMDAT, 		"LNK_COMDAT");
+    X(IMAGE_SCN_LNK_REMOVE, 		"LNK_REMOVE");
+    X(IMAGE_SCN_LNK_COMDAT, 		"LNK_COMDAT");
 
-/* 						0x00002000 - Reserved */
-/* #define IMAGE_SCN_MEM_PROTECTED 		0x00004000 - Obsolete */
-	X(IMAGE_SCN_MEM_FARDATA, 		"MEM_FARDATA");
+/* 					0x00002000 - Reserved */
+/* #define IMAGE_SCN_MEM_PROTECTED 	0x00004000 - Obsolete */
+    X(IMAGE_SCN_MEM_FARDATA, 		"MEM_FARDATA");
 
-/* #define IMAGE_SCN_MEM_SYSHEAP		0x00010000 - Obsolete */
-	X(IMAGE_SCN_MEM_PURGEABLE, 		"MEM_PURGEABLE");
-	X(IMAGE_SCN_MEM_16BIT, 			"MEM_16BIT");
-	X(IMAGE_SCN_MEM_LOCKED, 		"MEM_LOCKED");
-	X(IMAGE_SCN_MEM_PRELOAD, 		"MEM_PRELOAD");
+/* #define IMAGE_SCN_MEM_SYSHEAP	0x00010000 - Obsolete */
+    X(IMAGE_SCN_MEM_PURGEABLE, 		"MEM_PURGEABLE");
+    X(IMAGE_SCN_MEM_16BIT, 		"MEM_16BIT");
+    X(IMAGE_SCN_MEM_LOCKED, 		"MEM_LOCKED");
+    X(IMAGE_SCN_MEM_PRELOAD, 		"MEM_PRELOAD");
 
-        switch (sectHead->Characteristics & IMAGE_SCN_ALIGN_MASK)
-        {
-#define X2(b,s)	case b: printf("  " s); break
-        X2(IMAGE_SCN_ALIGN_1BYTES, 		"ALIGN_1BYTES");
-        X2(IMAGE_SCN_ALIGN_2BYTES, 		"ALIGN_2BYTES");
-        X2(IMAGE_SCN_ALIGN_4BYTES, 		"ALIGN_4BYTES");
-        X2(IMAGE_SCN_ALIGN_8BYTES, 		"ALIGN_8BYTES");
-        X2(IMAGE_SCN_ALIGN_16BYTES, 		"ALIGN_16BYTES");
-        X2(IMAGE_SCN_ALIGN_32BYTES, 		"ALIGN_32BYTES");
-        X2(IMAGE_SCN_ALIGN_64BYTES, 		"ALIGN_64BYTES");
-        X2(IMAGE_SCN_ALIGN_128BYTES, 		"ALIGN_128BYTES");
-        X2(IMAGE_SCN_ALIGN_256BYTES, 		"ALIGN_256BYTES");
-        X2(IMAGE_SCN_ALIGN_512BYTES, 		"ALIGN_512BYTES");
-        X2(IMAGE_SCN_ALIGN_1024BYTES, 		"ALIGN_1024BYTES");
-        X2(IMAGE_SCN_ALIGN_2048BYTES, 		"ALIGN_2048BYTES");
-        X2(IMAGE_SCN_ALIGN_4096BYTES, 		"ALIGN_4096BYTES");
-        X2(IMAGE_SCN_ALIGN_8192BYTES, 		"ALIGN_8192BYTES");
+    switch (characteristics & IMAGE_SCN_ALIGN_MASK)
+    {
+#define X2(b,s)	case b: printf("%s%s", sep, s); break
+        X2(IMAGE_SCN_ALIGN_1BYTES, 	"ALIGN_1BYTES");
+        X2(IMAGE_SCN_ALIGN_2BYTES, 	"ALIGN_2BYTES");
+        X2(IMAGE_SCN_ALIGN_4BYTES, 	"ALIGN_4BYTES");
+        X2(IMAGE_SCN_ALIGN_8BYTES, 	"ALIGN_8BYTES");
+        X2(IMAGE_SCN_ALIGN_16BYTES, 	"ALIGN_16BYTES");
+        X2(IMAGE_SCN_ALIGN_32BYTES, 	"ALIGN_32BYTES");
+        X2(IMAGE_SCN_ALIGN_64BYTES, 	"ALIGN_64BYTES");
+        X2(IMAGE_SCN_ALIGN_128BYTES, 	"ALIGN_128BYTES");
+        X2(IMAGE_SCN_ALIGN_256BYTES, 	"ALIGN_256BYTES");
+        X2(IMAGE_SCN_ALIGN_512BYTES, 	"ALIGN_512BYTES");
+        X2(IMAGE_SCN_ALIGN_1024BYTES, 	"ALIGN_1024BYTES");
+        X2(IMAGE_SCN_ALIGN_2048BYTES, 	"ALIGN_2048BYTES");
+        X2(IMAGE_SCN_ALIGN_4096BYTES, 	"ALIGN_4096BYTES");
+        X2(IMAGE_SCN_ALIGN_8192BYTES, 	"ALIGN_8192BYTES");
 #undef X2
-        }
+    }
 
-	X(IMAGE_SCN_LNK_NRELOC_OVFL, 		"LNK_NRELOC_OVFL");
+    X(IMAGE_SCN_LNK_NRELOC_OVFL, 	"LNK_NRELOC_OVFL");
 
-	X(IMAGE_SCN_MEM_DISCARDABLE, 		"MEM_DISCARDABLE");
-	X(IMAGE_SCN_MEM_NOT_CACHED, 		"MEM_NOT_CACHED");
-	X(IMAGE_SCN_MEM_NOT_PAGED, 		"MEM_NOT_PAGED");
-	X(IMAGE_SCN_MEM_SHARED, 		"MEM_SHARED");
-	X(IMAGE_SCN_MEM_EXECUTE, 		"MEM_EXECUTE");
-	X(IMAGE_SCN_MEM_READ, 			"MEM_READ");
-	X(IMAGE_SCN_MEM_WRITE, 			"MEM_WRITE");
+    X(IMAGE_SCN_MEM_DISCARDABLE, 	"MEM_DISCARDABLE");
+    X(IMAGE_SCN_MEM_NOT_CACHED, 	"MEM_NOT_CACHED");
+    X(IMAGE_SCN_MEM_NOT_PAGED, 		"MEM_NOT_PAGED");
+    X(IMAGE_SCN_MEM_SHARED, 		"MEM_SHARED");
+    X(IMAGE_SCN_MEM_EXECUTE, 		"MEM_EXECUTE");
+    X(IMAGE_SCN_MEM_READ, 		"MEM_READ");
+    X(IMAGE_SCN_MEM_WRITE, 		"MEM_WRITE");
 #undef X
-	printf("\n\n");
+}
+
+void dump_section(const IMAGE_SECTION_HEADER *sectHead, const char* strtable)
+{
+    unsigned offset;
+
+    /* long section name ? */
+    if (strtable && sectHead->Name[0] == '/' &&
+        ((offset = atoi((const char*)sectHead->Name + 1)) < *(const DWORD*)strtable))
+        printf("  %.8s (%s)", sectHead->Name, strtable + offset);
+    else
+        printf("  %-8.8s", sectHead->Name);
+    printf("   VirtSize: 0x%08x  VirtAddr:  0x%08x\n",
+           (UINT)sectHead->Misc.VirtualSize, (UINT)sectHead->VirtualAddress);
+    printf("    raw data offs:   0x%08x  raw data size: 0x%08x\n",
+           (UINT)sectHead->PointerToRawData, (UINT)sectHead->SizeOfRawData);
+    printf("    relocation offs: 0x%08x  relocations:   0x%08x\n",
+           (UINT)sectHead->PointerToRelocations, (UINT)sectHead->NumberOfRelocations);
+    printf("    line # offs:     %-8u  line #'s:      %-8u\n",
+           (UINT)sectHead->PointerToLinenumbers, (UINT)sectHead->NumberOfLinenumbers);
+    printf("    characteristics: 0x%08x\n", (UINT)sectHead->Characteristics);
+    printf("    ");
+    dump_section_characteristics(sectHead->Characteristics, "  ");
+
+    printf("\n\n");
 }
 
 static void dump_sections(const void *base, const void* addr, unsigned num_sect)
@@ -1720,10 +1765,12 @@ static	void	dump_dir_imported_functions(void)
 
 static void dump_dir_loadconfig(void)
 {
-    const IMAGE_LOAD_CONFIG_DIRECTORY32 *loadcfg32 = get_dir(IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG);
+    unsigned int size;
+    const IMAGE_LOAD_CONFIG_DIRECTORY32 *loadcfg32 = get_dir_and_size(IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG, &size);
     const IMAGE_LOAD_CONFIG_DIRECTORY64 *loadcfg64 = (void*)loadcfg32;
 
     if (!loadcfg32) return;
+    size = min( size, loadcfg32->Size );
 
     printf( "Loadconfig\n" );
     print_dword( "Size",                                loadcfg32->Size );
@@ -1743,10 +1790,55 @@ static void dump_dir_loadconfig(void)
         print_dword(    "ProcessHeapFlags",             loadcfg64->ProcessHeapFlags );
         print_longlong( "ProcessAffinityMask",          loadcfg64->ProcessAffinityMask );
         print_word(     "CSDVersion",                   loadcfg64->CSDVersion );
-        print_word(     "Reserved",                     loadcfg64->Reserved1 );
+        print_word(     "DependentLoadFlags",           loadcfg64->DependentLoadFlags );
         print_longlong( "SecurityCookie",               loadcfg64->SecurityCookie );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, SEHandlerTable )) return;
         print_longlong( "SEHandlerTable",               loadcfg64->SEHandlerTable );
         print_longlong( "SEHandlerCount",               loadcfg64->SEHandlerCount );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, GuardCFCheckFunctionPointer )) return;
+        print_longlong( "GuardCFCheckFunctionPointer",  loadcfg64->GuardCFCheckFunctionPointer );
+        print_longlong( "GuardCFDispatchFunctionPointer", loadcfg64->GuardCFDispatchFunctionPointer );
+        print_longlong( "GuardCFFunctionTable",         loadcfg64->GuardCFFunctionTable );
+        print_longlong( "GuardCFFunctionCount",         loadcfg64->GuardCFFunctionCount );
+        print_dword(    "GuardFlags",                   loadcfg64->GuardFlags );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, CodeIntegrity )) return;
+        print_word(     "CodeIntegrity.Flags",          loadcfg64->CodeIntegrity.Flags );
+        print_word(     "CodeIntegrity.Catalog",        loadcfg64->CodeIntegrity.Catalog );
+        print_dword(    "CodeIntegrity.CatalogOffset",  loadcfg64->CodeIntegrity.CatalogOffset );
+        print_dword(    "CodeIntegrity.Reserved",       loadcfg64->CodeIntegrity.Reserved );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, GuardAddressTakenIatEntryTable )) return;
+        print_longlong( "GuardAddressTakenIatEntryTable", loadcfg64->GuardAddressTakenIatEntryTable );
+        print_longlong( "GuardAddressTakenIatEntryCount", loadcfg64->GuardAddressTakenIatEntryCount );
+        print_longlong( "GuardLongJumpTargetTable",     loadcfg64->GuardLongJumpTargetTable );
+        print_longlong( "GuardLongJumpTargetCount",     loadcfg64->GuardLongJumpTargetCount );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, DynamicValueRelocTable )) return;
+        print_longlong( "DynamicValueRelocTable",       loadcfg64->DynamicValueRelocTable );
+        print_longlong( "CHPEMetadataPointer",          loadcfg64->CHPEMetadataPointer );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, GuardRFFailureRoutine )) return;
+        print_longlong( "GuardRFFailureRoutine",        loadcfg64->GuardRFFailureRoutine );
+        print_longlong( "GuardRFFailureRoutineFunctionPointer", loadcfg64->GuardRFFailureRoutineFunctionPointer );
+        print_dword(    "DynamicValueRelocTableOffset", loadcfg64->DynamicValueRelocTableOffset );
+        print_word(     "DynamicValueRelocTableSection",loadcfg64->DynamicValueRelocTableSection );
+        print_word(     "Reserved2",                    loadcfg64->Reserved2 );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, GuardRFVerifyStackPointerFunctionPointer )) return;
+        print_longlong( "GuardRFVerifyStackPointerFunctionPointer", loadcfg64->GuardRFVerifyStackPointerFunctionPointer );
+        print_dword(    "HotPatchTableOffset",          loadcfg64->HotPatchTableOffset );
+        print_dword(    "Reserved3",                    loadcfg64->Reserved3 );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, EnclaveConfigurationPointer )) return;
+        print_longlong( "EnclaveConfigurationPointer",  loadcfg64->EnclaveConfigurationPointer );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, VolatileMetadataPointer )) return;
+        print_longlong( "VolatileMetadataPointer",      loadcfg64->VolatileMetadataPointer );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, GuardEHContinuationTable )) return;
+        print_longlong( "GuardEHContinuationTable",     loadcfg64->GuardEHContinuationTable );
+        print_longlong( "GuardEHContinuationCount",     loadcfg64->GuardEHContinuationCount );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, GuardXFGCheckFunctionPointer )) return;
+        print_longlong( "GuardXFGCheckFunctionPointer", loadcfg64->GuardXFGCheckFunctionPointer );
+        print_longlong( "GuardXFGDispatchFunctionPointer", loadcfg64->GuardXFGDispatchFunctionPointer );
+        print_longlong( "GuardXFGTableDispatchFunctionPointer", loadcfg64->GuardXFGTableDispatchFunctionPointer );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, CastGuardOsDeterminedFailureMode )) return;
+        print_longlong( "CastGuardOsDeterminedFailureMode", loadcfg64->CastGuardOsDeterminedFailureMode );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, GuardMemcpyFunctionPointer )) return;
+        print_longlong( "GuardMemcpyFunctionPointer",   loadcfg64->GuardMemcpyFunctionPointer );
     }
     else
     {
@@ -1757,10 +1849,55 @@ static void dump_dir_loadconfig(void)
         print_dword( "ProcessHeapFlags",                loadcfg32->ProcessHeapFlags );
         print_dword( "ProcessAffinityMask",             loadcfg32->ProcessAffinityMask );
         print_word(  "CSDVersion",                      loadcfg32->CSDVersion );
-        print_word(  "Reserved",                        loadcfg32->Reserved1 );
+        print_word(  "DependentLoadFlags",              loadcfg32->DependentLoadFlags );
         print_dword( "SecurityCookie",                  loadcfg32->SecurityCookie );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, SEHandlerTable )) return;
         print_dword( "SEHandlerTable",                  loadcfg32->SEHandlerTable );
         print_dword( "SEHandlerCount",                  loadcfg32->SEHandlerCount );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, GuardCFCheckFunctionPointer )) return;
+        print_dword( "GuardCFCheckFunctionPointer",     loadcfg32->GuardCFCheckFunctionPointer );
+        print_dword( "GuardCFDispatchFunctionPointer",  loadcfg32->GuardCFDispatchFunctionPointer );
+        print_dword( "GuardCFFunctionTable",            loadcfg32->GuardCFFunctionTable );
+        print_dword( "GuardCFFunctionCount",            loadcfg32->GuardCFFunctionCount );
+        print_dword( "GuardFlags",                      loadcfg32->GuardFlags );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, CodeIntegrity )) return;
+        print_word(  "CodeIntegrity.Flags",             loadcfg32->CodeIntegrity.Flags );
+        print_word(  "CodeIntegrity.Catalog",           loadcfg32->CodeIntegrity.Catalog );
+        print_dword( "CodeIntegrity.CatalogOffset",     loadcfg32->CodeIntegrity.CatalogOffset );
+        print_dword( "CodeIntegrity.Reserved",          loadcfg32->CodeIntegrity.Reserved );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, GuardAddressTakenIatEntryTable )) return;
+        print_dword( "GuardAddressTakenIatEntryTable",  loadcfg32->GuardAddressTakenIatEntryTable );
+        print_dword( "GuardAddressTakenIatEntryCount",  loadcfg32->GuardAddressTakenIatEntryCount );
+        print_dword( "GuardLongJumpTargetTable",        loadcfg32->GuardLongJumpTargetTable );
+        print_dword( "GuardLongJumpTargetCount",        loadcfg32->GuardLongJumpTargetCount );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, DynamicValueRelocTable )) return;
+        print_dword( "DynamicValueRelocTable",          loadcfg32->DynamicValueRelocTable );
+        print_dword( "CHPEMetadataPointer",             loadcfg32->CHPEMetadataPointer );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, GuardRFFailureRoutine )) return;
+        print_dword( "GuardRFFailureRoutine",           loadcfg32->GuardRFFailureRoutine );
+        print_dword( "GuardRFFailureRoutineFunctionPointer", loadcfg32->GuardRFFailureRoutineFunctionPointer );
+        print_dword( "DynamicValueRelocTableOffset",    loadcfg32->DynamicValueRelocTableOffset );
+        print_word(  "DynamicValueRelocTableSection",   loadcfg32->DynamicValueRelocTableSection );
+        print_word(  "Reserved2",                       loadcfg32->Reserved2 );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, GuardRFVerifyStackPointerFunctionPointer )) return;
+        print_dword( "GuardRFVerifyStackPointerFunctionPointer", loadcfg32->GuardRFVerifyStackPointerFunctionPointer );
+        print_dword( "HotPatchTableOffset",             loadcfg32->HotPatchTableOffset );
+        print_dword( "Reserved3",                       loadcfg32->Reserved3 );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, EnclaveConfigurationPointer )) return;
+        print_dword( "EnclaveConfigurationPointer",     loadcfg32->EnclaveConfigurationPointer );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, VolatileMetadataPointer )) return;
+        print_dword( "VolatileMetadataPointer",         loadcfg32->VolatileMetadataPointer );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, GuardEHContinuationTable )) return;
+        print_dword( "GuardEHContinuationTable",        loadcfg32->GuardEHContinuationTable );
+        print_dword( "GuardEHContinuationCount",        loadcfg32->GuardEHContinuationCount );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, GuardXFGCheckFunctionPointer )) return;
+        print_dword( "GuardXFGCheckFunctionPointer",    loadcfg32->GuardXFGCheckFunctionPointer );
+        print_dword( "GuardXFGDispatchFunctionPointer", loadcfg32->GuardXFGDispatchFunctionPointer );
+        print_dword( "GuardXFGTableDispatchFunctionPointer", loadcfg32->GuardXFGTableDispatchFunctionPointer );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, CastGuardOsDeterminedFailureMode )) return;
+        print_dword( "CastGuardOsDeterminedFailureMode", loadcfg32->CastGuardOsDeterminedFailureMode );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, GuardMemcpyFunctionPointer )) return;
+        print_dword( "GuardMemcpyFunctionPointer",      loadcfg32->GuardMemcpyFunctionPointer );
     }
 }
 
@@ -1928,6 +2065,146 @@ static void dump_dir_clr_header(void)
     print_clrdirectory( "ExportAddressTableJumps", &dir->ExportAddressTableJumps );
     print_clrdirectory( "ManagedNativeHeader", &dir->ManagedNativeHeader );
     printf("\n");
+}
+
+static void dump_dynamic_relocs_arm64x( const IMAGE_BASE_RELOCATION *base_reloc, unsigned int size )
+{
+    unsigned int i;
+    const IMAGE_BASE_RELOCATION *base_end = (const IMAGE_BASE_RELOCATION *)((const char *)base_reloc + size);
+
+    printf( "Relocations ARM64X\n" );
+    while (base_reloc < base_end - 1 && base_reloc->SizeOfBlock)
+    {
+        const USHORT *rel = (const USHORT *)(base_reloc + 1);
+        const USHORT *end = (const USHORT *)base_reloc + base_reloc->SizeOfBlock / sizeof(USHORT);
+        printf( "  Page %x\n", (UINT)base_reloc->VirtualAddress );
+        while (rel < end && *rel)
+        {
+            USHORT offset = *rel & 0xfff;
+            USHORT type = (*rel >> 12) & 3;
+            USHORT arg = *rel >> 14;
+            rel++;
+            switch (type)
+            {
+            case 0:  /* zero-fill */
+                printf( "    off %04x zero-fill %u bytes\n", offset, 1 << arg );
+                break;
+            case 1:  /* set value */
+                printf( "    off %04x set %u bytes value ", offset, 1 << arg );
+                for (i = (1 << arg ) / sizeof(USHORT); i > 0; i--) printf( "%04x", rel[i - 1] );
+                rel += (1 << arg) / sizeof(USHORT);
+                printf( "\n" );
+                break;
+            case 2:  /* add value */
+                printf( "    off %04x add offset ", offset );
+                if (arg & 1) printf( "-" );
+                printf( "%08x\n", (UINT)*rel++ * ((arg & 2) ? 8 : 4) );
+                break;
+            default:
+                printf( "    off %04x unknown (arg %x)\n", offset, arg );
+                break;
+            }
+        }
+        base_reloc = (const IMAGE_BASE_RELOCATION *)end;
+    }
+}
+
+static void dump_dynamic_relocs( const char *ptr, unsigned int size, ULONGLONG symbol )
+{
+    switch (symbol)
+    {
+    case IMAGE_DYNAMIC_RELOCATION_GUARD_RF_PROLOGUE:
+        printf( "Relocations GUARD_RF_PROLOGUE\n" );
+        break;
+    case IMAGE_DYNAMIC_RELOCATION_GUARD_RF_EPILOGUE:
+        printf( "Relocations GUARD_RF_EPILOGUE\n" );
+        break;
+    case IMAGE_DYNAMIC_RELOCATION_GUARD_IMPORT_CONTROL_TRANSFER:
+        printf( "Relocations GUARD_IMPORT_CONTROL_TRANSFER\n" );
+        break;
+    case IMAGE_DYNAMIC_RELOCATION_GUARD_INDIR_CONTROL_TRANSFER:
+        printf( "Relocations GUARD_INDIR_CONTROL_TRANSFER\n" );
+        break;
+    case IMAGE_DYNAMIC_RELOCATION_GUARD_SWITCHTABLE_BRANCH:
+        printf( "Relocations GUARD_SWITCHTABLE_BRANCH\n" );
+        break;
+    case IMAGE_DYNAMIC_RELOCATION_ARM64X:
+        dump_dynamic_relocs_arm64x( (const IMAGE_BASE_RELOCATION *)ptr, size );
+        break;
+    default:
+        printf( "Unknown relocation symbol %s\n", longlong_str(symbol) );
+        break;
+    }
+}
+
+static void dump_dir_dynamic_reloc(void)
+{
+    unsigned int size, section, offset;
+    const char *ptr, *end;
+    const IMAGE_SECTION_HEADER *sec;
+    const IMAGE_DYNAMIC_RELOCATION_TABLE *table;
+
+    if (PE_nt_headers->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
+    {
+        const IMAGE_LOAD_CONFIG_DIRECTORY64 *cfg = get_dir_and_size(IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG, &size);
+        if (!cfg) return;
+        size = min( size, cfg->Size );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY64, DynamicValueRelocTableSection )) return;
+        offset = cfg->DynamicValueRelocTableOffset;
+        section = cfg->DynamicValueRelocTableSection;
+    }
+    else
+    {
+        const IMAGE_LOAD_CONFIG_DIRECTORY32 *cfg = get_dir_and_size(IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG, &size);
+        if (!cfg) return;
+        size = min( size, cfg->Size );
+        if (size <= offsetof( IMAGE_LOAD_CONFIG_DIRECTORY32, DynamicValueRelocTableSection )) return;
+        offset = cfg->DynamicValueRelocTableOffset;
+        section = cfg->DynamicValueRelocTableSection;
+    }
+    if (!section || section > PE_nt_headers->FileHeader.NumberOfSections) return;
+    sec = IMAGE_FIRST_SECTION( PE_nt_headers ) + section - 1;
+    if (offset >= sec->SizeOfRawData) return;
+    table = PRD( sec->PointerToRawData + offset, sizeof(*table) );
+
+    printf( "Dynamic relocations (version %u)\n\n", (UINT)table->Version );
+    ptr = (const char *)(table + 1);
+    end = ptr + table->Size;
+    while (ptr < end)
+    {
+        switch (table->Version)
+        {
+        case 1:
+            if (PE_nt_headers->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
+            {
+                const IMAGE_DYNAMIC_RELOCATION64 *reloc = (const IMAGE_DYNAMIC_RELOCATION64 *)ptr;
+                dump_dynamic_relocs( (const char *)(reloc + 1), reloc->BaseRelocSize, reloc->Symbol );
+                ptr += sizeof(*reloc) + reloc->BaseRelocSize;
+            }
+            else
+            {
+                const IMAGE_DYNAMIC_RELOCATION32 *reloc = (const IMAGE_DYNAMIC_RELOCATION32 *)ptr;
+                dump_dynamic_relocs( (const char *)(reloc + 1), reloc->BaseRelocSize, reloc->Symbol );
+                ptr += sizeof(*reloc) + reloc->BaseRelocSize;
+            }
+            break;
+        case 2:
+            if (PE_nt_headers->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
+            {
+                const IMAGE_DYNAMIC_RELOCATION64_V2 *reloc = (const IMAGE_DYNAMIC_RELOCATION64_V2 *)ptr;
+                dump_dynamic_relocs( ptr + reloc->HeaderSize, reloc->FixupInfoSize, reloc->Symbol );
+                ptr += reloc->HeaderSize + reloc->FixupInfoSize;
+            }
+            else
+            {
+                const IMAGE_DYNAMIC_RELOCATION32_V2 *reloc = (const IMAGE_DYNAMIC_RELOCATION32_V2 *)ptr;
+                dump_dynamic_relocs( ptr + reloc->HeaderSize, reloc->FixupInfoSize, reloc->Symbol );
+                ptr += reloc->HeaderSize + reloc->FixupInfoSize;
+            }
+            break;
+        }
+    }
+    printf( "\n" );
 }
 
 static void dump_dir_reloc(void)
@@ -2395,8 +2672,6 @@ enum FileSig get_kind_exec(void)
 
 void pe_dump(void)
 {
-    int	all = (globals.dumpsect != NULL) && strcmp(globals.dumpsect, "ALL") == 0;
-
     PE_nt_headers = get_nt_header();
     print_fake_dll();
 
@@ -2413,32 +2688,32 @@ void pe_dump(void)
 	dump_pe_header();
     }
 
-    if (globals.dumpsect)
+    if (globals_dump_sect("import"))
     {
-	if (all || !strcmp(globals.dumpsect, "import"))
-        {
-	    dump_dir_imported_functions();
-	    dump_dir_delay_imported_functions();
-        }
-	if (all || !strcmp(globals.dumpsect, "export"))
-	    dump_dir_exported_functions();
-	if (all || !strcmp(globals.dumpsect, "debug"))
-	    dump_dir_debug();
-	if (all || !strcmp(globals.dumpsect, "resource"))
-	    dump_dir_resource();
-	if (all || !strcmp(globals.dumpsect, "tls"))
-	    dump_dir_tls();
-	if (all || !strcmp(globals.dumpsect, "loadcfg"))
-	    dump_dir_loadconfig();
-	if (all || !strcmp(globals.dumpsect, "clr"))
-	    dump_dir_clr_header();
-	if (all || !strcmp(globals.dumpsect, "reloc"))
-	    dump_dir_reloc();
-	if (all || !strcmp(globals.dumpsect, "except"))
-	    dump_dir_exceptions();
-	if (all || !strcmp(globals.dumpsect, "apiset"))
-	    dump_section_apiset();
+        dump_dir_imported_functions();
+        dump_dir_delay_imported_functions();
     }
+    if (globals_dump_sect("export"))
+        dump_dir_exported_functions();
+    if (globals_dump_sect("debug"))
+        dump_dir_debug();
+    if (globals_dump_sect("resource"))
+        dump_dir_resource();
+    if (globals_dump_sect("tls"))
+        dump_dir_tls();
+    if (globals_dump_sect("loadcfg"))
+        dump_dir_loadconfig();
+    if (globals_dump_sect("clr"))
+        dump_dir_clr_header();
+    if (globals_dump_sect("reloc"))
+        dump_dir_reloc();
+    if (globals_dump_sect("dynreloc"))
+        dump_dir_dynamic_reloc();
+    if (globals_dump_sect("except"))
+        dump_dir_exceptions();
+    if (globals_dump_sect("apiset"))
+        dump_section_apiset();
+
     if (globals.do_symbol_table)
         dump_symbol_table();
     if (globals.do_debug)

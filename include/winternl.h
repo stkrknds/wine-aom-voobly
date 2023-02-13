@@ -1574,6 +1574,7 @@ typedef enum _PROCESSINFOCLASS {
     ProcessConsoleHostProcess = 49,
     ProcessWindowInformation = 50,
     ProcessHandleInformation = 51,
+    ProcessHandleTable = 58,
     ProcessPowerThrottlingState = 77,
     ProcessLeapSecondInformation = 97,
     MaxProcessInfoClass,
@@ -2270,6 +2271,11 @@ typedef struct _PROCESS_PRIORITY_CLASS {
     BOOLEAN     Foreground;
     UCHAR       PriorityClass;
 } PROCESS_PRIORITY_CLASS, *PPROCESS_PRIORITY_CLASS;
+
+typedef struct _PROCESS_CYCLE_TIME_INFORMATION {
+    ULONGLONG   AccumulatedCycles;
+    ULONGLONG   CurrentCycleCount;
+} PROCESS_CYCLE_TIME_INFORMATION, *PPROCESS_CYCLE_TIME_INFORMATION;
 
 typedef struct _PROCESS_STACK_ALLOCATION_INFORMATION
 {
@@ -4516,7 +4522,7 @@ NTSYSAPI NTSTATUS  WINAPI RtlQueryTimeZoneInformation(RTL_TIME_ZONE_INFORMATION*
 NTSYSAPI BOOL      WINAPI RtlQueryUnbiasedInterruptTime(ULONGLONG*);
 NTSYSAPI NTSTATUS  WINAPI RtlQueueWorkItem(PRTL_WORK_ITEM_ROUTINE,PVOID,ULONG);
 NTSYSAPI void      WINAPI RtlRaiseException(PEXCEPTION_RECORD);
-NTSYSAPI void      WINAPI RtlRaiseStatus(NTSTATUS);
+NTSYSAPI void      DECLSPEC_NORETURN WINAPI RtlRaiseStatus(NTSTATUS);
 NTSYSAPI ULONG     WINAPI RtlRandom(PULONG);
 NTSYSAPI PVOID     WINAPI RtlReAllocateHeap(HANDLE,ULONG,PVOID,SIZE_T) __WINE_ALLOC_SIZE(4) __WINE_DEALLOC(RtlFreeHeap,3);
 NTSYSAPI NTSTATUS  WINAPI RtlRegisterWait(PHANDLE,HANDLE,RTL_WAITORTIMERCALLBACKFUNC,PVOID,ULONG,ULONG);
