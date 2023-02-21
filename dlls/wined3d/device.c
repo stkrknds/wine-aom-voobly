@@ -4039,6 +4039,29 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
                     wined3d_device_set_render_state(device, idx, state->rs[idx]);
                     break;
 
+                case WINED3D_RS_ANTIALIAS:
+                    if (state->rs[WINED3D_RS_ANTIALIAS])
+                        FIXME("Antialias not supported yet.\n");
+                    break;
+
+                case WINED3D_RS_TEXTUREPERSPECTIVE:
+                    break;
+
+                case WINED3D_RS_WRAPU:
+                    if (state->rs[WINED3D_RS_WRAPU])
+                        FIXME("Render state WINED3D_RS_WRAPU not implemented yet.\n");
+                    break;
+
+                case WINED3D_RS_WRAPV:
+                    if (state->rs[WINED3D_RS_WRAPV])
+                        FIXME("Render state WINED3D_RS_WRAPV not implemented yet.\n");
+                    break;
+
+                case WINED3D_RS_MONOENABLE:
+                    if (state->rs[WINED3D_RS_MONOENABLE])
+                        FIXME("Render state WINED3D_RS_MONOENABLE not implemented yet.\n");
+                    break;
+
                 default:
                     wined3d_device_set_render_state(device, idx, state->rs[idx]);
                     break;

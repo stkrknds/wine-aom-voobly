@@ -25,11 +25,25 @@ struct uia_prop_info {
     int prop_id;
     int prop_type;
     int type;
+    int pattern_id;
+};
+
+struct uia_event_info {
+    const GUID *guid;
+    int event_id;
+    int event_arg_type;
+};
+
+struct uia_pattern_info {
+    const GUID *guid;
+    int pattern_id;
+    const GUID *pattern_iid;
 };
 
 [
    version(1.0),
    uuid(8a9ca8eb-856b-43d9-abd7-4a590054064f),
+   id(1),
 ]
 library UIA_wine_private
 {

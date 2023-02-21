@@ -182,6 +182,9 @@ SOURCES = \
 	dciddi.h \
 	dciman.h \
 	dcommon.idl \
+	dcomp.idl \
+	dcompanimation.idl \
+	dcomptypes.idl \
 	dde.h \
 	dde.rh \
 	ddeml.h \
@@ -195,7 +198,6 @@ SOURCES = \
 	ddk/hidport.h \
 	ddk/hidsdi.h \
 	ddk/hidtypes.h \
-	ddk/imm.h \
 	ddk/mountmgr.h \
 	ddk/ndis.h \
 	ddk/ntddcdvd.h \
@@ -359,6 +361,7 @@ SOURCES = \
 	imagehlp.h \
 	ime.h \
 	imm.h \
+	immdev.h \
 	imnact.idl \
 	imnxport.idl \
 	in6addr.h \

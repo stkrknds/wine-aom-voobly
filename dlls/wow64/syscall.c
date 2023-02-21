@@ -542,62 +542,6 @@ NTSTATUS WINAPI wow64_NtSetDefaultUILanguage( UINT *args )
 
 
 /**********************************************************************
- *           wow64___wine_dbg_write
- */
-NTSTATUS WINAPI wow64___wine_dbg_write( UINT *args )
-{
-    const char *str = get_ptr( &args );
-    ULONG len = get_ulong( &args );
-
-    return __wine_dbg_write( str, len );
-}
-
-
-/**********************************************************************
- *           wow64___wine_unix_spawnvp
- */
-NTSTATUS WINAPI wow64___wine_unix_spawnvp( UINT *args )
-{
-    ULONG *argv32 = get_ptr( &args );
-    int wait = get_ulong( &args );
-
-    unsigned int i, count = 0;
-    char **argv;
-
-    while (argv32[count]) count++;
-    argv = Wow64AllocateTemp( (count + 1) * sizeof(*argv) );
-    for (i = 0; i < count; i++) argv[i] = ULongToPtr( argv32[i] );
-    argv[count] = NULL;
-    return __wine_unix_spawnvp( argv, wait );
-}
-
-
-/**********************************************************************
- *           wow64_wine_server_call
- */
-NTSTATUS WINAPI wow64_wine_server_call( UINT *args )
-{
-    struct __server_request_info32 *req32 = get_ptr( &args );
-
-    unsigned int i;
-    NTSTATUS status;
-    struct __server_request_info req;
-
-    req.u.req = req32->u.req;
-    req.data_count = req32->data_count;
-    for (i = 0; i < req.data_count; i++)
-    {
-        req.data[i].ptr = ULongToPtr( req32->data[i].ptr );
-        req.data[i].size = req32->data[i].size;
-    }
-    req.reply_data = ULongToPtr( req32->reply_data );
-    status = wine_server_call( &req );
-    req32->u.reply = req.u.reply;
-    return status;
-}
-
-
-/**********************************************************************
  *           get_syscall_num
  */
 static DWORD get_syscall_num( const BYTE *syscall )
@@ -752,7 +696,7 @@ static const WCHAR *get_cpu_dll_name(void)
 static DWORD WINAPI process_init( RTL_RUN_ONCE *once, void *param, void **context )
 {
     HMODULE module;
-    UNICODE_STRING str;
+    UNICODE_STRING str = RTL_CONSTANT_STRING( L"ntdll.dll" );
     SYSTEM_BASIC_INFORMATION info;
 
     RtlWow64GetProcessMachines( GetCurrentProcess(), &current_machine, &native_machine );
@@ -764,7 +708,6 @@ static DWORD WINAPI process_init( RTL_RUN_ONCE *once, void *param, void **contex
 
 #define GET_PTR(name) p ## name = RtlFindExportedRoutineByName( module, #name )
 
-    RtlInitUnicodeString( &str, L"ntdll.dll" );
     LdrGetDllHandle( NULL, 0, &str, &module );
     GET_PTR( LdrSystemDllInitBlock );
 
