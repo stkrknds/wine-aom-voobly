@@ -68,6 +68,12 @@ static void test_ldap_parse_sort_control( LDAP *ld )
     ok( !ret, "ldap_search_ext_sA failed %#lx\n", ret );
     ok( res != NULL, "expected res != NULL\n" );
 
+    ret = ldap_parse_resultA( NULL, NULL, NULL, NULL, NULL, NULL, &server_ctrls, 0 );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_parse_resultA should fail, got %#lx\n", ret );
+    ret = ldap_parse_resultA( NULL, res, NULL, NULL, NULL, NULL, &server_ctrls, 0 );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_parse_resultA should fail, got %#lx\n", ret );
+    ret = ldap_parse_resultA( ld, NULL, NULL, NULL, NULL, NULL, &server_ctrls, 0 );
+    ok( ret == LDAP_NO_RESULTS_RETURNED, "ldap_parse_resultA should fail, got %#lx\n", ret );
     result = ~0u;
     ret = ldap_parse_resultA( ld, res, &result, NULL, NULL, NULL, &server_ctrls, 1 );
     ok( !ret, "ldap_parse_resultA failed %#lx\n", ret );
@@ -169,6 +175,207 @@ static void test_ldap_bind_sA( void )
     ldap_unbind( ld );
 }
 
+static void test_ldap_add( LDAP *ld )
+{
+    char *one_empty_string[] = { (char *)"", NULL };
+    LDAPModA empty_equals_empty = { 0, (char *)"", { one_empty_string } };
+    LDAPModA *attrs[] = { &empty_equals_empty, NULL };
+    ULONG ret, num;
+
+    ret = ldap_addA( NULL, NULL, NULL );
+    ok( ret == (ULONG)-1, "ldap_addA should fail, got %#lx\n", ret );
+    ret = ldap_addA( NULL, (char *)"", attrs );
+    ok( ret == (ULONG)-1, "ldap_addA should fail, got %#lx\n", ret );
+    ret = ldap_addA( ld, NULL, attrs );
+    ok( ret != (ULONG)-1, "ldap_addA should succeed, got %#lx\n", ret );
+    ret = ldap_addA( ld, (char *)"", NULL );
+    ok( ret != (ULONG)-1, "ldap_addA should succeed, got %#lx\n", ret );
+    ret = ldap_addA( ld, (char *)"", attrs );
+    ok( ret != (ULONG)-1, "ldap_addA should succeed, got %#lx\n", ret );
+
+    ret = ldap_add_sA( NULL, NULL, NULL );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_add_sA should fail, got %#lx\n", ret );
+    ret = ldap_add_sA( NULL, (char *)"", attrs );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_add_sA should fail, got %#lx\n", ret );
+    ret = ldap_add_sA( ld, NULL, attrs );
+    ok( ret == LDAP_ALREADY_EXISTS, "ldap_add_sA should fail, got %#lx\n", ret );
+    ret = ldap_add_sA( ld, (char *)"", NULL );
+    ok( ret == LDAP_PROTOCOL_ERROR, "ldap_add_sA should fail, got %#lx\n", ret );
+    ret = ldap_add_sA( ld, (char *)"", attrs );
+    ok( ret == LDAP_ALREADY_EXISTS, "ldap_add_sA should fail, got %#lx\n", ret );
+
+    ret = ldap_add_extA( NULL, NULL, NULL, NULL, NULL, NULL );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_add_extA should fail, got %#lx\n", ret );
+    ret = ldap_add_extA( NULL, (char *)"", attrs, NULL, NULL, &num );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_add_extA should fail, got %#lx\n", ret );
+    ret = ldap_add_extA( ld, NULL, attrs, NULL, NULL, &num );
+    ok( !ret, "ldap_add_extA should succeed, got %#lx\n", ret );
+    ret = ldap_add_extA( ld, (char *)"", NULL, NULL, NULL, &num );
+    ok( !ret, "ldap_add_extA should succeed, got %#lx\n", ret );
+    ret = ldap_add_extA( ld, (char *)"", attrs, NULL, NULL, NULL );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_add_extA should fail, got %#lx\n", ret );
+    ret = ldap_add_extA( ld, (char *)"", attrs, NULL, NULL, &num );
+    ok( !ret, "ldap_add_extA should succeed, got %#lx\n", ret );
+
+    ret = ldap_add_ext_sA( NULL, NULL, NULL, NULL, NULL );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_add_ext_sA should fail, got %#lx\n", ret );
+    ret = ldap_add_ext_sA( NULL, (char *)"", attrs, NULL, NULL );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_add_ext_sA should fail, got %#lx\n", ret );
+    ret = ldap_add_ext_sA( ld, NULL, attrs, NULL, NULL );
+    ok( ret == LDAP_ALREADY_EXISTS, "ldap_add_ext_sA should fail, got %#lx\n", ret );
+    ret = ldap_add_ext_sA( ld, (char *)"", NULL, NULL, NULL );
+    ok( ret == LDAP_PROTOCOL_ERROR, "ldap_add_ext_sA should fail, got %#lx\n", ret );
+    ret = ldap_add_ext_sA( ld, (char *)"", attrs, NULL, NULL );
+    ok( ret == LDAP_ALREADY_EXISTS, "ldap_add_ext_sA should fail, got %#lx\n", ret );
+}
+
+static void test_ldap_modify( LDAP *ld )
+{
+    char *one_empty_string[] = { (char *)"", NULL };
+    LDAPModA empty_equals_empty = { 0, (char *)"", { one_empty_string } };
+    LDAPModA *attrs[] = { &empty_equals_empty, NULL };
+    ULONG ret, num;
+
+    ret = ldap_modifyA( NULL, NULL, NULL );
+    ok( ret == (ULONG)-1, "ldap_modifyA should fail, got %#lx\n", ret );
+    ret = ldap_modifyA( NULL, (char *)"", attrs );
+    ok( ret == (ULONG)-1, "ldap_modifyA should fail, got %#lx\n", ret );
+    ret = ldap_modifyA( ld, NULL, attrs );
+    ok( ret != (ULONG)-1, "ldap_modifyA should succeed, got %#lx\n", ret );
+    ret = ldap_modifyA( ld, (char *)"", NULL );
+    ok( ret != (ULONG)-1, "ldap_modifyA should succeed, got %#lx\n", ret );
+    ret = ldap_modifyA( ld, (char *)"", attrs );
+    ok( ret != (ULONG)-1, "ldap_modifyA should succeed, got %#lx\n", ret );
+
+    ret = ldap_modify_sA( NULL, NULL, NULL );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_modify_sA should fail, got %#lx\n", ret );
+    ret = ldap_modify_sA( NULL, (char *)"", attrs );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_modify_sA should fail, got %#lx\n", ret );
+    ret = ldap_modify_sA( ld, NULL, attrs );
+    ok( ret == LDAP_UNDEFINED_TYPE, "ldap_modify_sA should fail, got %#lx\n", ret );
+    ret = ldap_modify_sA( ld, (char *)"", NULL );
+    ok( ret == LDAP_UNWILLING_TO_PERFORM, "ldap_modify_sA should fail, got %#lx\n", ret );
+    ret = ldap_modify_sA( ld, (char *)"", attrs );
+    ok( ret == LDAP_UNDEFINED_TYPE, "ldap_modify_sA should fail, got %#lx\n", ret );
+
+    ret = ldap_modify_extA( NULL, NULL, NULL, NULL, NULL, NULL );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_modify_extA should fail, got %#lx\n", ret );
+    ret = ldap_modify_extA( NULL, (char *)"", attrs, NULL, NULL, &num );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_modify_extA should fail, got %#lx\n", ret );
+    ret = ldap_modify_extA( ld, NULL, attrs, NULL, NULL, &num );
+    ok( !ret, "ldap_modify_extA should succeed, got %#lx\n", ret );
+    ret = ldap_modify_extA( ld, (char *)"", NULL, NULL, NULL, &num );
+    ok( !ret, "ldap_modify_extA should succeed, got %#lx\n", ret );
+    ret = ldap_modify_extA( ld, (char *)"", attrs, NULL, NULL, NULL );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_modify_extA should fail, got %#lx\n", ret );
+    ret = ldap_modify_extA( ld, (char *)"", attrs, NULL, NULL, &num );
+    ok( !ret, "ldap_modify_extA should succeed, got %#lx\n", ret );
+
+    ret = ldap_modify_ext_sA( NULL, NULL, NULL, NULL, NULL );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_modify_ext_sA should fail, got %#lx\n", ret );
+    ret = ldap_modify_ext_sA( NULL, (char *)"", attrs, NULL, NULL );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_modify_ext_sA should fail, got %#lx\n", ret );
+    ret = ldap_modify_ext_sA( ld, NULL, attrs, NULL, NULL );
+    ok( ret == LDAP_UNDEFINED_TYPE, "ldap_modify_ext_sA should fail, got %#lx\n", ret );
+    ret = ldap_modify_ext_sA( ld, (char *)"", NULL, NULL, NULL );
+    ok( ret == LDAP_UNWILLING_TO_PERFORM, "ldap_modify_ext_sA should fail, got %#lx\n", ret );
+    ret = ldap_modify_ext_sA( ld, (char *)"", attrs, NULL, NULL );
+    ok( ret == LDAP_UNDEFINED_TYPE, "ldap_modify_ext_sA should fail, got %#lx\n", ret );
+}
+
+static void test_ldap_compare( LDAP *ld )
+{
+    struct berval empty_value = { 0 };
+    ULONG ret, num;
+
+    ret = ldap_compareA( NULL, NULL, NULL, NULL );
+    ok( ret == (ULONG)-1, "ldap_compareA should fail, got %#lx\n", ret );
+    ret = ldap_compareA( NULL, (char *)"", (char *)"", (char *)"" );
+    ok( ret == (ULONG)-1, "ldap_compareA should fail, got %#lx\n", ret );
+    ret = ldap_compareA( ld, NULL, (char *)"", (char *)"" );
+    ok( ret != (ULONG)-1, "ldap_compareA should succeed, got %#lx\n", ret );
+    ret = ldap_compareA( ld, (char *)"", NULL, (char *)"" );
+    ok( ret == (ULONG)-1, "ldap_compareA should fail, got %#lx\n", ret );
+    ret = ldap_compareA( ld, (char *)"", (char *)"", NULL );
+    ok( ret != (ULONG)-1, "ldap_compareA should succeed, got %#lx\n", ret );
+    ret = ldap_compareA( ld, (char *)"", (char *)"", (char *)"" );
+    ok( ret != (ULONG)-1, "ldap_compareA should succeed, got %#lx\n", ret );
+
+    ret = ldap_compare_sA( NULL, NULL, NULL, NULL );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_compare_sA should fail, got %#lx\n", ret );
+    ret = ldap_compare_sA( NULL, (char *)"", (char *)"", (char *)"" );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_compare_sA should fail, got %#lx\n", ret );
+    ret = ldap_compare_sA( ld, NULL, (char *)"", (char *)"" );
+    ok( ret == LDAP_UNDEFINED_TYPE, "ldap_compare_sA should fail, got %#lx\n", ret );
+    ret = ldap_compare_sA( ld, (char *)"", NULL, (char *)"" );
+    ok( ret == LDAP_UNDEFINED_TYPE, "ldap_compare_sA should fail, got %#lx\n", ret );
+    ret = ldap_compare_sA( ld, (char *)"", (char *)"", NULL );
+    ok( ret == LDAP_UNDEFINED_TYPE, "ldap_compare_sA should fail, got %#lx\n", ret );
+    ret = ldap_compare_sA( ld, (char *)"", (char *)"", (char *)"" );
+    ok( ret == LDAP_UNDEFINED_TYPE, "ldap_compare_sA should fail, got %#lx\n", ret );
+
+    ret = ldap_compare_extA( NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_compare_extA should fail, got %#lx\n", ret );
+    ret = ldap_compare_extA( NULL, (char *)"", (char *)"", (char *)"", &empty_value, NULL, NULL, &num );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_compare_extA should fail, got %#lx\n", ret );
+    ret = ldap_compare_extA( ld, NULL, (char *)"", (char *)"", &empty_value, NULL, NULL, &num );
+    ok( !ret, "ldap_compare_extA should succeed, got %#lx\n", ret );
+    ret = ldap_compare_extA( ld, (char *)"", NULL, (char *)"", &empty_value, NULL, NULL, &num );
+    ok( ret == LDAP_NO_MEMORY, "ldap_compare_extA should fail, got %#lx\n", ret );
+    ret = ldap_compare_extA( ld, (char *)"", (char *)"", NULL, &empty_value, NULL, NULL, &num );
+    ok( !ret, "ldap_compare_extA should succeed, got %#lx\n", ret );
+    ret = ldap_compare_extA( ld, (char *)"", (char *)"", (char *)"", NULL, NULL, NULL, &num );
+    ok( !ret, "ldap_compare_extA should succeed, got %#lx\n", ret );
+    ret = ldap_compare_extA( ld, (char *)"", (char *)"", (char *)"", &empty_value, NULL, NULL, &num );
+    ok( !ret, "ldap_compare_extA should succeed, got %#lx\n", ret );
+    ret = ldap_compare_extA( ld, (char *)"", (char *)"", (char *)"", &empty_value, NULL, NULL, NULL );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_compare_extA should fail, got %#lx\n", ret );
+    ret = ldap_compare_extA( ld, (char *)"", (char *)"", (char *)"", &empty_value, NULL, NULL, &num );
+    ok( !ret, "ldap_compare_extA should succeed, got %#lx\n", ret );
+
+    ret = ldap_compare_ext_sA( NULL, NULL, NULL, NULL, NULL, NULL, NULL );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_compare_ext_sA should fail, got %#lx\n", ret );
+    ret = ldap_compare_ext_sA( NULL, (char *)"", (char *)"", (char *)"", &empty_value, NULL, NULL );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_compare_ext_sA should fail, got %#lx\n", ret );
+    ret = ldap_compare_ext_sA( ld, NULL, (char *)"", (char *)"", &empty_value, NULL, NULL );
+    ok( ret == LDAP_UNDEFINED_TYPE, "ldap_compare_ext_sA should fail, got %#lx\n", ret );
+    ret = ldap_compare_ext_sA( ld, (char *)"", NULL, (char *)"", &empty_value, NULL, NULL );
+    ok( ret == LDAP_UNDEFINED_TYPE, "ldap_compare_ext_sA should fail, got %#lx\n", ret );
+    ret = ldap_compare_ext_sA( ld, (char *)"", (char *)"", NULL, &empty_value, NULL, NULL );
+    ok( ret == LDAP_UNDEFINED_TYPE, "ldap_compare_ext_sA should fail, got %#lx\n", ret );
+    ret = ldap_compare_ext_sA( ld, (char *)"", (char *)"", (char *)"", NULL, NULL, NULL );
+    ok( ret == LDAP_UNDEFINED_TYPE, "ldap_compare_ext_sA should fail, got %#lx\n", ret );
+    ret = ldap_compare_ext_sA( ld, (char *)"", (char *)"", (char *)"", &empty_value, NULL, NULL );
+    ok( ret == LDAP_UNDEFINED_TYPE, "ldap_compare_ext_sA should fail, got %#lx\n", ret );
+}
+
+static void test_ldap_delete( LDAP *ld )
+{
+    ULONG ret, num;
+
+    ret = ldap_deleteA( NULL, NULL );
+    ok( ret == (ULONG)-1, "ldap_deleteA should fail, got %#lx\n", ret );
+    ret = ldap_deleteA( NULL, (char *)"" );
+    ok( ret == (ULONG)-1, "ldap_deleteA should fail, got %#lx\n", ret );
+
+    ret = ldap_delete_sA( NULL, NULL );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_delete_sA should fail, got %#lx\n", ret );
+    ret = ldap_delete_sA( NULL, (char *)"" );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_delete_sA should fail, got %#lx\n", ret );
+
+    ret = ldap_delete_extA( NULL, NULL, NULL, NULL, NULL );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_delete_extA should fail, got %#lx\n", ret );
+    ret = ldap_delete_extA( NULL, (char *)"", NULL, NULL, &num );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_delete_extA should fail, got %#lx\n", ret );
+    ret = ldap_delete_extA( ld, (char *)"", NULL, NULL, NULL );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_delete_extA should fail, got %#lx\n", ret );
+
+    ret = ldap_delete_ext_sA( NULL, NULL, NULL, NULL );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_delete_ext_sA should fail, got %#lx\n", ret );
+    ret = ldap_delete_ext_sA( NULL, (char *)"", NULL, NULL );
+    ok( ret == LDAP_PARAM_ERROR, "ldap_delete_ext_sA should fail, got %#lx\n", ret );
+}
+
 static void test_ldap_server_control( void )
 {
     /* SEQUENCE  { INTEGER :: 0x07 } */
@@ -252,7 +459,13 @@ static void test_ldap_paged_search(void)
     ok( res != NULL, "expected res != NULL\n" );
     ok( count == 0, "got %lu\n", count );
 
-    count = ldap_count_entries( ld, res);
+    count = ldap_count_entries( NULL, NULL );
+    ok( count == 0, "got %lu\n", count );
+    count = ldap_count_entries( ld, NULL );
+    ok( count == 0, "got %lu\n", count );
+    count = ldap_count_entries( NULL, res );
+    todo_wine ok( count == 1, "got %lu\n", count );
+    count = ldap_count_entries( ld, res );
     ok( count == 1, "got %lu\n", count );
 
     entry = ldap_first_entry( ld, res);
@@ -289,6 +502,10 @@ START_TEST (parse)
     ld = ldap_initA( (char *)"db.debian.org", 389 );
     ok( ld != NULL, "ldap_init failed\n" );
 
+    test_ldap_add( ld );
+    test_ldap_modify( ld );
+    test_ldap_compare( ld );
+    test_ldap_delete( ld );
     test_ldap_parse_sort_control( ld );
     test_ldap_search_extW( ld );
     test_ldap_get_optionW( ld );

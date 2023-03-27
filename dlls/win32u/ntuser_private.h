@@ -52,11 +52,6 @@ struct user_object
 
 #define OBJ_OTHER_PROCESS ((void *)1)  /* returned by get_user_handle_ptr on unknown handles */
 
-HANDLE alloc_user_handle( struct user_object *ptr, unsigned int type ) DECLSPEC_HIDDEN;
-void *get_user_handle_ptr( HANDLE handle, unsigned int type ) DECLSPEC_HIDDEN;
-void release_user_handle_ptr( void *ptr ) DECLSPEC_HIDDEN;
-void *free_user_handle( HANDLE handle, unsigned int type ) DECLSPEC_HIDDEN;
-
 typedef struct tagWND
 {
     struct user_object obj;           /* object header */
@@ -90,6 +85,7 @@ typedef struct tagWND
     struct window_surface *surface;   /* Window surface if any */
     struct tagDIALOGINFO *dlgInfo;    /* Dialog additional info (dialogs only) */
     int                pixel_format;  /* Pixel format set by the graphics driver */
+    int                internal_pixel_format; /* Internal pixel format set via WGL_WINE_pixel_format_passthrough */
     int                cbWndExtra;    /* class cbWndExtra at window creation */
     DWORD_PTR          userdata;      /* User private data */
     DWORD              wExtra[1];     /* Window extra bytes */
@@ -245,6 +241,7 @@ HANDLE alloc_user_handle( struct user_object *ptr, unsigned int type ) DECLSPEC_
 void *free_user_handle( HANDLE handle, unsigned int type ) DECLSPEC_HIDDEN;
 void *get_user_handle_ptr( HANDLE handle, unsigned int type ) DECLSPEC_HIDDEN;
 void release_user_handle_ptr( void *ptr ) DECLSPEC_HIDDEN;
+void *next_process_user_handle_ptr( HANDLE *handle, unsigned int type ) DECLSPEC_HIDDEN;
 UINT win_set_flags( HWND hwnd, UINT set_mask, UINT clear_mask ) DECLSPEC_HIDDEN;
 
 static inline UINT win_get_flags( HWND hwnd )

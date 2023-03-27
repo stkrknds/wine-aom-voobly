@@ -206,7 +206,7 @@ struct ddraw_surface
     /* You can't traverse the tree upwards. Only a flag for Surface::Release because it's needed there,
      * but no pointer to prevent temptations to traverse it in the wrong direction.
      */
-    unsigned int is_complex_root : 1;
+    unsigned int is_root : 1;
     unsigned int is_lost : 1;
     unsigned int sysmem_fallback : 1;
 
@@ -238,9 +238,6 @@ struct ddraw_texture
 HRESULT ddraw_surface_create(struct ddraw *ddraw, const DDSURFACEDESC2 *surface_desc,
         struct ddraw_surface **surface, IUnknown *outer_unknown, unsigned int version) DECLSPEC_HIDDEN;
 struct wined3d_rendertarget_view *ddraw_surface_get_rendertarget_view(struct ddraw_surface *surface) DECLSPEC_HIDDEN;
-void ddraw_surface_init(struct ddraw_surface *surface, struct ddraw *ddraw,
-        struct wined3d_texture *wined3d_texture, unsigned int sub_resource_idx,
-        const struct wined3d_parent_ops **parent_ops) DECLSPEC_HIDDEN;
 HRESULT ddraw_surface_update_frontbuffer(struct ddraw_surface *surface,
         const RECT *rect, BOOL read, unsigned int swap_interval) DECLSPEC_HIDDEN;
 

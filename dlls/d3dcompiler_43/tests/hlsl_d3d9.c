@@ -1412,7 +1412,8 @@ static void test_fail(void)
     {
         for (i = 0; i < ARRAY_SIZE(tests); ++i)
         {
-            compiled = errors = NULL;
+            errors = NULL;
+            compiled = (void *)0xdeadbeef;
             hr = D3DCompile(tests[i], strlen(tests[i]), NULL, NULL, NULL, "test", targets[j], 0, 0, &compiled, &errors);
             ok(hr == E_FAIL, "Test %u, target %s: Got unexpected hr %#lx.\n", i, targets[j], hr);
             ok(!!errors, "Test %u, target %s, expected non-NULL error blob.\n", i, targets[j]);
@@ -1741,6 +1742,22 @@ static void test_include(void)
     delete_directory(L"include");
 }
 
+static void test_no_output_blob(void)
+{
+    static const char vs_source[] =
+        "float4 main(float4 pos : POSITION, inout float2 texcoord : TEXCOORD0) : POSITION\n"
+        "{\n"
+        "   return pos;\n"
+        "}";
+    ID3D10Blob *errors;
+    HRESULT hr;
+
+    errors = (void *)0xdeadbeef;
+    hr = D3DCompile(vs_source, strlen(vs_source), NULL, NULL, NULL, "main", "vs_2_0", 0, 0, NULL, &errors);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!errors, "Unexpected errors blob.\n");
+}
+
 START_TEST(hlsl_d3d9)
 {
     HMODULE mod;
@@ -1769,4 +1786,5 @@ START_TEST(hlsl_d3d9)
     test_constant_table();
     test_fail();
     test_include();
+    test_no_output_blob();
 }

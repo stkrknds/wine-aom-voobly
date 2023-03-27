@@ -102,6 +102,26 @@ void *get_user_handle_ptr( HANDLE handle, unsigned int type )
 }
 
 /***********************************************************************
+ *           next_process_user_handle_ptr
+ *
+ * user_lock must be held by caller.
+ */
+void *next_process_user_handle_ptr( HANDLE *handle, unsigned int type )
+{
+    struct user_object *ptr;
+    WORD index = *handle ? USER_HANDLE_TO_INDEX( *handle ) + 1 : 0;
+
+    while (index < NB_USER_HANDLES)
+    {
+        if (!(ptr = user_handles[index++])) continue;  /* OBJ_OTHER_PROCESS */
+        if (ptr->type != type) continue;
+        *handle = ptr->handle;
+        return ptr;
+    }
+    return NULL;
+}
+
+/***********************************************************************
  *           set_user_handle_ptr
  */
 static void set_user_handle_ptr( HANDLE handle, struct user_object *ptr )
@@ -140,27 +160,6 @@ void *free_user_handle( HANDLE handle, unsigned int type )
         user_unlock();
     }
     return ptr;
-}
-
-/***********************************************************************
- *           next_thread_window
- */
-static WND *next_thread_window_ptr( HWND *hwnd )
-{
-    struct user_object *ptr;
-    WND *win;
-    WORD index = *hwnd ? USER_HANDLE_TO_INDEX( *hwnd ) + 1 : 0;
-
-    while (index < NB_USER_HANDLES)
-    {
-        if (!(ptr = user_handles[index++])) continue;
-        if (ptr->type != NTUSER_OBJ_WINDOW) continue;
-        win = (WND *)ptr;
-        if (win->tid != GetCurrentThreadId()) continue;
-        *hwnd = ptr->handle;
-        return win;
-    }
-    return NULL;
 }
 
 /*******************************************************************
@@ -1441,7 +1440,7 @@ LONG_PTR WINAPI NtUserSetWindowLongPtr( HWND hwnd, INT offset, LONG_PTR newval, 
     return set_window_long( hwnd, offset, sizeof(LONG_PTR), newval, ansi );
 }
 
-static BOOL set_window_pixel_format( HWND hwnd, int format )
+BOOL win32u_set_window_pixel_format( HWND hwnd, int format, BOOL internal )
 {
     WND *win = get_win_ptr( hwnd );
 
@@ -1450,11 +1449,31 @@ static BOOL set_window_pixel_format( HWND hwnd, int format )
         WARN( "setting format %d on win %p not supported\n", format, hwnd );
         return FALSE;
     }
-    win->pixel_format = format;
+    if (internal)
+        win->internal_pixel_format = format;
+    else
+        win->pixel_format = format;
     release_win_ptr( win );
 
     update_window_state( hwnd );
     return TRUE;
+}
+
+int win32u_get_window_pixel_format( HWND hwnd )
+{
+    WND *win = get_win_ptr( hwnd );
+    int ret;
+
+    if (!win || win == WND_DESKTOP || win == WND_OTHER_PROCESS)
+    {
+        WARN( "getting format on win %p not supported\n", hwnd );
+        return 0;
+    }
+
+    ret = win->pixel_format;
+    release_win_ptr( win );
+
+    return ret;
 }
 
 /***********************************************************************
@@ -1835,7 +1854,8 @@ static BOOL apply_window_pos( HWND hwnd, HWND insert_after, UINT swp_flags,
             wine_server_add_data( req, extra_rects, sizeof(extra_rects) );
         }
         if (new_surface) req->paint_flags |= SET_WINPOS_PAINT_SURFACE;
-        if (win->pixel_format) req->paint_flags |= SET_WINPOS_PIXEL_FORMAT;
+        if (win->pixel_format || win->internal_pixel_format)
+            req->paint_flags |= SET_WINPOS_PIXEL_FORMAT;
 
         if ((ret = !wine_server_call( req )))
         {
@@ -4825,13 +4845,14 @@ BOOL WINAPI NtUserDestroyWindow( HWND hwnd )
 void destroy_thread_windows(void)
 {
     WND *win, *free_list = NULL;
-    HWND hwnd = 0;
+    HANDLE handle = 0;
 
     user_lock();
-    while ((win = next_thread_window_ptr( &hwnd )))
+    while ((win = next_process_user_handle_ptr( &handle, NTUSER_OBJ_WINDOW )))
     {
+        if (win->tid != GetCurrentThreadId()) continue;
         free_dce( win->dce, win->obj.handle );
-        set_user_handle_ptr( hwnd, NULL );
+        set_user_handle_ptr( handle, NULL );
         win->obj.handle = free_list;
         free_list = win;
     }
@@ -5554,9 +5575,6 @@ ULONG_PTR WINAPI NtUserCallHwndParam( HWND hwnd, DWORD_PTR param, DWORD code )
 
     case NtUserCallHwndParam_SetWindowContextHelpId:
         return set_window_context_help_id( hwnd, param );
-
-    case NtUserCallHwndParam_SetWindowPixelFormat:
-        return set_window_pixel_format( hwnd, param );
 
     case NtUserCallHwndParam_ShowOwnedPopups:
         return show_owned_popups( hwnd, param );

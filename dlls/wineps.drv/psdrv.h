@@ -352,7 +352,6 @@ enum passthrough
 typedef struct {
     DWORD		id;             /* Job id */
     HANDLE              hprinter;       /* Printer handle */
-    LPWSTR              output;	        /* Output file/port */
     LPWSTR              doc_name;       /* Document Name */
     BOOL		banding;        /* Have we received a NEXTBAND */
     BOOL		OutOfPage;      /* Page header not sent yet */
@@ -393,6 +392,9 @@ static inline PSDRV_PDEVICE *get_psdrv_dev( PHYSDEV dev )
 {
     return (PSDRV_PDEVICE *)dev;
 }
+
+extern PSDRV_PDEVICE *create_psdrv_physdev( HDC hdc, const WCHAR *device,
+        const PSDRV_DEVMODE *devmode ) DECLSPEC_HIDDEN;
 
 /*
  *  Every glyph name in the Adobe Glyph List and the 35 core PostScript fonts

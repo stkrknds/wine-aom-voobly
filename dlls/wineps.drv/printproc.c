@@ -24,6 +24,8 @@
 #include <winspool.h>
 #include <ddk/winsplp.h>
 
+#include "psdrv.h"
+
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(psdrv);
@@ -37,6 +39,8 @@ struct pp_data
     HANDLE hport;
     WCHAR *doc_name;
     WCHAR *out_file;
+    PSDRV_PDEVICE *pdev;
+    struct brush_pattern *patterns;
 };
 
 typedef enum
@@ -130,7 +134,159 @@ static struct pp_data* get_handle_data(HANDLE pp)
 static int WINAPI hmf_proc(HDC hdc, HANDLETABLE *htable,
         const ENHMETARECORD *rec, int n, LPARAM arg)
 {
-    FIXME("unsupported record: %ld\n", rec->iType);
+    struct pp_data *data = (struct pp_data *)arg;
+
+    switch (rec->iType)
+    {
+    case EMR_HEADER:
+    {
+        const ENHMETAHEADER *header = (const ENHMETAHEADER *)rec;
+
+        data->patterns = calloc(sizeof(*data->patterns), header->nHandles);
+        return data->patterns && PSDRV_StartPage(&data->pdev->dev);
+    }
+    case EMR_POLYBEZIER:
+    {
+        const EMRPOLYBEZIER *p = (const EMRPOLYBEZIER *)rec;
+
+        return PSDRV_PolyBezier(&data->pdev->dev, (const POINT *)p->aptl, p->cptl);
+    }
+    case EMR_POLYPOLYLINE:
+    {
+        const EMRPOLYPOLYLINE *p = (const EMRPOLYPOLYLINE *)rec;
+
+        return PSDRV_PolyPolyline(&data->pdev->dev,
+                (const POINT *)(p->aPolyCounts + p->nPolys),
+                p->aPolyCounts, p->nPolys);
+    }
+    case EMR_POLYPOLYGON:
+    {
+        const EMRPOLYPOLYGON *p = (const EMRPOLYPOLYGON *)rec;
+
+        return PSDRV_PolyPolygon(&data->pdev->dev,
+                (const POINT *)(p->aPolyCounts + p->nPolys),
+                (const INT *)p->aPolyCounts, p->nPolys);
+    }
+    case EMR_EOF:
+        return PSDRV_EndPage(&data->pdev->dev);
+    case EMR_SETPIXELV:
+    {
+        const EMRSETPIXELV *p = (const EMRSETPIXELV *)rec;
+
+        return PSDRV_SetPixel(&data->pdev->dev, p->ptlPixel.x,
+                p->ptlPixel.y, p->crColor);
+    }
+    case EMR_SELECTOBJECT:
+    {
+        const EMRSELECTOBJECT *so = (const EMRSELECTOBJECT *)rec;
+        struct brush_pattern *pattern;
+        HGDIOBJ obj;
+
+        if (so->ihObject & 0x80000000)
+        {
+            obj = GetStockObject(so->ihObject & 0x7fffffff);
+            pattern = NULL;
+        }
+        else
+        {
+            obj = (htable->objectHandle)[so->ihObject];
+            pattern = data->patterns + so->ihObject;
+        }
+        SelectObject(data->pdev->dev.hdc, obj);
+
+        switch (GetObjectType(obj))
+        {
+        case OBJ_PEN: return PSDRV_SelectPen(&data->pdev->dev, obj, NULL) != NULL;
+        case OBJ_BRUSH: return PSDRV_SelectBrush(&data->pdev->dev, obj, pattern) != NULL;
+        default:
+            FIXME("unhandled object type %ld\n", GetObjectType(obj));
+            return 1;
+        }
+    }
+    case EMR_ELLIPSE:
+    {
+        const EMRELLIPSE *p = (const EMRELLIPSE *)rec;
+        const RECTL *r = &p->rclBox;
+
+        return PSDRV_Ellipse(&data->pdev->dev, r->left, r->top, r->right, r->bottom);
+    }
+    case EMR_RECTANGLE:
+    {
+        const EMRRECTANGLE *rect = (const EMRRECTANGLE *)rec;
+
+        return PSDRV_Rectangle(&data->pdev->dev, rect->rclBox.left,
+                rect->rclBox.top, rect->rclBox.right, rect->rclBox.bottom);
+    }
+    case EMR_ROUNDRECT:
+    {
+        const EMRROUNDRECT *p = (const EMRROUNDRECT *)rec;
+
+        return PSDRV_RoundRect(&data->pdev->dev, p->rclBox.left,
+                p->rclBox.top, p->rclBox.right, p->rclBox.bottom,
+                p->szlCorner.cx, p->szlCorner.cy);
+    }
+    case EMR_ARC:
+    {
+        const EMRARC *p = (const EMRARC *)rec;
+
+        return PSDRV_Arc(&data->pdev->dev, p->rclBox.left, p->rclBox.top,
+                p->rclBox.right, p->rclBox.bottom, p->ptlStart.x,
+                p->ptlStart.y, p->ptlEnd.x, p->ptlEnd.y);
+    }
+    case EMR_CHORD:
+    {
+        const EMRCHORD *p = (const EMRCHORD *)rec;
+
+        return PSDRV_Chord(&data->pdev->dev, p->rclBox.left, p->rclBox.top,
+                p->rclBox.right, p->rclBox.bottom, p->ptlStart.x,
+                p->ptlStart.y, p->ptlEnd.x, p->ptlEnd.y);
+    }
+    case EMR_PIE:
+    {
+        const EMRPIE *p = (const EMRPIE *)rec;
+
+        return PSDRV_Pie(&data->pdev->dev, p->rclBox.left, p->rclBox.top,
+                p->rclBox.right, p->rclBox.bottom, p->ptlStart.x,
+                p->ptlStart.y, p->ptlEnd.x, p->ptlEnd.y);
+    }
+    case EMR_LINETO:
+    {
+        const EMRLINETO *line = (const EMRLINETO *)rec;
+
+        return PSDRV_LineTo(&data->pdev->dev, line->ptl.x, line->ptl.y) &&
+            MoveToEx(data->pdev->dev.hdc, line->ptl.x, line->ptl.y, NULL);
+    }
+    case EMR_CREATEMONOBRUSH:
+    {
+        const EMRCREATEMONOBRUSH *p = (const EMRCREATEMONOBRUSH *)rec;
+
+        if (!PlayEnhMetaFileRecord(data->pdev->dev.hdc, htable, rec, n))
+            return 0;
+        data->patterns[p->ihBrush].usage = p->iUsage;
+        data->patterns[p->ihBrush].info = (BITMAPINFO *)((BYTE *)p + p->offBmi);
+        data->patterns[p->ihBrush].bits.ptr = (BYTE *)p + p->offBits;
+        return 1;
+    }
+    case EMR_CREATEDIBPATTERNBRUSHPT:
+    {
+        const EMRCREATEDIBPATTERNBRUSHPT *p = (const EMRCREATEDIBPATTERNBRUSHPT *)rec;
+
+        if (!PlayEnhMetaFileRecord(data->pdev->dev.hdc, htable, rec, n))
+            return 0;
+        data->patterns[p->ihBrush].usage = p->iUsage;
+        data->patterns[p->ihBrush].info = (BITMAPINFO *)((BYTE *)p + p->offBmi);
+        data->patterns[p->ihBrush].bits.ptr = (BYTE *)p + p->offBits;
+        return 1;
+    }
+
+    case EMR_MOVETOEX:
+    case EMR_SETWORLDTRANSFORM:
+    case EMR_MODIFYWORLDTRANSFORM:
+        return PlayEnhMetaFileRecord(data->pdev->dev.hdc, htable, rec, n);
+    default:
+        FIXME("unsupported record: %ld\n", rec->iType);
+    }
+
     return 1;
 }
 
@@ -171,8 +327,10 @@ static BOOL print_metafile(struct pp_data *data, HANDLE hdata)
     if (!hmf)
         return FALSE;
 
-    ret = EnumEnhMetaFile(NULL, hmf, hmf_proc, NULL, NULL);
+    ret = EnumEnhMetaFile(NULL, hmf, hmf_proc, (void *)data, NULL);
     DeleteEnhMetaFile(hmf);
+    free(data->patterns);
+    data->patterns = NULL;
     return ret;
 }
 
@@ -215,6 +373,7 @@ HANDLE WINAPI OpenPrintProcessor(WCHAR *port, PRINTPROCESSOROPENDATA *open_data)
 {
     struct pp_data *data;
     HANDLE hport;
+    HDC hdc;
 
     TRACE("%s, %p\n", debugstr_w(port), open_data);
 
@@ -239,6 +398,23 @@ HANDLE WINAPI OpenPrintProcessor(WCHAR *port, PRINTPROCESSOROPENDATA *open_data)
     data->hport = hport;
     data->doc_name = wcsdup(open_data->pDocumentName);
     data->out_file = wcsdup(open_data->pOutputFile);
+
+    hdc = CreateCompatibleDC(NULL);
+    if (!hdc)
+    {
+        LocalFree(data);
+        return NULL;
+    }
+    SetGraphicsMode(hdc, GM_ADVANCED);
+    data->pdev = create_psdrv_physdev(hdc, open_data->pPrinterName,
+            (const PSDRV_DEVMODE *)open_data->pDevMode);
+    if (!data->pdev)
+    {
+        DeleteDC(hdc);
+        LocalFree(data);
+        return NULL;
+    }
+    data->pdev->dev.hdc = hdc;
     return (HANDLE)data;
 }
 
@@ -264,7 +440,8 @@ BOOL WINAPI PrintDocumentOnPrintProcessor(HANDLE pp, WCHAR *doc_name)
     info.pDocName = data->doc_name;
     info.pOutputFile = data->out_file;
     info.pDatatype = (WCHAR *)L"RAW";
-    if (!StartDocPrinterW(data->hport, 1, (BYTE *)&info))
+    data->pdev->job.id = StartDocPrinterW(data->hport, 1, (BYTE *)&info);
+    if (!data->pdev->job.id)
     {
         ClosePrinter(spool_data);
         return FALSE;
@@ -288,6 +465,19 @@ BOOL WINAPI PrintDocumentOnPrintProcessor(HANDLE pp, WCHAR *doc_name)
     pos.QuadPart = header.cjSize;
     if (!(ret = SeekPrinter(spool_data, pos, NULL, FILE_BEGIN, FALSE)))
         goto cleanup;
+
+    data->pdev->job.hprinter = data->hport;
+    if (!PSDRV_WriteHeader(&data->pdev->dev, data->doc_name))
+    {
+        WARN("Failed to write header\n");
+        goto cleanup;
+    }
+    data->pdev->job.banding = FALSE;
+    data->pdev->job.OutOfPage = TRUE;
+    data->pdev->job.PageNo = 0;
+    data->pdev->job.quiet = FALSE;
+    data->pdev->job.passthrough_state = passthrough_none;
+    data->pdev->job.doc_name = strdupW(data->doc_name);
 
     while (1)
     {
@@ -345,6 +535,10 @@ BOOL WINAPI PrintDocumentOnPrintProcessor(HANDLE pp, WCHAR *doc_name)
     }
 
 cleanup:
+    if (data->pdev->job.PageNo)
+        PSDRV_WriteFooter(&data->pdev->dev);
+
+    HeapFree(GetProcessHeap(), 0, data->pdev->job.doc_name);
     ClosePrinter(spool_data);
     return EndDocPrinter(data->hport) && ret;
 }
@@ -368,6 +562,9 @@ BOOL WINAPI ClosePrintProcessor(HANDLE pp)
     ClosePrinter(data->hport);
     free(data->doc_name);
     free(data->out_file);
+    DeleteDC(data->pdev->dev.hdc);
+    HeapFree(GetProcessHeap(), 0, data->pdev->Devmode);
+    HeapFree(GetProcessHeap(), 0, data->pdev);
 
     memset(data, 0, sizeof(*data));
     LocalFree(data);

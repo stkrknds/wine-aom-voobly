@@ -648,6 +648,7 @@ BOOL    WINAPI NtUserAddClipboardFormatListener( HWND hwnd );
 UINT    WINAPI NtUserAssociateInputContext( HWND hwnd, HIMC ctx, ULONG flags );
 BOOL    WINAPI NtUserAttachThreadInput( DWORD from, DWORD to, BOOL attach );
 HDC     WINAPI NtUserBeginPaint( HWND hwnd, PAINTSTRUCT *ps );
+NTSTATUS WINAPI NtUserBuildHimcList( UINT thread_id, UINT count, HIMC *buffer, UINT *size );
 NTSTATUS WINAPI NtUserBuildHwndList( HDESK desktop, ULONG unk2, ULONG unk3, ULONG unk4,
                                      ULONG thread_id, ULONG count, HWND *buffer, ULONG *size );
 ULONG_PTR WINAPI NtUserCallHwnd( HWND hwnd, DWORD code );
@@ -1331,7 +1332,6 @@ enum
     NtUserCallHwndParam_SetDialogInfo,
     NtUserCallHwndParam_SetMDIClientInfo,
     NtUserCallHwndParam_SetWindowContextHelpId,
-    NtUserCallHwndParam_SetWindowPixelFormat,
     NtUserCallHwndParam_ShowOwnedPopups,
     /* temporary exports */
     NtUserSetWindowStyle,
@@ -1496,11 +1496,6 @@ static inline void NtUserSetMDIClientInfo( HWND hwnd, void *info )
 static inline BOOL NtUserSetWindowContextHelpId( HWND hwnd, DWORD id )
 {
     return NtUserCallHwndParam( hwnd, id, NtUserCallHwndParam_SetWindowContextHelpId );
-}
-
-static inline BOOL NtUserSetWindowPixelFormat( HWND hwnd, int format )
-{
-    return NtUserCallHwndParam( hwnd, format, NtUserCallHwndParam_SetWindowPixelFormat );
 }
 
 static inline BOOL NtUserShowOwnedPopups( HWND hwnd, BOOL show )

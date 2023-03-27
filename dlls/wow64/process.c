@@ -184,6 +184,8 @@ static PS_ATTRIBUTE_LIST *ps_attributes_32to64( PS_ATTRIBUTE_LIST **attr, const 
             }
             break;
         case PS_ATTRIBUTE_PARENT_PROCESS:
+        case PS_ATTRIBUTE_DEBUG_PORT:
+        case PS_ATTRIBUTE_TOKEN:
             ret->Attributes[i].Size     = sizeof(HANDLE);
             ret->Attributes[i].ValuePtr = LongToHandle( attr32->Attributes[i].Value );
             break;
@@ -957,6 +959,7 @@ NTSTATUS WINAPI wow64_NtSetInformationThread( UINT *args )
         else return STATUS_INVALID_PARAMETER;
 
     case ThreadNameInformation:   /* THREAD_NAME_INFORMATION */
+    case ThreadWineNativeThreadName:
         if (len == sizeof(THREAD_NAME_INFORMATION32))
         {
             THREAD_NAME_INFORMATION32 *info32 = ptr;

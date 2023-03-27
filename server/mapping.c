@@ -378,10 +378,7 @@ static void set_process_machine( struct process *process, struct memory_view *vi
 
 static int generate_dll_event( struct thread *thread, int code, struct memory_view *view )
 {
-    unsigned short process_machine = thread->process->machine;
-
     if (!(view->flags & SEC_IMAGE)) return 0;
-    if (process_machine != native_machine && process_machine != view->image.machine) return 0;
     generate_debug_event( thread, code, view );
     return 1;
 }
@@ -1192,7 +1189,6 @@ DECL_HANDLER(map_view)
 {
     struct mapping *mapping = NULL;
     struct memory_view *view;
-    data_size_t namelen = 0;
 
     if (!req->size || (req->base & page_mask) || req->base + req->size < req->base)  /* overflow */
     {
@@ -1211,6 +1207,8 @@ DECL_HANDLER(map_view)
 
     if (!req->mapping)  /* image mapping for a .so dll */
     {
+        data_size_t namelen = 0;
+
         if (get_req_data_size() > sizeof(view->image)) namelen = get_req_data_size() - sizeof(view->image);
         if (!(view = mem_alloc( sizeof(struct memory_view) + namelen * sizeof(WCHAR) ))) return;
         memset( view, 0, sizeof(*view) );
@@ -1243,13 +1241,13 @@ DECL_HANDLER(map_view)
         goto done;
     }
 
-    if ((view = mem_alloc( offsetof( struct memory_view, name[namelen] ))))
+    if ((view = mem_alloc( sizeof(*view) )))
     {
         view->base      = req->base;
         view->size      = req->size;
         view->start     = req->start;
         view->flags     = mapping->flags;
-        view->namelen   = namelen;
+        view->namelen   = 0;
         view->fd        = !is_fd_removable( mapping->fd ) ? (struct fd *)grab_object( mapping->fd ) : NULL;
         view->committed = mapping->committed ? (struct ranges *)grab_object( mapping->committed ) : NULL;
         view->shared    = mapping->shared ? (struct shared_map *)grab_object( mapping->shared ) : NULL;

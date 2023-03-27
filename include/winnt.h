@@ -118,6 +118,8 @@ extern "C" {
 #define DECLSPEC_SELECTANY __declspec(selectany)
 #elif defined(__MINGW32__)
 #define DECLSPEC_SELECTANY __attribute__((selectany))
+#elif defined(__GNUC__)
+#define DECLSPEC_SELECTANY __attribute__((weak))
 #else
 #define DECLSPEC_SELECTANY
 #endif
@@ -1072,6 +1074,10 @@ typedef enum _HEAP_INFORMATION_CLASS {
 #define PF_AVX_INSTRUCTIONS_AVAILABLE           39
 #define PF_AVX2_INSTRUCTIONS_AVAILABLE          40
 #define PF_AVX512F_INSTRUCTIONS_AVAILABLE       41
+#define PF_ERMS_AVAILABLE                       42
+#define PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE    43
+#define PF_ARM_V83_JSCVT_INSTRUCTIONS_AVAILABLE 44
+#define PF_ARM_V83_LRCPC_INSTRUCTIONS_AVAILABLE 45
 
 
 /* Execution state flags */
@@ -4848,6 +4854,12 @@ typedef struct _SYSTEM_MANDATORY_LABEL_ACE {
     DWORD       SidStart;
 } SYSTEM_MANDATORY_LABEL_ACE,*PSYSTEM_MANDATORY_LABEL_ACE;
 
+typedef struct _SYSTEM_PROCESS_TRUST_LABEL_ACE {
+    ACE_HEADER  Header;
+    ACCESS_MASK Mask;
+    DWORD       SidStart;
+} SYSTEM_PROCESS_TRUST_LABEL_ACE, *PSYSTEM_PROCESS_TRUST_LABEL_ACE;
+
 typedef struct _ACCESS_ALLOWED_OBJECT_ACE {
     ACE_HEADER  Header;
     ACCESS_MASK Mask;
@@ -4948,6 +4960,8 @@ typedef struct _SYSTEM_ALARM_CALLBACK_OBJECT_ACE {
 #define SYSTEM_MANDATORY_LABEL_NO_READ_UP       0x2
 #define SYSTEM_MANDATORY_LABEL_NO_EXECUTE_UP    0x4
 #define SYSTEM_MANDATORY_LABEL_VALID_MASK       0x7
+#define SYSTEM_PROCESS_TRUST_LABEL_VALID_MASK   0x00ffffff
+#define SYSTEM_PROCESS_TRUST_NOCONSTRAINT_MASK  0xffffffff
 
 typedef enum tagSID_NAME_USE {
 	SidTypeUser = 1,
@@ -6487,6 +6501,13 @@ typedef enum _PROCESS_MITIGATION_POLICY
     MaxProcessMitigationPolicy
 } PROCESS_MITIGATION_POLICY, *PPROCESS_MITIGATION_POLICY;
 
+typedef enum _FIRMWARE_TYPE
+{
+    FirmwareTypeUnknown,
+    FirmwareTypeBios,
+    FirmwareTypeUefi,
+    FirmwareTypeMax
+} FIRMWARE_TYPE, *PFIRMWARE_TYPE;
 
 /* Intrinsic functions */
 

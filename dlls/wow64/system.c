@@ -330,12 +330,16 @@ NTSTATUS WINAPI wow64_NtQuerySystemInformation( UINT *args )
     case SystemCodeIntegrityInformation:  /* SYSTEM_CODEINTEGRITY_INFORMATION */
     case SystemKernelDebuggerInformationEx:  /* SYSTEM_KERNEL_DEBUGGER_INFORMATION_EX */
     case SystemCpuSetInformation:  /* SYSTEM_CPU_SET_INFORMATION */
+    case SystemProcessorBrandString:  /* char[] */
+    case SystemProcessorFeaturesInformation:  /* SYSTEM_PROCESSOR_FEATURES_INFORMATION */
     case SystemWineVersionInformation:  /* char[] */
         return NtQuerySystemInformation( class, ptr, len, retlen );
 
     case SystemCpuInformation:  /* SYSTEM_CPU_INFORMATION */
     case SystemEmulationProcessorInformation:  /* SYSTEM_CPU_INFORMATION */
-        return NtQuerySystemInformation( SystemEmulationProcessorInformation, ptr, len, retlen );
+        status = NtQuerySystemInformation( SystemEmulationProcessorInformation, ptr, len, retlen );
+        if (!status && pBTCpuUpdateProcessorInformation) pBTCpuUpdateProcessorInformation( ptr );
+        return status;
 
     case SystemBasicInformation:  /* SYSTEM_BASIC_INFORMATION */
     case SystemEmulationBasicInformation:  /* SYSTEM_BASIC_INFORMATION */

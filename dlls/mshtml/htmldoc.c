@@ -854,6 +854,7 @@ static HRESULT WINAPI HTMLDocument_get_scripts(IHTMLDocument2 *iface, IHTMLEleme
 static HRESULT WINAPI HTMLDocument_put_designMode(IHTMLDocument2 *iface, BSTR v)
 {
     HTMLDocumentNode *This = impl_from_IHTMLDocument2(iface);
+    HTMLDocumentObj *doc_obj;
     HRESULT hres;
 
     TRACE("(%p)->(%s)\n", This, debugstr_w(v));
@@ -863,7 +864,10 @@ static HRESULT WINAPI HTMLDocument_put_designMode(IHTMLDocument2 *iface, BSTR v)
         return E_NOTIMPL;
     }
 
-    hres = setup_edit_mode(This->doc_obj);
+    doc_obj = This->doc_obj;
+    IUnknown_AddRef(doc_obj->outer_unk);
+    hres = setup_edit_mode(doc_obj);
+    IUnknown_Release(doc_obj->outer_unk);
     if(FAILED(hres))
         return hres;
 
@@ -5856,26 +5860,15 @@ static HRESULT HTMLDocumentNode_clone(HTMLDOMNode *iface, nsIDOMNode *nsnode, HT
     return E_NOTIMPL;
 }
 
-static void HTMLDocumentNode_traverse(HTMLDOMNode *iface, nsCycleCollectionTraversalCallback *cb)
-{
-    HTMLDocumentNode *This = impl_from_HTMLDOMNode(iface);
-
-    if(This->dom_document)
-        note_cc_edge((nsISupports*)This->dom_document, "This->dom_document", cb);
-}
-
 static void HTMLDocumentNode_unlink(HTMLDOMNode *iface)
 {
     HTMLDocumentNode *This = impl_from_HTMLDOMNode(iface);
 
     if(This->dom_document) {
-        nsIDOMDocument *dom_document = This->dom_document;
-
         release_document_mutation(This);
         detach_document_node(This);
         This->dom_document = NULL;
         This->html_document = NULL;
-        nsIDOMDocument_Release(dom_document);
         This->window = NULL;
     }
 }
@@ -5898,7 +5891,7 @@ static const NodeImplVtbl HTMLDocumentNodeImplVtbl = {
     NULL,
     NULL,
     NULL,
-    HTMLDocumentNode_traverse,
+    NULL,
     HTMLDocumentNode_unlink
 };
 
@@ -6268,10 +6261,11 @@ HRESULT create_document_node(nsIDOMDocument *nsdoc, GeckoBrowser *browser, HTMLI
     if(!doc_obj->window || (window && is_main_content_window(window->base.outer_window)))
         doc->cp_container.forward_container = &doc_obj->cp_container;
 
-    if(NS_SUCCEEDED(nsIDOMDocument_QueryInterface(nsdoc, &IID_nsIDOMHTMLDocument, (void**)&doc->html_document)))
+    /* Share reference with HTMLDOMNode */
+    if(NS_SUCCEEDED(nsIDOMDocument_QueryInterface(nsdoc, &IID_nsIDOMHTMLDocument, (void**)&doc->html_document))) {
         doc->dom_document = (nsIDOMDocument*)doc->html_document;
-    else {
-        nsIDOMDocument_AddRef(nsdoc);
+        nsIDOMHTMLDocument_Release(doc->html_document);
+    }else {
         doc->dom_document = nsdoc;
         doc->html_document = NULL;
     }
