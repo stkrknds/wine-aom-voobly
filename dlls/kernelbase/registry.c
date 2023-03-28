@@ -104,11 +104,59 @@ static BOOL is_wow6432node( const UNICODE_STRING *name )
     return (len >= 11 && !wcsnicmp( name->Buffer, L"Wow6432Node\\", min( len, 12 ) ));
 }
 
-/* open the Wow6432Node subkey of the specified key */
+static BOOL is_classes_root( const UNICODE_STRING *name )
+{
+    static const WCHAR classes_root[] = L"\\Registry\\Machine\\Software\\Classes\\";
+    DWORD classes_root_len = ARRAY_SIZE( classes_root ) - 1;
+    DWORD len = name->Length / sizeof(WCHAR);
+    return (len >= classes_root_len - 1 && !wcsnicmp( name->Buffer, classes_root, min( len, classes_root_len ) ));
+}
+
+static BOOL is_classes_wow6432node( HKEY key )
+{
+    char buffer[256], *buf_ptr = buffer;
+    KEY_NAME_INFORMATION *info = (KEY_NAME_INFORMATION *)buffer;
+    DWORD len = sizeof(buffer);
+    UNICODE_STRING name;
+    NTSTATUS status;
+    BOOL ret = FALSE;
+
+    /* Obtain the name of the root key */
+    status = NtQueryKey( key, KeyNameInformation, info, len, &len );
+    if (status && status != STATUS_BUFFER_OVERFLOW) return FALSE;
+
+    /* Retry with a dynamically allocated buffer */
+    while (status == STATUS_BUFFER_OVERFLOW)
+    {
+        if (buf_ptr != buffer) heap_free( buf_ptr );
+        if (!(buf_ptr = heap_alloc( len ))) return FALSE;
+        info = (KEY_NAME_INFORMATION *)buf_ptr;
+        status = NtQueryKey( key, KeyNameInformation, info, len, &len );
+    }
+
+    /* Check if the key ends in Wow6432Node and if the root is the Classes key*/
+    if (!status && info->NameLength / sizeof(WCHAR) >= 11)
+    {
+        name.Buffer = info->Name + info->NameLength / sizeof(WCHAR) - 11;
+        name.Length = 11 * sizeof(WCHAR);
+        if (is_wow6432node( &name ))
+        {
+            name.Buffer = info->Name;
+            name.Length = info->NameLength;
+            ret = is_classes_root( &name );
+        }
+    }
+
+    if (buf_ptr != buffer) heap_free( buf_ptr );
+
+    return ret;
+}
+
+/* Open the Wow6432Node subkey of the specified key */
 static HANDLE open_wow6432node( HANDLE key )
 {
-    OBJECT_ATTRIBUTES attr;
     UNICODE_STRING nameW = RTL_CONSTANT_STRING( L"Wow6432Node" );
+    OBJECT_ATTRIBUTES attr;
     HANDLE ret;
 
     attr.Length = sizeof(attr);
@@ -117,7 +165,25 @@ static HANDLE open_wow6432node( HANDLE key )
     attr.Attributes = 0;
     attr.SecurityDescriptor = NULL;
     attr.SecurityQualityOfService = NULL;
-    if (NtOpenKeyEx( &ret, MAXIMUM_ALLOWED, &attr, 0 )) ret = 0;
+    if (NtOpenKeyEx( &ret, MAXIMUM_ALLOWED, &attr, 0 )) return key;
+    return ret;
+}
+
+/* Open HKCR, which should already exist because it's used when we're in its Wow6432Node child */
+static HANDLE open_classes_root( void )
+{
+    OBJECT_ATTRIBUTES attr;
+    UNICODE_STRING nameW;
+    HANDLE ret = 0;
+
+    attr.Length = sizeof(attr);
+    attr.RootDirectory = 0;
+    attr.ObjectName = &nameW;
+    attr.Attributes = 0;
+    attr.SecurityDescriptor = NULL;
+    attr.SecurityQualityOfService = NULL;
+    RtlInitUnicodeString( &nameW, root_key_names[0] );
+    NtOpenKeyEx( &ret, MAXIMUM_ALLOWED, &attr, 0 );
     return ret;
 }
 
@@ -162,6 +228,21 @@ static NTSTATUS open_subkey( HKEY *subkey, HKEY root, UNICODE_STRING *name, DWOR
         options &= ~REG_OPTION_OPEN_LINK;
 
     status = open_key( subkey, root, &str, options, access_64, FALSE );
+    if (status == STATUS_OBJECT_NAME_NOT_FOUND && root && is_wow64_key)
+    {
+        /* Try to open the shared parent if we can't find the key in the Wow6432Node */
+        if (!is_classes_wow6432node( root ))
+            return STATUS_OBJECT_NAME_NOT_FOUND;
+
+        root = open_classes_root();
+        status = open_key( subkey, root, &str, options, access_64, FALSE );
+
+        if (!status)
+            NtClose( root );
+        else
+            *subkey = root;
+    }
+
     if (!status)
     {
         while (i < len && buffer[i] == '\\') i++;
@@ -172,7 +253,7 @@ static NTSTATUS open_subkey( HKEY *subkey, HKEY root, UNICODE_STRING *name, DWOR
         if (is_wow64_key && !is_wow6432node( name ))
         {
             HKEY wow6432node = open_wow6432node( *subkey );
-            if (wow6432node)
+            if (wow6432node != *subkey)
             {
                 NtClose( *subkey );
                 *subkey = wow6432node;
@@ -183,11 +264,58 @@ static NTSTATUS open_subkey( HKEY *subkey, HKEY root, UNICODE_STRING *name, DWOR
     return status;
 }
 
+static NTSTATUS open_wow6432node_parent( HKEY *retkey, HKEY root, DWORD options, ACCESS_MASK access )
+{
+    char buffer[256], *buf_ptr = buffer;
+    KEY_NAME_INFORMATION *info = (KEY_NAME_INFORMATION *)buffer;
+    DWORD len = sizeof(buffer);
+    UNICODE_STRING name;
+    NTSTATUS status;
+
+    /* Obtain the name of the root key */
+    status = NtQueryKey( root, KeyNameInformation, info, len, &len );
+    if (status && status != STATUS_BUFFER_OVERFLOW) return status;
+
+    /* Retry with a dynamically allocated buffer */
+    while (status == STATUS_BUFFER_OVERFLOW)
+    {
+        if (buf_ptr != buffer) heap_free( buf_ptr );
+        if (!(buf_ptr = heap_alloc( len )))
+            return STATUS_NO_MEMORY;
+        info = (KEY_NAME_INFORMATION *)buf_ptr;
+        status = NtQueryKey( root, KeyNameInformation, info, len, &len );
+    }
+
+    if (status)
+    {
+        if (buf_ptr != buffer) heap_free( buf_ptr );
+        return status;
+    }
+
+    name.Buffer = info->Name;
+    name.Length = info->NameLength;
+    root = 0;
+
+    /* Obtain the parent Wow6432Node if it exists */
+    while (!status && name.Length)
+    {
+        status = open_subkey( retkey, root, &name, options & ~REG_OPTION_OPEN_LINK, access );
+        if (root) NtClose( root );
+        root = *retkey;
+    }
+
+    if (buf_ptr != buffer) heap_free( buf_ptr );
+
+    return status;
+}
+
 /* wrapper for NtOpenKeyEx to handle Wow6432 nodes */
 static NTSTATUS open_key( HKEY *retkey, HKEY root, UNICODE_STRING *name, DWORD options, ACCESS_MASK access, BOOL create )
 {
+    BOOL is_wow64_key = (is_win64 && (access & KEY_WOW64_32KEY)) || (is_wow64 && !(access & KEY_WOW64_64KEY));
     HKEY subkey = 0, subkey_root = root;
-    NTSTATUS status = 0;
+    NTSTATUS status = STATUS_SUCCESS;
+    BOOL was_wow6432node = TRUE;
 
     *retkey = NULL;
 
@@ -212,11 +340,31 @@ static NTSTATUS open_key( HKEY *retkey, HKEY root, UNICODE_STRING *name, DWORD o
         return status;
     }
 
+    if (root && (access & KEY_WOW64_32KEY) && !is_wow6432node( name ))
+        status = open_wow6432node_parent( &subkey_root, root, options, access );
+    else if (root && is_wow64 && !(access & KEY_WOW64_64KEY) && !is_wow6432node( name ))
+    {
+        subkey_root = open_wow6432node( root );
+        if (!is_classes_wow6432node( subkey_root ) && subkey_root != root)
+        {
+            NtClose( subkey_root );
+            subkey_root = root;
+        }
+    }
+
     while (!status && (name->Length || !subkey))
     {
+        was_wow6432node = is_wow6432node( name );
         status = open_subkey( &subkey, subkey_root, name, options, access );
         if (subkey && subkey_root && subkey_root != root) NtClose( subkey_root );
         if (subkey) subkey_root = subkey;
+    }
+
+    /* Return the shared parent if we didn't explicitly look for the Wow6432Node */
+    if (!status && !was_wow6432node && is_wow64_key && is_classes_wow6432node( subkey_root ))
+    {
+        if (subkey_root && subkey_root != root) NtClose( subkey_root );
+        subkey_root = open_classes_root();
     }
 
     if (!status || (status == STATUS_OBJECT_NAME_NOT_FOUND && create))
@@ -227,25 +375,60 @@ static NTSTATUS open_key( HKEY *retkey, HKEY root, UNICODE_STRING *name, DWORD o
     return status;
 }
 
+static NTSTATUS create_key( HKEY *retkey, HKEY root, UNICODE_STRING name, ULONG options, ACCESS_MASK access,
+                            const UNICODE_STRING *class, PULONG dispos );
+
+static NTSTATUS create_subkey( HKEY *subkey, HKEY root, UNICODE_STRING *name, DWORD options, ACCESS_MASK access,
+                               const UNICODE_STRING *class, PULONG dispos )
+{
+    ACCESS_MASK access_64 = access & ~KEY_WOW64_32KEY;
+    DWORD i = 0, len = name->Length / sizeof(WCHAR);
+    WCHAR *buffer = name->Buffer;
+    UNICODE_STRING str;
+    NTSTATUS status;
+
+    if (i < len && buffer[i] == '\\') return STATUS_OBJECT_PATH_INVALID;
+    while (i < len && buffer[i] != '\\') i++;
+
+    str.Buffer = name->Buffer;
+    str.Length = i * sizeof(WCHAR);
+
+    if (i < len)
+        options &= ~REG_OPTION_CREATE_LINK;
+
+    status = create_key( subkey, root, str, options, access_64, class, dispos );
+    if (!status)
+    {
+        while (i < len && buffer[i] == '\\') i++;
+
+        name->Buffer += i;
+        name->Length -= i * sizeof(WCHAR);
+    }
+
+    return status;
+}
+
 /* wrapper for NtCreateKey that creates the key recursively if necessary */
 static NTSTATUS create_key( HKEY *retkey, HKEY root, UNICODE_STRING name, ULONG options, ACCESS_MASK access,
                             const UNICODE_STRING *class, PULONG dispos )
 {
-    BOOL force_wow32 = is_win64 && (access & KEY_WOW64_32KEY);
     NTSTATUS status = STATUS_OBJECT_NAME_NOT_FOUND;
-    OBJECT_ATTRIBUTES attr;
-    HKEY subkey;
+    HKEY subkey, subkey_root = root;
 
-    attr.Length = sizeof(attr);
-    attr.RootDirectory = root;
-    attr.ObjectName = &name;
-    attr.Attributes = 0;
-    attr.SecurityDescriptor = NULL;
-    attr.SecurityQualityOfService = NULL;
-    if (options & REG_OPTION_OPEN_LINK) attr.Attributes |= OBJ_OPENLINK;
+    *retkey = NULL;
 
-    if (!force_wow32)
+    if (!(is_win64 && (access & KEY_WOW64_32KEY)))
     {
+        OBJECT_ATTRIBUTES attr;
+
+        attr.Length = sizeof(attr);
+        attr.RootDirectory = root;
+        attr.ObjectName = &name;
+        attr.Attributes = 0;
+        attr.SecurityDescriptor = NULL;
+        attr.SecurityQualityOfService = NULL;
+        if (options & REG_OPTION_OPEN_LINK) attr.Attributes |= OBJ_OPENLINK;
+
         status = NtCreateKey( (HANDLE *)retkey, access, &attr, 0, class, options, dispos );
         if (status == STATUS_PREDEFINED_HANDLE)
         {
@@ -257,73 +440,30 @@ static NTSTATUS create_key( HKEY *retkey, HKEY root, UNICODE_STRING name, ULONG 
             return status;
     }
 
-    status = open_key( &subkey, root, &name, options & REG_OPTION_OPEN_LINK, access, TRUE );
+    status = open_key( &subkey_root, root, &name, options & REG_OPTION_OPEN_LINK, access, TRUE );
     if (!status && (options & REG_OPTION_CREATE_LINK))
     {
-        NtClose( subkey );
+        NtClose( subkey_root );
         status = STATUS_OBJECT_NAME_COLLISION;
     }
 
     if (!status)
         if (dispos) *dispos = REG_OPENED_EXISTING_KEY;
 
-    attr.RootDirectory = subkey;
     if (status == STATUS_OBJECT_NAME_NOT_FOUND)
     {
-        DWORD attrs, i, len = name.Length / sizeof(WCHAR);
-        WCHAR *buffer = name.Buffer;
-
-        attrs = attr.Attributes;
-
-        while (len)
+        status = STATUS_SUCCESS;
+        while (!status && name.Length)
         {
-            i = 0;
-
-            /* don't try to create registry root */
-            if (!attr.RootDirectory && len > 10 && !wcsnicmp( buffer, L"\\Registry\\", 10 )) i += 10;
-            while (i < len && buffer[i] != '\\') i++;
-
-            name.Buffer = buffer;
-            name.Length = i * sizeof(WCHAR);
-
-            if (i == len)
-            {
-                attr.Attributes = attrs;
-                status = NtCreateKey( (HANDLE *)&subkey, access, &attr, 0, class, options, dispos );
-            }
-            else
-            {
-                attr.Attributes = attrs & ~OBJ_OPENLINK;
-                status = NtCreateKey( (HANDLE *)&subkey, access, &attr, 0, class,
-                                      options & ~REG_OPTION_CREATE_LINK, dispos );
-            }
-            if (attr.RootDirectory != root) NtClose( attr.RootDirectory );
-            if (!NT_SUCCESS(status)) return status;
-            attr.RootDirectory = subkey;
-            while (i < len && buffer[i] == '\\') i++;
-            buffer += i;
-            len -= i;
-
-            if (force_wow32)
-            {
-                name.Buffer = buffer;
-                name.Length = len * sizeof(WCHAR);
-                if (is_wow6432node( &name )) force_wow32 = FALSE;
-                else if ((subkey = open_wow6432node( attr.RootDirectory )))
-                {
-                    NtClose( attr.RootDirectory );
-                    attr.RootDirectory = subkey;
-                    force_wow32 = FALSE;
-                }
-            }
+            status = create_subkey( &subkey, subkey_root, &name, options, access, class, dispos );
+            if (subkey_root && subkey_root != root) NtClose( subkey_root );
+            subkey_root = subkey;
         }
     }
-    if (status == STATUS_PREDEFINED_HANDLE)
-    {
-        attr.RootDirectory = get_perflib_key( attr.RootDirectory );
-        status = STATUS_SUCCESS;
-    }
-    *retkey = attr.RootDirectory;
+
+    if (!status)
+        *retkey = subkey_root;
+
     return status;
 }
 

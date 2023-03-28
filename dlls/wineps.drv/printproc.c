@@ -18,6 +18,7 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include <math.h>
 #include <stdlib.h>
 
 #include <windows.h>
@@ -131,6 +132,138 @@ static struct pp_data* get_handle_data(HANDLE pp)
     return ret;
 }
 
+static inline INT GDI_ROUND(double val)
+{
+    return (int)floor(val + 0.5);
+}
+
+static void translate(RECT *rect, const XFORM *xform)
+{
+    double x, y;
+
+    x = rect->left;
+    y = rect->top;
+    rect->left = GDI_ROUND(x * xform->eM11 + y * xform->eM21 + xform->eDx);
+    rect->top = GDI_ROUND(x * xform->eM12 + y * xform->eM22 + xform->eDy);
+
+    x = rect->right;
+    y = rect->bottom;
+    rect->right = GDI_ROUND(x * xform->eM11 + y * xform->eM21 + xform->eDx);
+    rect->bottom = GDI_ROUND(x * xform->eM12 + y * xform->eM22 + xform->eDy);
+}
+
+static inline void get_bounding_rect(RECT *rect, int x, int y, int width, int height)
+{
+    rect->left = x;
+    rect->right = x + width;
+    rect->top = y;
+    rect->bottom = y + height;
+    if (rect->left > rect->right)
+    {
+        int tmp = rect->left;
+        rect->left = rect->right + 1;
+        rect->right = tmp + 1;
+    }
+    if (rect->top > rect->bottom)
+    {
+        int tmp = rect->top;
+        rect->top = rect->bottom + 1;
+        rect->bottom = tmp + 1;
+    }
+}
+
+static void get_vis_rectangles(HDC hdc, struct bitblt_coords *dst,
+        const XFORM *xform, DWORD width, DWORD height, struct bitblt_coords *src)
+{
+    RECT rect;
+
+    rect.left = dst->log_x;
+    rect.top = dst->log_y;
+    rect.right = dst->log_x + dst->log_width;
+    rect.bottom = dst->log_y + dst->log_height;
+    LPtoDP(hdc, (POINT *)&rect, 2);
+    dst->x = rect.left;
+    dst->y = rect.top;
+    dst->width = rect.right - rect.left;
+    dst->height = rect.bottom - rect.top;
+    if (dst->layout & LAYOUT_RTL && dst->layout & LAYOUT_BITMAPORIENTATIONPRESERVED)
+    {
+        dst->x += dst->width;
+        dst->width = -dst->width;
+    }
+    get_bounding_rect(&rect, dst->x, dst->y, dst->width, dst->height);
+    dst->visrect = rect;
+
+    if (!src) return;
+
+    rect.left   = src->log_x;
+    rect.top    = src->log_y;
+    rect.right  = src->log_x + src->log_width;
+    rect.bottom = src->log_y + src->log_height;
+    translate(&rect, xform);
+    src->x      = rect.left;
+    src->y      = rect.top;
+    src->width  = rect.right - rect.left;
+    src->height = rect.bottom - rect.top;
+    get_bounding_rect( &rect, src->x, src->y, src->width, src->height );
+    src->visrect = rect;
+}
+
+static int stretch_blt(PHYSDEV dev, const EMRSTRETCHBLT *blt,
+        const BITMAPINFO *bi, const BYTE *src_bits)
+{
+    char dst_buffer[FIELD_OFFSET(BITMAPINFO, bmiColors[256])];
+    BITMAPINFO *dst_info = (BITMAPINFO *)dst_buffer;
+    struct bitblt_coords src, dst;
+    struct gdi_image_bits bits;
+    DWORD err;
+
+    dst.log_x = blt->xDest;
+    dst.log_y = blt->yDest;
+    dst.log_width = blt->cxDest;
+    dst.log_height = blt->cyDest;
+    dst.layout = GetLayout(dev->hdc);
+    if (blt->dwRop & NOMIRRORBITMAP)
+        dst.layout |= LAYOUT_BITMAPORIENTATIONPRESERVED;
+
+    if (!blt->cbBmiSrc)
+    {
+        get_vis_rectangles(dev->hdc, &dst, NULL, 0, 0, NULL);
+        return PSDRV_PatBlt(dev, &dst, blt->dwRop);
+    }
+
+    src.log_x = blt->xSrc;
+    src.log_y = blt->ySrc;
+    src.log_width = blt->cxSrc;
+    src.log_height = blt->cySrc;
+    src.layout = 0;
+
+    get_vis_rectangles(dev->hdc, &dst, &blt->xformSrc,
+            bi->bmiHeader.biWidth, bi->bmiHeader.biHeight, &src);
+
+    memcpy(dst_info, bi, blt->cbBmiSrc);
+    memset(&bits, 0, sizeof(bits));
+    bits.ptr = (BYTE *)src_bits;
+    err = PSDRV_PutImage(dev, 0, dst_info, &bits, &src, &dst, blt->dwRop);
+    if (err == ERROR_BAD_FORMAT)
+    {
+        HDC hdc = CreateCompatibleDC(NULL);
+        HBITMAP bitmap;
+
+        bits.is_copy = TRUE;
+        bitmap = CreateDIBSection(hdc, dst_info, DIB_RGB_COLORS, &bits.ptr, NULL, 0);
+        SetDIBits(hdc, bitmap, 0, bi->bmiHeader.biHeight, src_bits, bi, blt->iUsageSrc);
+
+        err = PSDRV_PutImage(dev, 0, dst_info, &bits, &src, &dst, blt->dwRop);
+        DeleteObject(bitmap);
+        DeleteObject(hdc);
+    }
+
+    if (err != ERROR_SUCCESS)
+        FIXME("PutImage returned %ld\n", err);
+    return !err;
+}
+
 static int WINAPI hmf_proc(HDC hdc, HANDLETABLE *htable,
         const ENHMETARECORD *rec, int n, LPARAM arg)
 {
@@ -242,6 +375,32 @@ static int WINAPI hmf_proc(HDC hdc, HANDLETABLE *htable,
             return 1;
         }
     }
+    case EMR_ANGLEARC:
+    {
+        const EMRANGLEARC *p = (const EMRANGLEARC *)rec;
+        int arc_dir = SetArcDirection(data->pdev->dev.hdc,
+                p->eSweepAngle >= 0 ? AD_COUNTERCLOCKWISE : AD_CLOCKWISE);
+        EMRARCTO arcto;
+        int ret;
+
+        arcto.emr.iType = EMR_ARCTO;
+        arcto.rclBox.left = p->ptlCenter.x - p->nRadius;
+        arcto.rclBox.top = p->ptlCenter.y - p->nRadius;
+        arcto.rclBox.right = p->ptlCenter.x + p->nRadius;
+        arcto.rclBox.bottom = p->ptlCenter.y + p->nRadius;
+        arcto.ptlStart.x = GDI_ROUND(p->ptlCenter.x +
+                cos(p->eStartAngle * M_PI / 180) * p->nRadius);
+        arcto.ptlStart.y = GDI_ROUND(p->ptlCenter.y -
+                sin(p->eStartAngle * M_PI / 180) * p->nRadius);
+        arcto.ptlEnd.x = GDI_ROUND(p->ptlCenter.x +
+                cos((p->eStartAngle + p->eSweepAngle) * M_PI / 180) * p->nRadius);
+        arcto.ptlEnd.y = GDI_ROUND(p->ptlCenter.y -
+                sin((p->eStartAngle + p->eSweepAngle) * M_PI / 180) * p->nRadius);
+
+        ret = hmf_proc(hdc, htable, (ENHMETARECORD *)&arcto, n, arg);
+        SetArcDirection(data->pdev->dev.hdc, arc_dir);
+        return ret;
+    }
     case EMR_ELLIPSE:
     {
         const EMRELLIPSE *p = (const EMRELLIPSE *)rec;
@@ -323,6 +482,52 @@ static int WINAPI hmf_proc(HDC hdc, HANDLETABLE *htable,
                     p->ptlEnd.y, p->ptlEnd.x, p->ptlEnd.y);
         }
         return ret;
+    }
+    case EMR_PAINTRGN:
+    {
+        const EMRPAINTRGN *p = (const EMRPAINTRGN *)rec;
+        HRGN rgn = ExtCreateRegion(NULL, p->cbRgnData, (const RGNDATA *)p->RgnData);
+        int ret;
+
+        ret = PSDRV_PaintRgn(&data->pdev->dev, rgn);
+        DeleteObject(rgn);
+        return ret;
+    }
+    case EMR_BITBLT:
+    {
+        const EMRBITBLT *p = (const EMRBITBLT *)rec;
+        const BITMAPINFO *bi = (const BITMAPINFO *)((BYTE *)p + p->offBmiSrc);
+        const BYTE *src_bits = (BYTE *)p + p->offBitsSrc;
+        EMRSTRETCHBLT blt;
+
+
+        blt.rclBounds = p->rclBounds;
+        blt.xDest = p->xDest;
+        blt.yDest = p->yDest;
+        blt.cxDest = p->cxDest;
+        blt.cyDest = p->cyDest;
+        blt.dwRop = p->dwRop;
+        blt.xSrc = p->xSrc;
+        blt.ySrc = p->ySrc;
+        blt.xformSrc = p->xformSrc;
+        blt.crBkColorSrc = p->crBkColorSrc;
+        blt.iUsageSrc = p->iUsageSrc;
+        blt.offBmiSrc = p->offBmiSrc;
+        blt.cbBmiSrc = p->cbBmiSrc;
+        blt.offBitsSrc = p->offBitsSrc;
+        blt.cbBitsSrc = p->cbBitsSrc;
+        blt.cxSrc = p->cxDest;
+        blt.cySrc = p->cyDest;
+
+        return stretch_blt(&data->pdev->dev, &blt, bi, src_bits);
+    }
+    case EMR_STRETCHBLT:
+    {
+        const EMRSTRETCHBLT *p = (const EMRSTRETCHBLT *)rec;
+        const BITMAPINFO *bi = (const BITMAPINFO *)((BYTE *)p + p->offBmiSrc);
+        const BYTE *src_bits = (BYTE *)p + p->offBitsSrc;
+
+        return stretch_blt(&data->pdev->dev, p, bi, src_bits);
     }
     case EMR_POLYBEZIER16:
     {
@@ -471,9 +676,15 @@ static int WINAPI hmf_proc(HDC hdc, HANDLETABLE *htable,
         return 1;
     }
 
+    case EMR_SETWINDOWEXTEX:
+    case EMR_SETWINDOWORGEX:
+    case EMR_SETVIEWPORTEXTEX:
+    case EMR_SETVIEWPORTORGEX:
+    case EMR_SETBRUSHORGEX:
     case EMR_MOVETOEX:
     case EMR_SETWORLDTRANSFORM:
     case EMR_MODIFYWORLDTRANSFORM:
+    case EMR_SETARCDIRECTION:
         return PlayEnhMetaFileRecord(data->pdev->dev.hdc, htable, rec, n);
     default:
         FIXME("unsupported record: %ld\n", rec->iType);

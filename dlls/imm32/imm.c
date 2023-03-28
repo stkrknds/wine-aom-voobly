@@ -564,10 +564,46 @@ static void ime_release( struct ime *ime )
     LeaveCriticalSection( &ime_cs );
 }
 
+static void imc_select_hkl( struct imc *imc, HKL hkl )
+{
+    if (imc->ime)
+    {
+        if (imc->ime->hkl == hkl) return;
+        imc->ime->pImeSelect( imc->handle, FALSE );
+        ime_release( imc->ime );
+        ImmDestroyIMCC( imc->IMC.hPrivate );
+    }
+
+    if (!hkl)
+        imc->ime = NULL;
+    else if (!(imc->ime = ime_acquire( hkl )))
+        WARN( "Failed to acquire IME for HKL %p\n", hkl );
+    else
+    {
+        if (!(imc->IMC.hPrivate = ImmCreateIMCC( imc->ime->info.dwPrivateDataSize )))
+            WARN( "Failed to allocate IME private data for IMC %p\n", imc );
+        imc->IMC.fdwConversion = imc->ime->info.fdwConversionCaps;
+        imc->IMC.fdwSentence = imc->ime->info.fdwSentenceCaps;
+        imc->ime->pImeSelect( imc->handle, TRUE );
+    }
+}
+
+static BOOL CALLBACK enum_activate_layout( HIMC himc, LPARAM lparam )
+{
+    if (ImmLockIMC( himc )) ImmUnlockIMC( himc );
+    return TRUE;
+}
+
 BOOL WINAPI ImmActivateLayout( HKL hkl )
 {
-    FIXME( "hkl %p stub!\n", hkl );
-    return FALSE;
+    TRACE( "hkl %p\n", hkl );
+
+    if (hkl == GetKeyboardLayout( 0 )) return TRUE;
+    if (!ActivateKeyboardLayout( hkl, 0 )) return FALSE;
+
+    ImmEnumInputContext( 0, enum_activate_layout, 0 );
+
+    return TRUE;
 }
 
 static BOOL free_input_context_data( HIMC hIMC )
@@ -843,15 +879,7 @@ static struct imc *create_input_context( HIMC default_imc )
     LPCANDIDATEINFO ci;
     int i;
 
-    new_context = calloc( 1, sizeof(*new_context) );
-
-    /* Load the IME */
-    if (!(new_context->ime = ime_acquire( GetKeyboardLayout( 0 ) )))
-    {
-        TRACE("IME dll could not be loaded\n");
-        free( new_context );
-        return 0;
-    }
+    if (!(new_context = calloc( 1, sizeof(*new_context) ))) return NULL;
 
     /* the HIMCCs are never NULL */
     new_context->IMC.hCompStr = ImmCreateBlankCompStr();
@@ -870,12 +898,6 @@ static struct imc *create_input_context( HIMC default_imc )
     for (i = 0; i < ARRAY_SIZE(new_context->IMC.cfCandForm); i++)
         new_context->IMC.cfCandForm[i].dwIndex = ~0u;
 
-    /* Initialize the IME Private */
-    new_context->IMC.hPrivate = ImmCreateIMCC( new_context->ime->info.dwPrivateDataSize );
-
-    new_context->IMC.fdwConversion = new_context->ime->info.fdwConversionCaps;
-    new_context->IMC.fdwSentence = new_context->ime->info.fdwSentenceCaps;
-
     if (!default_imc)
         new_context->handle = NtUserCreateInputContext((UINT_PTR)new_context);
     else if (NtUserUpdateInputContext(default_imc, NtUserInputContextClientPtr, (UINT_PTR)new_context))
@@ -886,12 +908,7 @@ static struct imc *create_input_context( HIMC default_imc )
         return 0;
     }
 
-    if (!new_context->ime->pImeSelect( new_context->handle, TRUE ))
-    {
-        TRACE("Selection of IME failed\n");
-        IMM_DestroyContext(new_context);
-        return 0;
-    }
+    imc_select_hkl( new_context, GetKeyboardLayout( 0 ) );
     SendMessageW( GetFocus(), WM_IME_SELECT, TRUE, (LPARAM)new_context->ime );
 
     TRACE("Created context %p\n", new_context);
@@ -2012,13 +2029,31 @@ HKL WINAPI ImmInstallIMEA( const char *filenameA, const char *descriptionA )
     return hkl;
 }
 
+static LCID get_ime_file_lang( const WCHAR *filename )
+{
+    DWORD *languages;
+    LCID lcid = 0;
+    void *info;
+    UINT len;
+
+    if (!(len = GetFileVersionInfoSizeW( filename, NULL ))) return 0;
+    if (!(info = malloc( len ))) goto done;
+    if (!GetFileVersionInfoW( filename, 0, len, info )) goto done;
+    if (!VerQueryValueW( info, L"\\VarFileInfo\\Translation", (void **)&languages, &len ) || !len) goto done;
+    lcid = languages[0];
+
+done:
+    free( info );
+    return lcid;
+}
+
 /***********************************************************************
  *		ImmInstallIMEW (IMM32.@)
  */
 HKL WINAPI ImmInstallIMEW( const WCHAR *filename, const WCHAR *description )
 {
     WCHAR path[ARRAY_SIZE(layouts_formatW)+8], buffer[MAX_PATH];
-    LCID lcid = GetUserDefaultLCID();
+    LCID lcid;
     WORD count = 0x20;
     const WCHAR *tmp;
     DWORD length;
@@ -2027,7 +2062,7 @@ HKL WINAPI ImmInstallIMEW( const WCHAR *filename, const WCHAR *description )
 
     TRACE( "filename %s, description %s\n", debugstr_w(filename), debugstr_w(description) );
 
-    if (!filename || !description)
+    if (!filename || !description || !(lcid = get_ime_file_lang( filename )))
     {
         SetLastError( ERROR_INVALID_PARAMETER );
         return 0;
@@ -2037,8 +2072,8 @@ HKL WINAPI ImmInstallIMEW( const WCHAR *filename, const WCHAR *description )
     {
         DWORD disposition = 0;
 
-        hkl = (HKL)MAKELPARAM( lcid, 0xe000 | count );
-        swprintf( path, ARRAY_SIZE(path), layouts_formatW, (ULONG_PTR)hkl);
+        hkl = (HKL)(UINT_PTR)MAKELONG( lcid, 0xe000 | count );
+        swprintf( path, ARRAY_SIZE(path), layouts_formatW, (ULONG)(ULONG_PTR)hkl);
         if (!RegCreateKeyExW( HKEY_LOCAL_MACHINE, path, 0, NULL, 0,
                               KEY_WRITE, NULL, &hkey, &disposition ))
         {
@@ -2794,14 +2829,17 @@ DWORD WINAPI ImmGetImeMenuItemsW( HIMC himc, DWORD flags, DWORD type, IMEMENUITE
 /***********************************************************************
 *		ImmLockIMC(IMM32.@)
 */
-LPINPUTCONTEXT WINAPI ImmLockIMC(HIMC hIMC)
+INPUTCONTEXT *WINAPI ImmLockIMC( HIMC himc )
 {
-    struct imc *data = get_imc_data( hIMC );
+    struct imc *imc = get_imc_data( himc );
 
-    if (!data)
-        return NULL;
-    data->dwLock++;
-    return &data->IMC;
+    TRACE( "himc %p\n", himc );
+
+    if (!imc) return NULL;
+    imc->dwLock++;
+
+    imc_select_hkl( imc, GetKeyboardLayout( 0 ) );
+    return &imc->IMC;
 }
 
 /***********************************************************************
@@ -2996,20 +3034,8 @@ BOOL WINAPI ImmProcessKey(HWND hwnd, HKL hKL, UINT vKey, LPARAM lKeyData, DWORD 
     TRACE("%p %p %x %x %lx\n",hwnd, hKL, vKey, (UINT)lKeyData, unknown);
 
     if (!(data = get_imc_data( imc ))) return FALSE;
-
-    /* Make sure we are inputting to the correct keyboard */
-    if (data->ime->hkl != hKL)
-    {
-        struct ime *new_hkl;
-
-        if (!(new_hkl = ime_acquire( hKL ))) return FALSE;
-
-        data->ime->pImeSelect( imc, FALSE );
-        ime_release( data->ime );
-
-        data->ime = new_hkl;
-        data->ime->pImeSelect( imc, TRUE );
-    }
+    imc_select_hkl( data, hKL );
+    if (!data->ime) return FALSE;
 
     GetKeyboardState(state);
     if (data->ime->pImeProcessKey( imc, vKey, lKeyData, state ))
