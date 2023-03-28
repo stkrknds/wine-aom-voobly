@@ -151,6 +151,45 @@ static int WINAPI hmf_proc(HDC hdc, HANDLETABLE *htable,
 
         return PSDRV_PolyBezier(&data->pdev->dev, (const POINT *)p->aptl, p->cptl);
     }
+    case EMR_POLYGON:
+    {
+        const EMRPOLYGON *p = (const EMRPOLYGON *)rec;
+
+        return PSDRV_PolyPolygon(&data->pdev->dev, (const POINT *)p->aptl,
+                (const INT *)&p->cptl, 1);
+    }
+    case EMR_POLYLINE:
+    {
+        const EMRPOLYLINE *p = (const EMRPOLYLINE *)rec;
+
+        return PSDRV_PolyPolyline(&data->pdev->dev,
+                (const POINT *)p->aptl, &p->cptl, 1);
+    }
+    case EMR_POLYBEZIERTO:
+    {
+        const EMRPOLYBEZIERTO *p = (const EMRPOLYBEZIERTO *)rec;
+
+        return PSDRV_PolyBezierTo(&data->pdev->dev, (const POINT *)p->aptl, p->cptl) &&
+            MoveToEx(data->pdev->dev.hdc, p->aptl[p->cptl - 1].x, p->aptl[p->cptl - 1].y, NULL);
+    }
+    case EMR_POLYLINETO:
+    {
+        const EMRPOLYLINETO *p = (const EMRPOLYLINETO *)rec;
+        POINT *pts;
+        DWORD cnt;
+        int ret;
+
+        cnt = p->cptl + 1;
+        pts = malloc(sizeof(*pts) * cnt);
+        if (!pts) return 0;
+
+        GetCurrentPositionEx(data->pdev->dev.hdc, pts);
+        memcpy(pts + 1, p->aptl, sizeof(*pts) * p->cptl);
+        ret = PSDRV_PolyPolyline(&data->pdev->dev, pts, &cnt, 1) &&
+            MoveToEx(data->pdev->dev.hdc, pts[cnt - 1].x, pts[cnt - 1].y, NULL);
+        free(pts);
+        return ret;
+    }
     case EMR_POLYPOLYLINE:
     {
         const EMRPOLYPOLYLINE *p = (const EMRPOLYPOLYLINE *)rec;
@@ -255,6 +294,159 @@ static int WINAPI hmf_proc(HDC hdc, HANDLETABLE *htable,
 
         return PSDRV_LineTo(&data->pdev->dev, line->ptl.x, line->ptl.y) &&
             MoveToEx(data->pdev->dev.hdc, line->ptl.x, line->ptl.y, NULL);
+    }
+    case EMR_ARCTO:
+    {
+        const EMRARCTO *p = (const EMRARCTO *)rec;
+        POINT pt;
+        BOOL ret;
+
+        ret = GetCurrentPositionEx(data->pdev->dev.hdc, &pt);
+        if (ret)
+        {
+            ret = ArcTo(data->pdev->dev.hdc, p->rclBox.left, p->rclBox.top,
+                    p->rclBox.right, p->rclBox.bottom, p->ptlStart.x,
+                    p->ptlStart.y, p->ptlStart.x, p->ptlStart.y);
+        }
+        if (ret)
+            ret = PSDRV_LineTo(&data->pdev->dev, pt.x, pt.y);
+        if (ret)
+        {
+            ret = PSDRV_Arc(&data->pdev->dev, p->rclBox.left, p->rclBox.top,
+                    p->rclBox.right, p->rclBox.bottom, p->ptlStart.x,
+                    p->ptlStart.y, p->ptlEnd.x, p->ptlEnd.y);
+        }
+        if (ret)
+        {
+            ret = ArcTo(data->pdev->dev.hdc, p->rclBox.left, p->rclBox.top,
+                    p->rclBox.right, p->rclBox.bottom, p->ptlEnd.x,
+                    p->ptlEnd.y, p->ptlEnd.x, p->ptlEnd.y);
+        }
+        return ret;
+    }
+    case EMR_POLYBEZIER16:
+    {
+        const EMRPOLYBEZIER16 *p = (const EMRPOLYBEZIER16 *)rec;
+        POINT *pts;
+        int i;
+
+        pts = malloc(sizeof(*pts) * p->cpts);
+        if (!pts) return 0;
+        for (i = 0; i < p->cpts; i++)
+        {
+            pts[i].x = p->apts[i].x;
+            pts[i].y = p->apts[i].y;
+        }
+        i = PSDRV_PolyBezier(&data->pdev->dev, pts, p->cpts);
+        free(pts);
+        return i;
+    }
+    case EMR_POLYGON16:
+    {
+        const EMRPOLYGON16 *p = (const EMRPOLYGON16 *)rec;
+        POINT *pts;
+        int i;
+
+        pts = malloc(sizeof(*pts) * p->cpts);
+        if (!pts) return 0;
+        for (i = 0; i < p->cpts; i++)
+        {
+            pts[i].x = p->apts[i].x;
+            pts[i].y = p->apts[i].y;
+        }
+        i = PSDRV_PolyPolygon(&data->pdev->dev, pts, (const INT *)&p->cpts, 1);
+        free(pts);
+        return i;
+    }
+    case EMR_POLYLINE16:
+    {
+        const EMRPOLYLINE16 *p = (const EMRPOLYLINE16 *)rec;
+        POINT *pts;
+        int i;
+
+        pts = malloc(sizeof(*pts) * p->cpts);
+        if (!pts) return 0;
+        for (i = 0; i < p->cpts; i++)
+        {
+            pts[i].x = p->apts[i].x;
+            pts[i].y = p->apts[i].y;
+        }
+        i = PSDRV_PolyPolyline(&data->pdev->dev, pts, &p->cpts, 1);
+        free(pts);
+        return i;
+    }
+    case EMR_POLYBEZIERTO16:
+    {
+        const EMRPOLYBEZIERTO16 *p = (const EMRPOLYBEZIERTO16 *)rec;
+        POINT *pts;
+        int i;
+
+        pts = malloc(sizeof(*pts) * p->cpts);
+        if (!pts) return 0;
+        for (i = 0; i < p->cpts; i++)
+        {
+            pts[i].x = p->apts[i].x;
+            pts[i].y = p->apts[i].y;
+        }
+        i = PSDRV_PolyBezierTo(&data->pdev->dev, pts, p->cpts) &&
+            MoveToEx(data->pdev->dev.hdc, pts[p->cpts - 1].x, pts[p->cpts - 1].y, NULL);
+        free(pts);
+        return i;
+    }
+    case EMR_POLYLINETO16:
+    {
+        const EMRPOLYLINETO16 *p = (const EMRPOLYLINETO16 *)rec;
+        POINT *pts;
+        DWORD cnt;
+        int i;
+
+        cnt = p->cpts + 1;
+        pts = malloc(sizeof(*pts) * cnt);
+        if (!pts) return 0;
+        GetCurrentPositionEx(data->pdev->dev.hdc, pts);
+        for (i = 0; i < p->cpts; i++)
+        {
+            pts[i + 1].x = p->apts[i].x;
+            pts[i + 1].y = p->apts[i].y;
+        }
+        i = PSDRV_PolyPolyline(&data->pdev->dev, pts, &cnt, 1) &&
+            MoveToEx(data->pdev->dev.hdc, pts[cnt - 1].x, pts[cnt - 1].y, NULL);
+        free(pts);
+        return i;
+    }
+    case EMR_POLYPOLYLINE16:
+    {
+        const EMRPOLYPOLYLINE16 *p = (const EMRPOLYPOLYLINE16 *)rec;
+        POINT *pts;
+        int i;
+
+        pts = malloc(sizeof(*pts) * p->cpts);
+        if (!pts) return 0;
+        for (i = 0; i < p->cpts; i++)
+        {
+            pts[i].x = ((const POINTS *)(p->aPolyCounts + p->nPolys))[i].x;
+            pts[i].y = ((const POINTS *)(p->aPolyCounts + p->nPolys))[i].y;
+        }
+        i = PSDRV_PolyPolyline(&data->pdev->dev, pts, p->aPolyCounts, p->nPolys);
+        free(pts);
+        return i;
+    }
+    case EMR_POLYPOLYGON16:
+    {
+        const EMRPOLYPOLYGON16 *p = (const EMRPOLYPOLYGON16 *)rec;
+        POINT *pts;
+        int i;
+
+        pts = malloc(sizeof(*pts) * p->cpts);
+        if (!pts) return 0;
+        for (i = 0; i < p->cpts; i++)
+        {
+            pts[i].x = ((const POINTS *)(p->aPolyCounts + p->nPolys))[i].x;
+            pts[i].y = ((const POINTS *)(p->aPolyCounts + p->nPolys))[i].y;
+        }
+        i = PSDRV_PolyPolygon(&data->pdev->dev, pts, (const INT *)p->aPolyCounts, p->nPolys);
+        free(pts);
+        return i;
     }
     case EMR_CREATEMONOBRUSH:
     {

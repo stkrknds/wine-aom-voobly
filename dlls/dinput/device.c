@@ -1785,7 +1785,8 @@ static HRESULT WINAPI dinput_device_WriteEffectToFile( IDirectInputDevice8W *ifa
     return DI_OK;
 }
 
-static BOOL object_matches_semantic( const DIOBJECTDATAFORMAT *object, DWORD semantic, BOOL exact )
+BOOL device_object_matches_semantic( const DIDEVICEINSTANCEW *instance, const DIOBJECTDATAFORMAT *object,
+                                     DWORD semantic, BOOL exact )
 {
     DWORD value = semantic & 0xff, axis = (semantic >> 15) & 3, type;
 
@@ -1799,7 +1800,15 @@ static BOOL object_matches_semantic( const DIOBJECTDATAFORMAT *object, DWORD sem
     }
 
     if (!(DIDFT_GETTYPE( object->dwType ) & type)) return FALSE;
-    if ((semantic & 0xf0000000) == 0x80000000) return object->dwOfs == value;
+    if ((semantic & 0xf0000000) == 0x80000000)
+    {
+        switch (semantic & 0x0f000000)
+        {
+        case 0x01000000: return (instance->dwDevType & 0xf) == DIDEVTYPE_KEYBOARD && object->dwOfs == value;
+        case 0x02000000: return (instance->dwDevType & 0xf) == DIDEVTYPE_MOUSE && object->dwOfs == value;
+        default: return FALSE;
+        }
+    }
     if (axis && (axis - 1) != DIDFT_GETINSTANCE( object->dwType )) return FALSE;
     return !exact || !value || value == DIDFT_GETINSTANCE( object->dwType ) + 1;
 }
@@ -1812,10 +1821,9 @@ static HRESULT WINAPI dinput_device_BuildActionMap( IDirectInputDevice8W *iface,
     DIACTIONW *action, *action_end;
     DWORD i, username_len = MAX_PATH;
     WCHAR username_buf[MAX_PATH];
-    BOOL load_success = FALSE;
     BOOL *mapped;
 
-    FIXME( "iface %p, format %p, username %s, flags %#lx stub!\n", iface, format,
+    TRACE( "iface %p, format %p, username %s, flags %#lx\n", iface, format,
            debugstr_w(username), flags );
 
     if (!format) return DIERR_INVALIDPARAM;
@@ -1825,17 +1833,24 @@ static HRESULT WINAPI dinput_device_BuildActionMap( IDirectInputDevice8W *iface,
     if (format->dwNumActions * 4 != format->dwDataSize)
         return DIERR_INVALIDPARAM;
 
+    TRACE( "format guid %s, genre %#lx, name %s\n", debugstr_guid(&format->guidActionMap),
+           format->dwGenre, debugstr_w(format->tszActionMap) );
+    for (i = 0; i < format->dwNumActions; i++)
+    {
+        DIACTIONW *action = format->rgoAction + i;
+        TRACE( "  %lu: app_data %#Ix, semantic %#lx, flags %#lx, instance %s, obj_id %#lx, how %#lx, name %s\n",
+               i, action->uAppData, action->dwSemantic, action->dwFlags, debugstr_guid(&action->guidInstance),
+               action->dwObjID, action->dwHow, debugstr_w(action->lptszActionName) );
+    }
+
     action_end = format->rgoAction + format->dwNumActions;
     for (action = format->rgoAction; action < action_end; action++)
     {
         if (!action->dwSemantic) return DIERR_INVALIDPARAM;
+        if (flags == DIDBAM_PRESERVE && !IsEqualCLSID( &action->guidInstance, &GUID_NULL ) &&
+            !IsEqualCLSID( &action->guidInstance, &impl->guid )) continue;
         if (action->dwFlags & DIA_APPMAPPED) action->dwHow = DIAH_APPREQUESTED;
-        else if (action->dwFlags & DIA_APPNOMAP) continue;
-        else
-        {
-            action->dwHow = 0;
-            action->guidInstance = GUID_NULL;
-        }
+        else action->dwHow = 0;
     }
 
     /* Unless asked the contrary by these flags, try to load a previous mapping */
@@ -1844,10 +1859,20 @@ static HRESULT WINAPI dinput_device_BuildActionMap( IDirectInputDevice8W *iface,
         /* Retrieve logged user name if necessary */
         if (username == NULL) GetUserNameW( username_buf, &username_len );
         else lstrcpynW( username_buf, username, MAX_PATH );
-        load_success = load_mapping_settings( impl, format, username_buf );
+        load_mapping_settings( impl, format, username_buf );
     }
 
-    if (load_success) return DI_OK;
+    action_end = format->rgoAction + format->dwNumActions;
+    for (action = format->rgoAction; action < action_end; action++)
+    {
+        if (action->dwHow == DIAH_APPREQUESTED || action->dwHow == DIAH_USERCONFIG) continue;
+        if (flags == DIDBAM_PRESERVE && !IsEqualCLSID( &action->guidInstance, &GUID_NULL ) &&
+            !IsEqualCLSID( &action->guidInstance, &impl->guid )) continue;
+        if (action->dwFlags & DIA_APPNOMAP) continue;
+        action->guidInstance = GUID_NULL;
+        action->dwHow = 0;
+    }
+
     if (!(mapped = calloc( impl->device_format.dwNumObjs, sizeof(*mapped) ))) return DIERR_OUTOFMEMORY;
 
     action_end = format->rgoAction + format->dwNumActions;
@@ -1860,7 +1885,7 @@ static HRESULT WINAPI dinput_device_BuildActionMap( IDirectInputDevice8W *iface,
         for (object = impl->device_format.rgodf; object < object_end; object++)
         {
             if (mapped[object - impl->device_format.rgodf]) continue;
-            if (!object_matches_semantic( object, action->dwSemantic, TRUE )) continue;
+            if (!device_object_matches_semantic( &impl->instance, object, action->dwSemantic, TRUE )) continue;
             if ((action->dwFlags & DIA_FORCEFEEDBACK) && !(object->dwType & DIDFT_FFACTUATOR)) continue;
             action->dwObjID = object->dwType;
             action->guidInstance = impl->guid;
@@ -1879,7 +1904,7 @@ static HRESULT WINAPI dinput_device_BuildActionMap( IDirectInputDevice8W *iface,
         for (object = impl->device_format.rgodf; object < object_end; object++)
         {
             if (mapped[object - impl->device_format.rgodf]) continue;
-            if (!object_matches_semantic( object, action->dwSemantic, FALSE )) continue;
+            if (!device_object_matches_semantic( &impl->instance, object, action->dwSemantic, FALSE )) continue;
             if ((action->dwFlags & DIA_FORCEFEEDBACK) && !(object->dwType & DIDFT_FFACTUATOR)) continue;
             action->dwObjID = object->dwType;
             action->guidInstance = impl->guid;
@@ -1968,11 +1993,21 @@ static HRESULT WINAPI dinput_device_SetActionMap( IDirectInputDevice8W *iface, D
     int i, index;
     HRESULT hr;
 
-    FIXME( "iface %p, format %p, username %s, flags %#lx stub!\n", iface, format,
+    TRACE( "iface %p, format %p, username %s, flags %#lx\n", iface, format,
            debugstr_w(username), flags );
 
     if (!format) return DIERR_INVALIDPARAM;
     if (flags != DIDSAM_DEFAULT && flags != DIDSAM_FORCESAVE && flags != DIDSAM_NOUSER) return DIERR_INVALIDPARAM;
+
+    TRACE( "format guid %s, genre %#lx, name %s\n", debugstr_guid(&format->guidActionMap),
+           format->dwGenre, debugstr_w(format->tszActionMap) );
+    for (i = 0; i < format->dwNumActions; i++)
+    {
+        DIACTIONW *action = format->rgoAction + i;
+        TRACE( "  %u: app_data %#Ix, semantic %#lx, flags %#lx, instance %s, obj_id %#lx, how %#lx, name %s\n",
+               i, action->uAppData, action->dwSemantic, action->dwFlags, debugstr_guid(&action->guidInstance),
+               action->dwObjID, action->dwHow, debugstr_w(action->lptszActionName) );
+    }
 
     if (!(data_format.rgodf = malloc( sizeof(DIOBJECTDATAFORMAT) * format->dwNumActions ))) return DIERR_OUTOFMEMORY;
     data_format.dwDataSize = format->dwDataSize;

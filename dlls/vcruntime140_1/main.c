@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Rémi Bernon for CodeWeavers
+ * Copyright 2023 Piotr Caban for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -16,13 +16,27 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#pragma makedep testdll
+#include <corecrt.h>
 
-#define WINE_LANGID 047f /* LANG_INVARIANT/SUBLANG_DEFAULT */
-#define WINE_FILETYPE VFT_DRV
-#define WINE_FILESUBTYPE VFT2_DRV_INPUTMETHOD
-#define WINE_FILENAME "ime_wrapper"
-#define WINE_FILENAME_STR "ime_wrapper.dll"
-#define WINE_FILEDESCRIPTION_STR "WineTest IME"
+#if defined(__x86_64__) && _MSVCR_VER>=140
 
-#include "wine/wine_common_ver.rc"
+#include "msvcrt.h"
+
+BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, VOID *reserved)
+{
+  switch (reason)
+  {
+  case DLL_PROCESS_ATTACH:
+      return msvcrt_init_handler4();
+  case DLL_THREAD_ATTACH:
+      msvcrt_attach_handler4();
+      break;
+  case DLL_PROCESS_DETACH:
+      if (reserved) break;
+      msvcrt_free_handler4();
+      break;
+  }
+  return TRUE;
+}
+
+#endif
