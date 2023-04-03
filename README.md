@@ -25,12 +25,12 @@ This will install wine in /opt/wine-aom-voobly. Once installed, use it as:
 ```
 
 ### Other distributions
-1) Download the latest .tar.xz file(e.g. wine-aom-voobly-8.5-1.tar.xz) in [Releases](https://github.com/stkrknds/wine-aom-voobly/releases/latest).
+1) Download the latest .tar.xz file(e.g. wine-aom-voobly-8.5-1-x86_64.tar.xz) in [Releases](https://github.com/stkrknds/wine-aom-voobly/releases/latest).
 
 2) Extract to a location:
 
 ```
-tar -xf wine-aom-voobly-8.5-1.tar.xz
+tar -xf wine-aom-voobly-8.5-1-x86_64.tar.xz
 ```
 
 3) Use the Wine as:
