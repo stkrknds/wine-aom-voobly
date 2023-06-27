@@ -198,8 +198,7 @@ typedef struct DC_ATTR
     RECTL     emf_bounds;
     UINT64    emf;                 /* client EMF record pointer */
     UINT64    abort_proc;          /* AbortProc for printing */
-    UINT64    hspool;
-    UINT64    output;
+    UINT64    print;               /* client printer info pointer */
 } DC_ATTR;
 
 struct font_enum_entry
@@ -251,9 +250,9 @@ INT      WINAPI NtGdiAddFontResourceW( const WCHAR *str, ULONG size, ULONG files
                                        DWORD tid, void *dv );
 BOOL     WINAPI NtGdiAlphaBlend( HDC hdc_dst, int x_dst, int y_dst, int width_dst, int height_dst,
                                  HDC hdc_src, int x_src, int y_src, int width_src, int height_src,
-                                 BLENDFUNCTION blend_function, HANDLE xform );
-BOOL     WINAPI NtGdiAngleArc( HDC hdc, INT x, INT y, DWORD radius, FLOAT start_angle,
-                               FLOAT sweep_angle );
+                                 DWORD blend_function, HANDLE xform );
+BOOL     WINAPI NtGdiAngleArc( HDC hdc, INT x, INT y, DWORD radius, DWORD start_angle,
+                               DWORD sweep_angle );
 BOOL     WINAPI NtGdiArcInternal( UINT type, HDC hdc, INT left, INT top, INT right, INT bottom,
                                   INT xstart, INT ystart, INT xend, INT yend );
 BOOL     WINAPI NtGdiBeginPath( HDC hdc );
@@ -352,7 +351,7 @@ DWORD    WINAPI NtGdiGetGlyphOutline( HDC hdc, UINT ch, UINT format, GLYPHMETRIC
                                       DWORD size, void *buffer, const MAT2 *mat2,
                                       BOOL ignore_rotation );
 DWORD    WINAPI NtGdiGetKerningPairs( HDC hdc, DWORD count, KERNINGPAIR *kern_pair );
-BOOL     WINAPI NtGdiGetMiterLimit( HDC hdc, FLOAT *limit );
+BOOL     WINAPI NtGdiGetMiterLimit( HDC hdc, DWORD *limit );
 COLORREF WINAPI NtGdiGetNearestColor( HDC hdc, COLORREF color );
 UINT     WINAPI NtGdiGetNearestPaletteIndex( HPALETTE hpalette, COLORREF color );
 UINT     WINAPI NtGdiGetOutlineTextMetricsInternalW( HDC hdc, UINT cbData,
@@ -376,6 +375,8 @@ BOOL     WINAPI NtGdiGradientFill( HDC hdc, TRIVERTEX *vert_array, ULONG nvert,
                                    void *grad_array, ULONG ngrad, ULONG mode );
 HFONT    WINAPI NtGdiHfontCreate( const void *logfont, ULONG unk2, ULONG unk3,
                                   ULONG unk4, void *data );
+BOOL     WINAPI NtGdiIcmBrushInfo( HDC hdc, HBRUSH handle, BITMAPINFO *info, void *bits,
+                                   ULONG *bits_size, UINT *usage, BOOL *unk, UINT mode );
 DWORD    WINAPI NtGdiInitSpool(void);
 INT      WINAPI NtGdiIntersectClipRect( HDC hdc, INT left, INT top, INT right, INT bottom );
 BOOL     WINAPI NtGdiInvertRgn( HDC hdc, HRGN hrgn );
@@ -436,7 +437,7 @@ BOOL     WINAPI NtGdiSetDeviceGammaRamp( HDC hdc, void *ptr );
 DWORD    WINAPI NtGdiSetLayout( HDC hdc, LONG wox, DWORD layout );
 BOOL     WINAPI NtGdiSetMagicColors( HDC hdc, DWORD magic, ULONG index );
 INT      WINAPI NtGdiSetMetaRgn( HDC hdc );
-BOOL     WINAPI NtGdiSetMiterLimit( HDC hdc, FLOAT limit, FLOAT *prev_limit );
+BOOL     WINAPI NtGdiSetMiterLimit( HDC hdc, DWORD limit, DWORD *prev_limit );
 COLORREF WINAPI NtGdiSetPixel( HDC hdc, INT x, INT y, COLORREF color );
 BOOL     WINAPI NtGdiSetPixelFormat( HDC hdc, INT format );
 BOOL     WINAPI NtGdiSetRectRgn( HRGN hrgn, INT left, INT top, INT right, INT bottom );
@@ -482,11 +483,8 @@ NTSTATUS WINAPI NtGdiDdDDISetQueuedLimit( D3DKMT_SETQUEUEDLIMIT *desc );
 NTSTATUS WINAPI NtGdiDdDDISetVidPnSourceOwner( const D3DKMT_SETVIDPNSOURCEOWNER *desc );
 
 /* Wine extensions */
-extern BOOL CDECL __wine_get_brush_bitmap_info( HBRUSH handle, BITMAPINFO *info, void *bits,
-                                                UINT *usage );
-extern BOOL CDECL __wine_get_icm_profile( HDC hdc, BOOL allow_default, DWORD *size,
-                                          WCHAR *filename );
-extern BOOL CDECL __wine_get_file_outline_text_metric( const WCHAR *path,
-                                                       OUTLINETEXTMETRICW *otm );
+BOOL WINAPI __wine_get_icm_profile( HDC hdc, BOOL allow_default, DWORD *size, WCHAR *filename );
+BOOL WINAPI __wine_get_file_outline_text_metric( const WCHAR *path, TEXTMETRICW *otm,
+                                                 UINT *em_square, WCHAR *face_name );
 
 #endif /* _NTGDI_ */

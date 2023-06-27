@@ -1138,9 +1138,9 @@ if exist subdir (
    echo ERROR exist subdir not working
 )
 if exist subdir\. (
-   echo exist subdir with . ok
+   echo exist subdir with \. ok
 ) else (
-   echo ERROR exist subdir with . not working
+   echo ERROR exist subdir with \. not working
 )
 if exist subdir\ (
    echo exist subdir with \ ok
@@ -1151,6 +1151,21 @@ if exist "subdir\" (
    echo exist subdir with \ and quotes ok
 ) else (
    echo ERROR exist subdir with \ and quotes not working
+)
+if exist subdir/. (
+   echo exist subdir with /. ok
+) else (
+   echo ERROR exist subdir with /. not working
+)
+if exist subdir/ (
+   echo exist subdir with / ok
+) else (
+   echo ERROR exist subdir with / not working
+)
+if exist "subdir/" (
+   echo exist subdir with / and quotes ok
+) else (
+   echo ERROR exist subdir with / and quotes not working
 )
 del foo subdir\bar
 rd subdir
@@ -3294,6 +3309,29 @@ path try2
 path
 path=try3
 path
+
+echo ------------ Testing PATH Evaluate ------------
+mkdir folder
+echo echo I'm here! > folder\sub1.bat
+
+echo Test normal PATH usage
+set path=%cd%\folder
+call sub1.bat
+
+echo Test PATH usage with leading semicolon
+set path=;%cd%\folder
+call sub1.bat
+
+echo Test PATH usage with fallback path
+set path=%cd%;%cd%\folder
+call sub1.bat
+
+echo Test PATH usage with double semicolon
+set path=%cd%;;%cd%\folder
+call sub1.bat
+
+del folder\sub1.bat
+rmdir folder
 set path=%WINE_backup_path%
 set WINE_backup_path=
 

@@ -2241,8 +2241,6 @@ struct wined3d_device_parent_ops
     HRESULT (__cdecl *texture_sub_resource_created)(struct wined3d_device_parent *device_parent,
             enum wined3d_resource_type type, struct wined3d_texture *texture, unsigned int sub_resource_idx,
             void **parent, const struct wined3d_parent_ops **parent_ops);
-    HRESULT (__cdecl *create_swapchain_texture)(struct wined3d_device_parent *device_parent, void *parent,
-            const struct wined3d_resource_desc *desc, DWORD texture_flags, struct wined3d_texture **texture);
 };
 
 struct wined3d_swapchain_state_parent
@@ -2809,6 +2807,7 @@ struct wined3d_texture * __cdecl wined3d_swapchain_get_back_buffer(const struct 
 struct wined3d_device * __cdecl wined3d_swapchain_get_device(const struct wined3d_swapchain *swapchain);
 HRESULT __cdecl wined3d_swapchain_get_display_mode(const struct wined3d_swapchain *swapchain,
         struct wined3d_display_mode *mode, enum wined3d_display_rotation *rotation);
+struct wined3d_texture * __cdecl wined3d_swapchain_get_front_buffer(const struct wined3d_swapchain *swapchain);
 HRESULT __cdecl wined3d_swapchain_get_front_buffer_data(const struct wined3d_swapchain *swapchain,
         struct wined3d_texture *dst_texture, unsigned int sub_resource_idx);
 HRESULT __cdecl wined3d_swapchain_get_gamma_ramp(const struct wined3d_swapchain *swapchain,

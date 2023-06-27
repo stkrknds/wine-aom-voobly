@@ -59,8 +59,6 @@
 # include <link.h>
 #endif
 
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 #include "windef.h"
@@ -135,7 +133,7 @@ static void save_fpu( CONTEXT *context, const ucontext_t *sigcontext )
     struct vfp_sigframe *frame = get_extended_sigcontext( sigcontext, 0x56465001 );
 
     if (!frame) return;
-    memcpy( context->u.D, frame->fpregs, sizeof(context->u.D) );
+    memcpy( context->D, frame->fpregs, sizeof(context->D) );
     context->Fpscr = frame->fpscr;
 }
 
@@ -144,7 +142,7 @@ static void restore_fpu( const CONTEXT *context, ucontext_t *sigcontext )
     struct vfp_sigframe *frame = get_extended_sigcontext( sigcontext, 0x56465001 );
 
     if (!frame) return;
-    memcpy( frame->fpregs, context->u.D, sizeof(context->u.D) );
+    memcpy( frame->fpregs, context->D, sizeof(context->D) );
     frame->fpscr = context->Fpscr;
 }
 
@@ -288,7 +286,7 @@ static void pop_vfp(CONTEXT *context, int first, int last)
     int i;
     for (i = first; i <= last; i++)
     {
-        context->u.D[i] = *(ULONGLONG *)context->Sp;
+        context->D[i] = *(ULONGLONG *)context->Sp;
         context->Sp += 8;
     }
 }
@@ -943,7 +941,7 @@ NTSTATUS WINAPI NtSetContextThread( HANDLE handle, const CONTEXT *context )
     if (flags & CONTEXT_FLOATING_POINT)
     {
         frame->fpscr = context->Fpscr;
-        memcpy( frame->d, context->u.D, sizeof(context->u.D) );
+        memcpy( frame->d, context->D, sizeof(context->D) );
     }
     frame->restore_flags |= flags & ~CONTEXT_INTEGER;
     return STATUS_SUCCESS;
@@ -994,7 +992,7 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
     if (needed_flags & CONTEXT_FLOATING_POINT)
     {
         context->Fpscr = frame->fpscr;
-        memcpy( context->u.D, frame->d, sizeof(frame->d) );
+        memcpy( context->D, frame->d, sizeof(frame->d) );
         context->ContextFlags |= CONTEXT_FLOATING_POINT;
     }
     return STATUS_SUCCESS;
@@ -1154,13 +1152,14 @@ NTSTATUS call_user_exception_dispatcher( EXCEPTION_RECORD *rec, CONTEXT *context
 /***********************************************************************
  *           call_user_mode_callback
  */
-extern NTSTATUS CDECL call_user_mode_callback( void *func, void *stack, void **ret_ptr,
-                                               ULONG *ret_len, TEB *teb ) DECLSPEC_HIDDEN;
+extern NTSTATUS call_user_mode_callback( ULONG id, void *args, ULONG len, void **ret_ptr,
+                                         ULONG *ret_len, void *func, TEB *teb ) DECLSPEC_HIDDEN;
 __ASM_GLOBAL_FUNC( call_user_mode_callback,
-                   "push {r2-r12,lr}\n\t"
+                   "push {r4-r12,lr}\n\t"
+                   "ldr ip, [sp, #0x2c]\n\t"  /* func */
                    "ldr r4, [sp, #0x30]\n\t"  /* teb */
                    "ldr r5, [r4]\n\t"         /* teb->Tib.ExceptionList */
-                   "str r5, [sp, #0x28]\n\t"
+                   "push {r3, r5}\n\t"
 #ifndef __SOFTFP__
                    "sub sp, sp, #0x90\n\t"
                    "mov r5, sp\n\t"
@@ -1174,17 +1173,15 @@ __ASM_GLOBAL_FUNC( call_user_mode_callback,
                    "str sp, [r4, #0x1d8]\n\t" /* arm_thread_data()->syscall_frame */
                    "ldr r6, [r5, #0x50]\n\t"  /* prev_frame->syscall_table */
                    "str r6, [sp, #0x50]\n\t"  /* frame->syscall_table */
-                   "mov ip, r0\n\t"
                    "mov sp, r1\n\t"
-                   "pop {r0-r3}\n\t"
                    "bx ip" )
 
 
 /***********************************************************************
  *           user_mode_callback_return
  */
-extern void CDECL DECLSPEC_NORETURN user_mode_callback_return( void *ret_ptr, ULONG ret_len,
-                                                               NTSTATUS status, TEB *teb ) DECLSPEC_HIDDEN;
+extern void DECLSPEC_NORETURN user_mode_callback_return( void *ret_ptr, ULONG ret_len,
+                                                         NTSTATUS status, TEB *teb ) DECLSPEC_HIDDEN;
 __ASM_GLOBAL_FUNC( user_mode_callback_return,
                    "ldr r4, [r3, #0x1d8]\n\t" /* arm_thread_data()->syscall_frame */
                    "ldr r5, [r4, #0x4c]\n\t"  /* frame->prev_frame */
@@ -1197,9 +1194,9 @@ __ASM_GLOBAL_FUNC( user_mode_callback_return,
                    "add r5, r5, #0x90\n\t"
 #endif
                    "mov sp, r5\n\t"
-                   "ldr r5, [sp, #0x28]\n\t"
-                   "str r5, [r3]\n\t"         /* teb->Tib.ExceptionList */
-                   "pop {r5, r6}\n\t"         /* ret_ptr, ret_len */
+                   "pop {r5, r7}\n\t"
+                   "ldr r6, [sp, #0x28]\n\t"  /* ret_len */
+                   "str r7, [r3]\n\t"         /* teb->Tib.ExceptionList */
                    "str r0, [r5]\n\t"         /* ret_ptr */
                    "str r1, [r6]\n\t"         /* ret_len */
                    "mov r0, r2\n\t"           /* status */
@@ -1209,30 +1206,17 @@ __ASM_GLOBAL_FUNC( user_mode_callback_return,
 /***********************************************************************
  *           KeUserModeCallback
  */
-NTSTATUS WINAPI KeUserModeCallback( ULONG id, const void *args, ULONG len, void **ret_ptr, ULONG *ret_len )
+NTSTATUS KeUserModeCallback( ULONG id, const void *args, ULONG len, void **ret_ptr, ULONG *ret_len )
 {
     struct syscall_frame *frame = arm_thread_data()->syscall_frame;
     void *args_data = (void *)((frame->sp - len) & ~15);
-    ULONG_PTR *stack = args_data;
-
-    /* if we have no syscall frame, call the callback directly */
-    if ((char *)&frame < (char *)ntdll_get_thread_data()->kernel_stack ||
-        (char *)&frame > (char *)arm_thread_data()->syscall_frame)
-    {
-        NTSTATUS (WINAPI *func)(const void *, ULONG) = ((void **)NtCurrentTeb()->Peb->KernelCallbackTable)[id];
-        return func( args, len );
-    }
 
     if ((char *)ntdll_get_thread_data()->kernel_stack + min_kernel_stack > (char *)&frame)
         return STATUS_STACK_OVERFLOW;
 
     memcpy( args_data, args, len );
-    *(--stack) = 0;
-    *(--stack) = len;
-    *(--stack) = (ULONG_PTR)args_data;
-    *(--stack) = id;
-
-    return call_user_mode_callback( pKiUserCallbackDispatcher, stack, ret_ptr, ret_len, NtCurrentTeb() );
+    return call_user_mode_callback( id, args_data, len, ret_ptr, ret_len,
+                                    pKiUserCallbackDispatcher, NtCurrentTeb() );
 }
 
 
@@ -1256,7 +1240,7 @@ static BOOL handle_syscall_fault( ucontext_t *context, EXCEPTION_RECORD *rec )
     struct syscall_frame *frame = arm_thread_data()->syscall_frame;
     UINT i;
 
-    if (!is_inside_syscall( context ) && !ntdll_get_thread_data()->jmp_buf) return FALSE;
+    if (!is_inside_syscall( context )) return FALSE;
 
     TRACE( "code=%lx flags=%lx addr=%p pc=%08lx\n",
            rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress, (DWORD)PC_sig(context) );

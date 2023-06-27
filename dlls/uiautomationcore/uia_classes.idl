@@ -56,6 +56,29 @@ library UIA_wine_private
 
     [
         object,
+        uuid(9a754e12-e570-49ab-b223-6f6871007d28),
+        pointer_default(unique),
+    ]
+    interface IWineUiaEventAdviser : IUnknown
+    {
+        HRESULT advise([in]BOOL advise_added, [in]LONG_PTR huiaevent);
+    }
+
+    [
+        object,
+        uuid(5e60162c-ab0e-4e22-a61d-3a3acd442aba),
+        pointer_default(unique),
+        oleautomation,
+    ]
+    interface IWineUiaEvent : IUnknown
+    {
+        HRESULT advise_events([in]BOOL advise_added, [in]long adviser_start_idx);
+        HRESULT set_event_data([in]const GUID *event_guid, [in]long scope, [in]VARIANT runtime_id,
+                               [in]IWineUiaEvent *event_iface);
+    }
+
+    [
+        object,
         uuid(57865755-6c05-4522-98df-4ca658b768ef),
         pointer_default(unique),
         oleautomation,
@@ -66,6 +89,8 @@ library UIA_wine_private
         HRESULT get_prov_opts([out, retval]int *out_opts);
         HRESULT has_parent([out, retval]BOOL *out_val);
         HRESULT navigate([in]int nav_dir, [out, retval]VARIANT *ret_val);
+        HRESULT get_focus([out, retval]VARIANT *ret_val);
+        HRESULT attach_event([in]LONG_PTR huiaevent);
     }
 
     [
@@ -80,5 +105,6 @@ library UIA_wine_private
         HRESULT get_prop_val([in]const GUID *prop_guid, [out, retval]VARIANT *ret_val);
         HRESULT disconnect();
         HRESULT get_hwnd([out, retval]ULONG *out_hwnd);
+        HRESULT attach_event([in]long proc_id, [in]long event_cookie, [out, retval]IWineUiaEvent **ret_event);
     }
 }

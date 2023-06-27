@@ -349,6 +349,8 @@ static void check_dinput_devices( DWORD version, DIDEVICEINSTANCEW *devinst )
 
         ref = IDirectInputDevice8_Release( device );
         ok( ref == 0, "Release returned %ld\n", ref );
+        ref = IDirectInput8_Release( di8 );
+        ok( ref == 0, "Release returned %ld\n", ref );
     }
     else
     {
@@ -403,6 +405,8 @@ static void check_dinput_devices( DWORD version, DIDEVICEINSTANCEW *devinst )
 
         hr = IDirectInput_EnumDevices( di, 0x14, enum_device_count, &count, DIEDFL_ALLDEVICES );
         ok( hr == DIERR_INVALIDPARAM, "EnumDevices returned: %#lx\n", hr );
+        ref = IDirectInput_Release( di );
+        ok( ref == 0, "Release returned %ld\n", ref );
     }
 }
 
@@ -1450,6 +1454,11 @@ static void test_simple_joystick( DWORD version )
                 REPORT_COUNT(1, 4),
                 INPUT(1, Data|Var|Abs),
             END_COLLECTION,
+
+            USAGE_PAGE(1, HID_USAGE_PAGE_GENERIC),
+            USAGE(1, HID_USAGE_GENERIC_RZ),
+            COLLECTION(1, Physical),
+            END_COLLECTION,
         END_COLLECTION,
     };
     C_ASSERT(sizeof(report_desc) < MAX_HID_DESCRIPTOR_LEN);
@@ -1678,6 +1687,14 @@ static void test_simple_joystick( DWORD version )
             .tszName = L"Collection 1 - Joystick",
             .wUsagePage = HID_USAGE_PAGE_GENERIC,
             .wUsage = HID_USAGE_GENERIC_JOYSTICK,
+        },
+        {
+            .dwSize = sizeof(DIDEVICEOBJECTINSTANCEW),
+            .guidType = GUID_Unknown,
+            .dwType = DIDFT_COLLECTION|DIDFT_NODATA|DIDFT_MAKEINSTANCE(2),
+            .tszName = L"Collection 2 - Z Rotation",
+            .wUsagePage = HID_USAGE_PAGE_GENERIC,
+            .wUsage = HID_USAGE_GENERIC_RZ,
         },
     };
     const DIDEVICEOBJECTINSTANCEW expect_objects_5[] =
@@ -4183,7 +4200,6 @@ static void test_many_axes_joystick(void)
 done:
     hid_device_stop( &desc, 1 );
     cleanup_registry_keys();
-    winetest_pop_context();
 }
 
 static void test_driving_wheel_axes(void)
@@ -4403,7 +4419,6 @@ static void test_driving_wheel_axes(void)
 done:
     hid_device_stop( &desc, 1 );
     cleanup_registry_keys();
-    winetest_pop_context();
 }
 
 static BOOL test_winmm_joystick(void)
@@ -5071,6 +5086,11 @@ static void test_windows_gaming_input(void)
     check_interface( game_controller, &IID_IGamepad, FALSE );
 
     hr = IRawGameControllerStatics_FromGameController( controller_statics, game_controller, &tmp_raw_controller );
+    ok( hr == S_OK, "FromGameController returned %#lx\n", hr );
+    ok( tmp_raw_controller == raw_controller, "got unexpected IGameController interface\n" );
+    IRawGameController_Release( tmp_raw_controller );
+
+    hr = IRawGameControllerStatics_FromGameController( controller_statics, (IGameController *)raw_controller, &tmp_raw_controller );
     ok( hr == S_OK, "FromGameController returned %#lx\n", hr );
     ok( tmp_raw_controller == raw_controller, "got unexpected IGameController interface\n" );
     IRawGameController_Release( tmp_raw_controller );

@@ -3086,11 +3086,11 @@ static enum fill_status fill_networkadapterconfig( struct table *table, const st
     DWORD size = 0, ret;
     enum fill_status status = FILL_STATUS_UNFILTERED;
 
-    ret = GetAdaptersAddresses( AF_UNSPEC, GAA_FLAG_INCLUDE_ALL_GATEWAYS, NULL, NULL, &size );
+    ret = GetAdaptersAddresses( AF_UNSPEC, GAA_FLAG_INCLUDE_GATEWAYS, NULL, NULL, &size );
     if (ret != ERROR_BUFFER_OVERFLOW) return FILL_STATUS_FAILED;
 
     if (!(buffer = malloc( size ))) return FILL_STATUS_FAILED;
-    if (GetAdaptersAddresses( AF_UNSPEC, GAA_FLAG_INCLUDE_ALL_GATEWAYS, NULL, buffer, &size ))
+    if (GetAdaptersAddresses( AF_UNSPEC, GAA_FLAG_INCLUDE_GATEWAYS, NULL, buffer, &size ))
     {
         free( buffer );
         return FILL_STATUS_FAILED;
@@ -4191,8 +4191,8 @@ static enum fill_status fill_videocontroller( struct table *table, const struct 
     rec->current_verticalres   = vres;
     rec->description           = wcsdup( name );
     rec->device_id             = L"VideoController1";
-    rec->driverdate            = L"20220118000000.000000-000";
-    rec->driverversion         = L"30.0.14023.3004";
+    rec->driverdate            = L"20230420000000.000000-000";
+    rec->driverversion         = L"31.0.14051.5006";
     rec->installeddriver       = get_videocontroller_installeddriver( desc.VendorId );
     rec->name                  = wcsdup( name );
     rec->pnpdevice_id          = get_videocontroller_pnpdeviceid( &desc );

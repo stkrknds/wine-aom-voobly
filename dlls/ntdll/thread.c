@@ -23,7 +23,6 @@
 #include <limits.h>
 #include <sys/types.h>
 
-#define NONAMELESSUNION
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 #include "winternl.h"
@@ -461,6 +460,15 @@ void WINAPI RtlPopFrame( TEB_ACTIVE_FRAME *frame )
 TEB_ACTIVE_FRAME * WINAPI RtlGetFrame(void)
 {
     return NtCurrentTeb()->ActiveFrame;
+}
+
+
+/***********************************************************************
+ *           _errno  (NTDLL.@)
+ */
+int * CDECL _errno(void)
+{
+    return (int *)&NtCurrentTeb()->TlsSlots[NTDLL_TLS_ERRNO];
 }
 
 

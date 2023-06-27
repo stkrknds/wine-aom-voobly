@@ -298,7 +298,7 @@ void wg_sample_queue_destroy(struct wg_sample_queue *queue)
     wg_sample_queue_flush(queue, true);
 
     queue->cs.DebugInfo->Spare[0] = 0;
-    InitializeCriticalSection(&queue->cs);
+    DeleteCriticalSection(&queue->cs);
 
     free(queue);
 }
@@ -358,11 +358,6 @@ HRESULT wg_transform_read_mf(struct wg_transform *transform, IMFSample *sample,
         return hr;
 
     wg_sample->size = 0;
-    if (wg_sample->max_size < sample_size)
-    {
-        wg_sample_release(wg_sample);
-        return MF_E_BUFFERTOOSMALL;
-    }
 
     if (FAILED(hr = wg_transform_read_data(transform, wg_sample, format)))
     {

@@ -544,12 +544,16 @@ static HRESULT WINAPI stream_props_GetType(IWMMediaProps *iface, GUID *major_typ
 static HRESULT WINAPI stream_props_GetMediaType(IWMMediaProps *iface, WM_MEDIA_TYPE *mt, DWORD *size)
 {
     struct stream_config *config = impl_from_IWMMediaProps(iface);
+    const struct wg_format *format;
+    struct wg_format codec_format;
     const DWORD req_size = *size;
     AM_MEDIA_TYPE stream_mt;
 
     TRACE("iface %p, mt %p, size %p.\n", iface, mt, size);
 
-    if (!amt_from_wg_format(&stream_mt, &config->stream->format, true))
+    wg_parser_stream_get_codec_format(config->stream->wg_stream, &codec_format);
+    format = (codec_format.major_type != WG_MAJOR_TYPE_UNKNOWN) ? &codec_format : &config->stream->format;
+    if (!amt_from_wg_format(&stream_mt, format, true))
         return E_OUTOFMEMORY;
 
     *size = sizeof(stream_mt) + stream_mt.cbFormat;
@@ -1508,6 +1512,10 @@ static HRESULT init_stream(struct wm_reader *reader, QWORD file_size)
              * Shadowgrounds provides wmv3 video and assumes that the initial
              * video type will be BGR. */
             stream->format.u.video.format = WG_VIDEO_FORMAT_BGR;
+
+            /* API consumers expect RGB video to be bottom-up. */
+            if (stream->format.u.video.height > 0)
+                stream->format.u.video.height = -stream->format.u.video.height;
         }
         wg_parser_stream_enable(stream->wg_stream, &stream->format);
     }
@@ -1919,6 +1927,9 @@ static HRESULT WINAPI reader_GetOutputFormat(IWMSyncReader2 *iface,
                 return NS_E_INVALID_OUTPUT_FORMAT;
             }
             format.u.video.format = video_formats[index];
+            /* API consumers expect RGB video to be bottom-up. */
+            if (format.u.video.height > 0 && wg_video_format_is_rgb(format.u.video.format))
+                format.u.video.height = -format.u.video.height;
             break;
 
         case WG_MAJOR_TYPE_AUDIO:
@@ -2211,7 +2222,7 @@ static HRESULT WINAPI reader_SetOutputProps(IWMSyncReader2 *iface, DWORD output,
                 hr = NS_E_INVALID_OUTPUT_FORMAT;
             else if (pref_format.u.video.width != format.u.video.width)
                 hr = NS_E_INVALID_OUTPUT_FORMAT;
-            else if (pref_format.u.video.height != format.u.video.height)
+            else if (abs(pref_format.u.video.height) != abs(format.u.video.height))
                 hr = NS_E_INVALID_OUTPUT_FORMAT;
             break;
 
@@ -2533,6 +2544,9 @@ HRESULT WINAPI winegstreamer_create_wm_sync_reader(IUnknown *outer, void **out)
     struct wm_reader *object;
 
     TRACE("out %p.\n", out);
+
+    if (!init_gstreamer())
+        return E_FAIL;
 
     if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;

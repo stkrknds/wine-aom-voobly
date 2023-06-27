@@ -358,6 +358,25 @@ static struct memory_view *find_mapped_addr( struct process *process, client_ptr
     return NULL;
 }
 
+/* check if an address range is valid for creating a view */
+static int is_valid_view_addr( struct process *process, client_ptr_t addr, mem_size_t size )
+{
+    struct memory_view *view;
+
+    if (!size) return 0;
+    if (addr & page_mask) return 0;
+    if (addr + size < addr) return 0;  /* overflow */
+
+    /* check for overlapping view */
+    LIST_FOR_EACH_ENTRY( view, &process->views, struct memory_view, entry )
+    {
+        if (view->base + view->size <= addr) continue;
+        if (view->base >= addr + size) continue;
+        return 0;
+    }
+    return 1;
+}
+
 /* get the main exe memory view */
 struct memory_view *get_exe_view( struct process *process )
 {
@@ -366,14 +385,10 @@ struct memory_view *get_exe_view( struct process *process )
 
 static void set_process_machine( struct process *process, struct memory_view *view )
 {
-    unsigned short machine = view->image.machine;
-
-    if (machine == IMAGE_FILE_MACHINE_I386 && (view->image.image_flags & IMAGE_FLAGS_ComPlusNativeReady))
-    {
-        if (is_machine_supported( IMAGE_FILE_MACHINE_AMD64 )) machine = IMAGE_FILE_MACHINE_AMD64;
-        else if (is_machine_supported( IMAGE_FILE_MACHINE_ARM64 )) machine = IMAGE_FILE_MACHINE_ARM64;
-    }
-    process->machine = machine;
+    if (view->image.image_flags & IMAGE_FLAGS_ComPlusNativeReady)
+        process->machine = native_machine;
+    else
+        process->machine = view->image.machine;
 }
 
 static int generate_dll_event( struct thread *thread, int code, struct memory_view *view )
@@ -784,10 +799,10 @@ static unsigned int get_image_params( struct mapping *mapping, file_pos_t file_s
     mapping->image.zerobits      = 0; /* FIXME */
     mapping->image.file_size     = file_size;
     mapping->image.loader_flags  = clr_va && clr_size;
-    if (mz_size == sizeof(mz) && !memcmp( mz.buffer, builtin_signature, sizeof(builtin_signature) ))
-        mapping->image.image_flags |= IMAGE_FLAGS_WineBuiltin;
-    else if (mz_size == sizeof(mz) && !memcmp( mz.buffer, fakedll_signature, sizeof(fakedll_signature) ))
-        mapping->image.image_flags |= IMAGE_FLAGS_WineFakeDll;
+    mapping->image.wine_builtin  = (mz_size == sizeof(mz) &&
+                                    !memcmp( mz.buffer, builtin_signature, sizeof(builtin_signature) ));
+    mapping->image.wine_fakedll  = (mz_size == sizeof(mz) &&
+                                    !memcmp( mz.buffer, fakedll_signature, sizeof(fakedll_signature) ));
 
     /* load the section headers */
 
@@ -1187,55 +1202,21 @@ DECL_HANDLER(get_mapping_info)
 /* add a memory view in the current process */
 DECL_HANDLER(map_view)
 {
-    struct mapping *mapping = NULL;
+    struct mapping *mapping;
     struct memory_view *view;
 
-    if (!req->size || (req->base & page_mask) || req->base + req->size < req->base)  /* overflow */
+    if (!is_valid_view_addr( current->process, req->base, req->size ))
     {
         set_error( STATUS_INVALID_PARAMETER );
-        return;
-    }
-
-    /* make sure we don't already have an overlapping view */
-    LIST_FOR_EACH_ENTRY( view, &current->process->views, struct memory_view, entry )
-    {
-        if (view->base + view->size <= req->base) continue;
-        if (view->base >= req->base + req->size) continue;
-        set_error( STATUS_INVALID_PARAMETER );
-        return;
-    }
-
-    if (!req->mapping)  /* image mapping for a .so dll */
-    {
-        data_size_t namelen = 0;
-
-        if (get_req_data_size() > sizeof(view->image)) namelen = get_req_data_size() - sizeof(view->image);
-        if (!(view = mem_alloc( sizeof(struct memory_view) + namelen * sizeof(WCHAR) ))) return;
-        memset( view, 0, sizeof(*view) );
-        view->base    = req->base;
-        view->size    = req->size;
-        view->start   = req->start;
-        view->flags   = SEC_IMAGE;
-        view->namelen = namelen;
-        memcpy( &view->image, get_req_data(), min( sizeof(view->image), get_req_data_size() ));
-        memcpy( view->name, (pe_image_info_t *)get_req_data() + 1, namelen );
-        add_process_view( current, view );
         return;
     }
 
     if (!(mapping = get_mapping_obj( current->process, req->mapping, req->access ))) return;
 
-    if (mapping->flags & SEC_IMAGE)
-    {
-        if (req->start || req->size > mapping->image.map_size)
-        {
-            set_error( STATUS_INVALID_PARAMETER );
-            goto done;
-        }
-    }
-    else if (req->start >= mapping->size ||
-             req->start + req->size < req->start ||
-             req->start + req->size > ((mapping->size + page_mask) & ~(mem_size_t)page_mask))
+    if ((mapping->flags & SEC_IMAGE) ||
+        req->start >= mapping->size ||
+        req->start + req->size < req->start ||
+        req->start + req->size > ((mapping->size + page_mask) & ~(mem_size_t)page_mask))
     {
         set_error( STATUS_INVALID_PARAMETER );
         goto done;
@@ -1250,15 +1231,88 @@ DECL_HANDLER(map_view)
         view->namelen   = 0;
         view->fd        = !is_fd_removable( mapping->fd ) ? (struct fd *)grab_object( mapping->fd ) : NULL;
         view->committed = mapping->committed ? (struct ranges *)grab_object( mapping->committed ) : NULL;
-        view->shared    = mapping->shared ? (struct shared_map *)grab_object( mapping->shared ) : NULL;
-        if (view->flags & SEC_IMAGE) view->image = mapping->image;
+        view->shared    = NULL;
         add_process_view( current, view );
-        if (view->flags & SEC_IMAGE && view->base != mapping->image.base)
-            set_error( STATUS_IMAGE_NOT_AT_BASE );
     }
 
 done:
     release_object( mapping );
+}
+
+/* add a memory view for an image mapping in the current process */
+DECL_HANDLER(map_image_view)
+{
+    struct mapping *mapping;
+    struct memory_view *view;
+
+    if (!is_valid_view_addr( current->process, req->base, req->size ))
+    {
+        set_error( STATUS_INVALID_PARAMETER );
+        return;
+    }
+
+    if (!(mapping = get_mapping_obj( current->process, req->mapping, SECTION_MAP_READ ))) return;
+
+    if (!(mapping->flags & SEC_IMAGE) || req->size > mapping->image.map_size)
+    {
+        set_error( STATUS_INVALID_PARAMETER );
+        goto done;
+    }
+
+    if ((view = mem_alloc( sizeof(*view) )))
+    {
+        view->base      = req->base;
+        view->size      = req->size;
+        view->flags     = mapping->flags;
+        view->start     = 0;
+        view->namelen   = 0;
+        view->fd        = !is_fd_removable( mapping->fd ) ? (struct fd *)grab_object( mapping->fd ) : NULL;
+        view->committed = NULL;
+        view->shared    = mapping->shared ? (struct shared_map *)grab_object( mapping->shared ) : NULL;
+        view->image     = mapping->image;
+        view->image.machine     = req->machine;
+        view->image.entry_point = req->entry;
+        add_process_view( current, view );
+
+        if (view->base != mapping->image.base) set_error( STATUS_IMAGE_NOT_AT_BASE );
+        if (view->image.machine != current->process->machine)
+        {
+            /* on 32-bit, the native 64-bit machine is allowed */
+            if (is_machine_64bit( current->process->machine ) || view->image.machine != native_machine)
+                set_error( STATUS_IMAGE_MACHINE_TYPE_MISMATCH );
+        }
+    }
+
+done:
+    release_object( mapping );
+}
+
+/* add a memory view for a builtin dll in the current process */
+DECL_HANDLER(map_builtin_view)
+{
+    struct memory_view *view;
+    const pe_image_info_t *image = get_req_data();
+    data_size_t namelen = get_req_data_size() - sizeof(*image);
+
+    if (get_req_data_size() < sizeof(*image) ||
+        (namelen & (sizeof(WCHAR) - 1)) ||
+        !is_valid_view_addr( current->process, image->base, image->map_size ))
+    {
+        set_error( STATUS_INVALID_PARAMETER );
+        return;
+    }
+
+    if ((view = mem_alloc( sizeof(struct memory_view) + namelen )))
+    {
+        memset( view, 0, sizeof(*view) );
+        view->base    = image->base;
+        view->size    = image->map_size;
+        view->flags   = SEC_IMAGE;
+        view->image   = *image;
+        view->namelen = namelen;
+        memcpy( view->name, image + 1, namelen );
+        add_process_view( current, view );
+    }
 }
 
 /* unmap a memory view from the current process */

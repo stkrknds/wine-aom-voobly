@@ -540,6 +540,7 @@ static void set_preferences(void)
     set_lang(pref);
     set_bool_pref(pref, "security.warn_entering_secure", FALSE);
     set_bool_pref(pref, "security.warn_submit_insecure", FALSE);
+    set_bool_pref(pref, "dom.ipc.plugins.enabled", FALSE);
     set_bool_pref(pref, "layout.css.grid.enabled", TRUE);
     set_int_pref(pref, "layout.spellcheckDefault", 0);
 
@@ -560,6 +561,7 @@ static BOOL init_xpcom(const PRUnichar *gre_path)
     }
 
     nsres = NS_InitXPCOM2(&pServMgr, gre_dir, (nsIDirectoryServiceProvider*)&nsDirectoryServiceProvider2);
+    nsIFile_Release(gre_dir);
     if(NS_FAILED(nsres)) {
         ERR("NS_InitXPCOM2 failed: %08lx\n", nsres);
         FreeLibrary(xul_handle);
@@ -816,7 +818,8 @@ BOOL load_gecko(void)
            MESSAGE("Could not find Wine Gecko. HTML rendering will be disabled.\n");
         }
     }else {
-        ret = pCompMgr != NULL;
+        FIXME("Gecko can only be used from one thread.\n");
+        ret = FALSE;
     }
 
     LeaveCriticalSection(&cs_load_gecko);
@@ -2439,6 +2442,7 @@ nsIXMLHttpRequest *create_nsxhr(nsIDOMWindow *nswindow)
     nsres = nsIGlobalObject_QueryInterface(nsglo, &IID_nsIScriptObjectPrincipal, (void**)&sop);
     assert(nsres == NS_OK);
 
+    /* The returned principal is *not* AddRef'd */
     nspri = nsIScriptObjectPrincipal_GetPrincipal(sop);
     nsIScriptObjectPrincipal_Release(sop);
 
@@ -2450,7 +2454,6 @@ nsIXMLHttpRequest *create_nsxhr(nsIDOMWindow *nswindow)
         if(NS_FAILED(nsres))
             nsIXMLHttpRequest_Release(nsxhr);
     }
-    nsISupports_Release(nspri);
     nsIGlobalObject_Release(nsglo);
     if(NS_FAILED(nsres)) {
         ERR("nsIXMLHttpRequest_Init failed: %08lx\n", nsres);

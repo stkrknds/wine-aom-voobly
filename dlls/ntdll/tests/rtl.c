@@ -683,9 +683,9 @@ static void test_RtlThreadErrorMode(void)
        "RtlGetThreadErrorMode returned 0x%lx, expected 0x%x\n", mode, 0x70);
     if (!is_wow64)
     {
-        ok(NtCurrentTeb()->HardErrorDisabled == 0x70,
+        ok(NtCurrentTeb()->HardErrorMode == 0x70,
            "The TEB contains 0x%lx, expected 0x%x\n",
-           NtCurrentTeb()->HardErrorDisabled, 0x70);
+           NtCurrentTeb()->HardErrorMode, 0x70);
     }
 
     status = pRtlSetThreadErrorMode(0, &mode);
@@ -699,9 +699,9 @@ static void test_RtlThreadErrorMode(void)
        "RtlGetThreadErrorMode returned 0x%lx, expected 0x%x\n", mode, 0);
     if (!is_wow64)
     {
-        ok(NtCurrentTeb()->HardErrorDisabled == 0,
+        ok(NtCurrentTeb()->HardErrorMode == 0,
            "The TEB contains 0x%lx, expected 0x%x\n",
-           NtCurrentTeb()->HardErrorDisabled, 0);
+           NtCurrentTeb()->HardErrorMode, 0);
     }
 
     for (mode = 1; mode; mode <<= 1)
@@ -1133,7 +1133,7 @@ static void test_RtlIpv4StringToAddressEx(void)
 
     if (!pRtlIpv4StringToAddressExA)
     {
-        skip("RtlIpv4StringToAddressEx not available\n");
+        win_skip("RtlIpv4StringToAddressEx not available\n");
         return;
     }
 
@@ -1780,7 +1780,7 @@ static void test_RtlIpv6AddressToStringEx(void)
 
     if (!pRtlIpv6AddressToStringExA)
     {
-        skip("RtlIpv6AddressToStringExA not available\n");
+        win_skip("RtlIpv6AddressToStringExA not available\n");
         return;
     }
 
@@ -2066,13 +2066,13 @@ static void test_RtlIpv6StringToAddressEx(void)
 
     if (!pRtlIpv6StringToAddressExW)
     {
-        skip("RtlIpv6StringToAddressExW not available\n");
+        win_skip("RtlIpv6StringToAddressExW not available\n");
         /* we can continue, just not test W */
     }
 
     if (!pRtlIpv6StringToAddressExA)
     {
-        skip("RtlIpv6StringToAddressExA not available\n");
+        win_skip("RtlIpv6StringToAddressExA not available\n");
         return;
     }
 
@@ -3608,6 +3608,46 @@ static void test_RtlFirstFreeAce(void)
     HeapFree(GetProcessHeap(), 0, acl);
 }
 
+static void test_RtlInitializeSid(void)
+{
+    SID_IDENTIFIER_AUTHORITY sid_ident = { SECURITY_NT_AUTHORITY };
+    char buffer[SECURITY_MAX_SID_SIZE];
+    PSID sid = (PSID)&buffer;
+    NTSTATUS status;
+
+    status = RtlInitializeSid(sid, &sid_ident, 1);
+    ok(!status, "Unexpected status %#lx.\n", status);
+
+    status = RtlInitializeSid(sid, &sid_ident, SID_MAX_SUB_AUTHORITIES);
+    ok(!status, "Unexpected status %#lx.\n", status);
+
+    status = RtlInitializeSid(sid, &sid_ident, SID_MAX_SUB_AUTHORITIES + 1);
+    ok(status == STATUS_INVALID_PARAMETER, "Unexpected status %#lx.\n", status);
+}
+
+static void test_RtlValidSecurityDescriptor(void)
+{
+    SECURITY_DESCRIPTOR *sd;
+    NTSTATUS status;
+    BOOLEAN ret;
+
+    ret = RtlValidSecurityDescriptor(NULL);
+    ok(!ret, "Unexpected return value %d.\n", ret);
+
+    sd = calloc(1, SECURITY_DESCRIPTOR_MIN_LENGTH);
+
+    ret = RtlValidSecurityDescriptor(sd);
+    ok(!ret, "Unexpected return value %d.\n", ret);
+
+    status = RtlCreateSecurityDescriptor(sd, SECURITY_DESCRIPTOR_REVISION);
+    ok(!status, "Unexpected return value %#lx.\n", status);
+
+    ret = RtlValidSecurityDescriptor(sd);
+    ok(ret, "Unexpected return value %d.\n", ret);
+
+    free(sd);
+}
+
 START_TEST(rtl)
 {
     InitFunctionPtrs();
@@ -3652,4 +3692,6 @@ START_TEST(rtl)
     test_DbgPrint();
     test_RtlDestroyHeap();
     test_RtlFirstFreeAce();
+    test_RtlInitializeSid();
+    test_RtlValidSecurityDescriptor();
 }

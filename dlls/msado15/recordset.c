@@ -1994,6 +1994,7 @@ static HRESULT load_all_recordset_data(struct recordset *recordset, IUnknown *ro
                     st.wMinute = ts->minute;
                     st.wSecond = ts->second;
                     st.wMilliseconds = ts->fraction/1000000;
+                    st.wDayOfWeek = 0;
                     hr = (SystemTimeToVariantTime(&st, &d) ? S_OK : E_FAIL);
 
                     V_DATE(&copy) = d;
@@ -2086,7 +2087,7 @@ static HRESULT WINAPI recordset_Open( _Recordset *iface, VARIANT source, VARIANT
         return hr;
 
     /* We want to create the field member variable without mapping the rowset fields, this will
-     * save quering the fields twice.  Fields will be added while we create the bindings
+     * save querying the fields twice. Fields will be added while we create the bindings.
      */
     hr = fields_create( recordset, &recordset->fields );
     if (FAILED(hr))

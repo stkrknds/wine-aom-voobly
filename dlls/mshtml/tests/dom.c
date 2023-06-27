@@ -3987,6 +3987,7 @@ static void test_contenteditable(IUnknown *unk)
 #define test_input_type(i,t) _test_input_type(__LINE__,i,t)
 static void _test_input_type(unsigned line, IHTMLInputElement *input, const WCHAR *extype)
 {
+    VARIANT_BOOL b;
     BSTR type;
     HRESULT hres;
 
@@ -3994,6 +3995,10 @@ static void _test_input_type(unsigned line, IHTMLInputElement *input, const WCHA
     ok_(__FILE__,line) (hres == S_OK, "get_type failed: %08lx\n", hres);
     ok_(__FILE__,line) (!lstrcmpW(type, extype), "type=%s, expected %s\n", wine_dbgstr_w(type), wine_dbgstr_w(extype));
     SysFreeString(type);
+
+    hres = IHTMLInputElement_get_complete(input, &b);
+    ok_(__FILE__,line) (hres == S_OK, "get_complete failed: %08lx\n", hres);
+    ok(b == VARIANT_FALSE, "complete = %x\n", b);
 }
 
 #define test_input_name(u, c) _test_input_name(__LINE__,u, c)
@@ -11975,6 +11980,29 @@ static void test_document_mode_lock(void)
     IHTMLDocument2_Release(doc);
 }
 
+static DWORD WINAPI create_document_proc(void *param)
+{
+    IHTMLDocument2 *doc = NULL;
+    HRESULT hres;
+
+    CoInitialize(NULL);
+
+    hres = CoCreateInstance(&CLSID_HTMLDocument, NULL, CLSCTX_INPROC_SERVER|CLSCTX_INPROC_HANDLER,
+            &IID_IHTMLDocument2, (void**)&doc);
+    todo_wine
+    ok(hres == S_OK, "Creation of an HTMLDocument in a separate thread failed: %08lx\n", hres);
+
+    if (doc) IHTMLDocument2_Release(doc);
+    return 0;
+}
+
+static void test_threads(void)
+{
+    HANDLE thread = CreateThread(NULL, 0, create_document_proc, 0, 0, NULL);
+    DWORD ret = WaitForSingleObject(thread, 2000);
+    ok(!ret, "Document creation thread failed to complete\n");
+}
+
 static void test_custom_user_agent(IHTMLDocument2 *doc)
 {
     static const WCHAR ua[] = L"1234567890xxxABC";
@@ -12075,6 +12103,7 @@ START_TEST(dom)
 
     test_quirks_mode();
     test_document_mode_lock();
+    test_threads();
 
     /* Run this last since it messes with the process-wide user agent */
     if (winetest_interactive || ! is_ie_hardened()) {

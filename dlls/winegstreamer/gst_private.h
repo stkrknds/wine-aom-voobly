@@ -82,6 +82,7 @@ uint32_t wg_parser_get_stream_count(struct wg_parser *parser);
 struct wg_parser_stream *wg_parser_get_stream(struct wg_parser *parser, uint32_t index);
 
 void wg_parser_stream_get_preferred_format(struct wg_parser_stream *stream, struct wg_format *format);
+void wg_parser_stream_get_codec_format(struct wg_parser_stream *stream, struct wg_format *format);
 void wg_parser_stream_enable(struct wg_parser_stream *stream, const struct wg_format *format);
 void wg_parser_stream_disable(struct wg_parser_stream *stream);
 
@@ -101,10 +102,12 @@ void wg_parser_stream_seek(struct wg_parser_stream *stream, double rate,
         uint64_t start_pos, uint64_t stop_pos, DWORD start_flags, DWORD stop_flags);
 
 struct wg_transform *wg_transform_create(const struct wg_format *input_format,
-        const struct wg_format *output_format);
+        const struct wg_format *output_format, const struct wg_transform_attrs *attrs);
 void wg_transform_destroy(struct wg_transform *transform);
 bool wg_transform_set_output_format(struct wg_transform *transform, struct wg_format *format);
 bool wg_transform_get_status(struct wg_transform *transform, bool *accepts_input);
+HRESULT wg_transform_drain(struct wg_transform *transform);
+HRESULT wg_transform_flush(struct wg_transform *transform);
 
 unsigned int wg_format_get_max_size(const struct wg_format *format);
 
@@ -147,6 +150,10 @@ HRESULT wg_transform_read_quartz(struct wg_transform *transform, struct wg_sampl
 HRESULT wg_transform_read_dmo(struct wg_transform *transform, DMO_OUTPUT_DATA_BUFFER *buffer);
 
 HRESULT winegstreamer_stream_handler_create(REFIID riid, void **obj);
+
+unsigned int wg_format_get_stride(const struct wg_format *format);
+
+bool wg_video_format_is_rgb(enum wg_video_format format);
 
 HRESULT aac_decoder_create(REFIID riid, void **ret);
 HRESULT h264_decoder_create(REFIID riid, void **ret);

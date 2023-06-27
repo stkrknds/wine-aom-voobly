@@ -366,7 +366,7 @@ static NTSTATUS invoke_user_apc( CONTEXT *context, const user_apc_t *apc, NTSTAT
  */
 static void invoke_system_apc( const apc_call_t *call, apc_result_t *result, BOOL self )
 {
-    SIZE_T size, bits, limit, align;
+    SIZE_T size, bits;
     void *addr;
 
     memset( result, 0, sizeof(*result) );
@@ -411,32 +411,51 @@ static void invoke_system_apc( const apc_call_t *call, apc_result_t *result, BOO
         break;
     case APC_VIRTUAL_ALLOC_EX:
     {
-        MEM_ADDRESS_REQUIREMENTS r = { NULL };
-        MEM_EXTENDED_PARAMETER ext =
-        {
-            .Type = MemExtendedParameterAddressRequirements,
-            .Pointer = &r
-        };
-        SYSTEM_BASIC_INFORMATION sbi;
+        MEM_ADDRESS_REQUIREMENTS r;
+        MEM_EXTENDED_PARAMETER ext[2];
+        ULONG count = 0;
 
-        virtual_get_system_info( &sbi, is_wow64() );
         result->type = call->type;
         addr = wine_server_get_ptr( call->virtual_alloc_ex.addr );
         size = call->virtual_alloc_ex.size;
-        limit = min( (ULONG_PTR)sbi.HighestUserAddress, call->virtual_alloc_ex.limit );
-        align = call->virtual_alloc_ex.align;
-        if ((ULONG_PTR)addr == call->virtual_alloc_ex.addr && size == call->virtual_alloc_ex.size
-            && align == call->virtual_alloc_ex.align)
+        if ((ULONG_PTR)addr != call->virtual_alloc_ex.addr || size != call->virtual_alloc_ex.size)
         {
-            r.HighestEndingAddress = (void *)limit;
-            r.Alignment = align;
-            result->virtual_alloc_ex.status = NtAllocateVirtualMemoryEx( NtCurrentProcess(), &addr, &size,
-                                                                         call->virtual_alloc_ex.op_type,
-                                                                         call->virtual_alloc_ex.prot, &ext, 1 );
-            result->virtual_alloc_ex.addr = wine_server_client_ptr( addr );
-            result->virtual_alloc_ex.size = size;
+            result->virtual_alloc_ex.status = STATUS_WORKING_SET_LIMIT_RANGE;
+            break;
         }
-        else result->virtual_alloc_ex.status = STATUS_WORKING_SET_LIMIT_RANGE;
+        if (call->virtual_alloc_ex.limit_low || call->virtual_alloc_ex.limit_high || call->virtual_alloc_ex.align)
+        {
+            SYSTEM_BASIC_INFORMATION sbi;
+            SIZE_T limit_low, limit_high, align;
+
+            virtual_get_system_info( &sbi, is_wow64() );
+            limit_low = call->virtual_alloc_ex.limit_low;
+            limit_high = min( (ULONG_PTR)sbi.HighestUserAddress, call->virtual_alloc_ex.limit_high );
+            align = call->virtual_alloc_ex.align;
+            if (limit_low != call->virtual_alloc_ex.limit_low || align != call->virtual_alloc_ex.align)
+            {
+                result->virtual_alloc_ex.status = STATUS_WORKING_SET_LIMIT_RANGE;
+                break;
+            }
+            r.LowestStartingAddress = (void *)limit_low;
+            r.HighestEndingAddress = (void *)limit_high;
+            r.Alignment = align;
+            ext[count].Type = MemExtendedParameterAddressRequirements;
+            ext[count].Pointer = &r;
+            count++;
+        }
+        if (call->virtual_alloc_ex.attributes)
+        {
+            ext[count].Type = MemExtendedParameterAttributeFlags;
+            ext[count].ULong64 = call->virtual_alloc_ex.attributes;
+            count++;
+        }
+        result->virtual_alloc_ex.status = NtAllocateVirtualMemoryEx( NtCurrentProcess(), &addr, &size,
+                                                                     call->virtual_alloc_ex.op_type,
+                                                                     call->virtual_alloc_ex.prot,
+                                                                     ext, count );
+        result->virtual_alloc_ex.addr = wine_server_client_ptr( addr );
+        result->virtual_alloc_ex.size = size;
         break;
     }
     case APC_VIRTUAL_FREE:
@@ -548,11 +567,58 @@ static void invoke_system_apc( const apc_call_t *call, apc_result_t *result, BOO
         else result->map_view.status = STATUS_INVALID_PARAMETER;
         if (!self) NtClose( wine_server_ptr_handle(call->map_view.handle) );
         break;
+    case APC_MAP_VIEW_EX:
+    {
+        MEM_ADDRESS_REQUIREMENTS addr_req;
+        MEM_EXTENDED_PARAMETER ext[2];
+        ULONG count = 0;
+        LARGE_INTEGER offset;
+        ULONG_PTR limit_low, limit_high;
+
+        result->type = call->type;
+        addr = wine_server_get_ptr( call->map_view_ex.addr );
+        size = call->map_view_ex.size;
+        offset.QuadPart = call->map_view_ex.offset;
+        limit_low = call->map_view_ex.limit_low;
+        if ((ULONG_PTR)addr != call->map_view_ex.addr || size != call->map_view_ex.size ||
+            limit_low != call->map_view_ex.limit_low)
+        {
+            result->map_view_ex.status = STATUS_WORKING_SET_LIMIT_RANGE;
+            break;
+        }
+        if (call->map_view_ex.limit_low || call->map_view_ex.limit_high)
+        {
+            SYSTEM_BASIC_INFORMATION sbi;
+
+            virtual_get_system_info( &sbi, is_wow64() );
+            limit_high = min( (ULONG_PTR)sbi.HighestUserAddress, call->map_view_ex.limit_high );
+            addr_req.LowestStartingAddress = (void *)limit_low;
+            addr_req.HighestEndingAddress = (void *)limit_high;
+            addr_req.Alignment = 0;
+            ext[count].Type = MemExtendedParameterAddressRequirements;
+            ext[count].Pointer = &addr_req;
+            count++;
+        }
+        if (call->map_view_ex.machine)
+        {
+            ext[count].Type = MemExtendedParameterImageMachine;
+            ext[count].ULong = call->map_view_ex.machine;
+            count++;
+        }
+        result->map_view_ex.status = NtMapViewOfSectionEx( wine_server_ptr_handle(call->map_view_ex.handle),
+                                                           NtCurrentProcess(), &addr, &offset, &size,
+                                                           call->map_view_ex.alloc_type,
+                                                           call->map_view_ex.prot, ext, count );
+        result->map_view_ex.addr = wine_server_client_ptr( addr );
+        result->map_view_ex.size = size;
+        if (!self) NtClose( wine_server_ptr_handle(call->map_view_ex.handle) );
+        break;
+    }
     case APC_UNMAP_VIEW:
         result->type = call->type;
         addr = wine_server_get_ptr( call->unmap_view.addr );
         if ((ULONG_PTR)addr == call->unmap_view.addr)
-            result->unmap_view.status = NtUnmapViewOfSection( NtCurrentProcess(), addr );
+            result->unmap_view.status = NtUnmapViewOfSectionEx( NtCurrentProcess(), addr, call->unmap_view.flags );
         else
             result->unmap_view.status = STATUS_INVALID_PARAMETER;
         break;
@@ -628,10 +694,15 @@ unsigned int server_select( const select_op_t *select_op, data_size_t size, UINT
     int cookie;
     obj_handle_t apc_handle = 0;
     BOOL suspend_context = !!context;
-    apc_call_t call;
     apc_result_t result;
     sigset_t old_set;
     int signaled;
+    data_size_t reply_size;
+    struct
+    {
+        apc_call_t call;
+        context_t  context[2];
+    } reply_data;
 
     memset( &result, 0, sizeof(result) );
 
@@ -655,16 +726,17 @@ unsigned int server_select( const select_op_t *select_op, data_size_t size, UINT
                     wine_server_add_data( req, context, ctx_size );
                     suspend_context = FALSE; /* server owns the context now */
                 }
-                if (context) wine_server_set_reply( req, context, 2 * sizeof(*context) );
+                wine_server_set_reply( req, &reply_data,
+                                       context ? sizeof(reply_data) : sizeof(reply_data.call) );
                 ret = server_call_unlocked( req );
                 signaled    = reply->signaled;
                 apc_handle  = reply->apc_handle;
-                call        = reply->call;
+                reply_size  = wine_server_reply_size( reply );
             }
             SERVER_END_REQ;
 
             if (ret != STATUS_KERNEL_APC) break;
-            invoke_system_apc( &call, &result, FALSE );
+            invoke_system_apc( &reply_data.call, &result, FALSE );
 
             /* don't signal multiple times */
             if (size >= sizeof(select_op->signal_and_wait) && select_op->op == SELECT_SIGNAL_AND_WAIT)
@@ -677,7 +749,9 @@ unsigned int server_select( const select_op_t *select_op, data_size_t size, UINT
     }
     while (ret == STATUS_USER_APC || ret == STATUS_KERNEL_APC);
 
-    if (ret == STATUS_USER_APC) *user_apc = call.user;
+    if (ret == STATUS_USER_APC) *user_apc = reply_data.call.user;
+    if (reply_size > sizeof(reply_data.call))
+        memcpy( context, reply_data.context, reply_size - sizeof(reply_data.call) );
     return ret;
 }
 
@@ -756,7 +830,7 @@ unsigned int server_queue_process_apc( HANDLE process, const apc_call_t *call, a
         SERVER_START_REQ( queue_apc )
         {
             req->handle = wine_server_obj_handle( process );
-            req->call = *call;
+            wine_server_add_data( req, call, sizeof(*call) );
             if (!(ret = wine_server_call( req )))
             {
                 handle = wine_server_ptr_handle( reply->handle );

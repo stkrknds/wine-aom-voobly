@@ -82,7 +82,10 @@ struct alsa_stream
     pthread_mutex_t lock;
 };
 
-#define                     EXTRA_SAFE_RT   40000
+#define EXTRA_SAFE_RT 40000
+
+static const REFERENCE_TIME def_period = 100000;
+static const REFERENCE_TIME min_period = 50000;
 
 static const WCHAR drv_keyW[] = {'S','o','f','t','w','a','r','e','\\',
     'W','i','n','e','\\','D','r','i','v','e','r','s','\\',
@@ -473,6 +476,13 @@ static WCHAR *alsa_get_card_name(int card)
     return ret;
 }
 
+static NTSTATUS alsa_main_loop(void *args)
+{
+    struct main_loop_params *params = args;
+    NtSetEvent(params->event, NULL);
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS alsa_get_endpoint_ids(void *args)
 {
     static const WCHAR defaultW[] = {'d','e','f','a','u','l','t',0};
@@ -787,9 +797,41 @@ static NTSTATUS alsa_create_stream(void *args)
     snd_pcm_sw_params_t *sw_params = NULL;
     snd_pcm_format_t format;
     unsigned int rate, alsa_period_us, i;
-    WAVEFORMATEXTENSIBLE *fmtex;
+    WAVEFORMATEXTENSIBLE *fmtex = (WAVEFORMATEXTENSIBLE *)params->fmt;
     int err;
     SIZE_T size;
+
+    params->result = S_OK;
+
+    if (params->share == AUDCLNT_SHAREMODE_SHARED) {
+        params->period = def_period;
+        if (params->duration < 3 * params->period)
+            params->duration = 3 * params->period;
+    } else {
+        if (fmtex->Format.wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+           (fmtex->dwChannelMask == 0 || fmtex->dwChannelMask & SPEAKER_RESERVED))
+            params->result = AUDCLNT_E_UNSUPPORTED_FORMAT;
+        else {
+            if (!params->period)
+                params->period = def_period;
+            if (params->period < min_period || params->period > 5000000)
+                params->result = AUDCLNT_E_INVALID_DEVICE_PERIOD;
+            else if (params->duration > 20000000) /* The smaller the period, the lower this limit. */
+                params->result = AUDCLNT_E_BUFFER_SIZE_ERROR;
+            else if (params->flags & AUDCLNT_STREAMFLAGS_EVENTCALLBACK) {
+                if (params->duration != params->period)
+                    params->result = AUDCLNT_E_BUFDURATION_PERIOD_NOT_EQUAL;
+
+                FIXME("EXCLUSIVE mode with EVENTCALLBACK\n");
+
+                params->result = AUDCLNT_E_DEVICE_IN_USE;
+            } else if (params->duration < 8 * params->period)
+                params->duration = 8 * params->period; /* May grow above 2s. */
+        }
+    }
+
+    if (FAILED(params->result))
+        return STATUS_SUCCESS;
 
     stream = calloc(1, sizeof(*stream));
     if(!stream){
@@ -1008,6 +1050,7 @@ exit:
         free(stream->vols);
         free(stream);
     }else{
+        *params->channel_count = params->fmt->nChannels;
         *params->stream = (stream_handle)(UINT_PTR)stream;
     }
 
@@ -2096,6 +2139,20 @@ exit:
     return STATUS_SUCCESS;
 }
 
+static NTSTATUS alsa_get_device_period(void *args)
+{
+    struct get_device_period_params *params = args;
+
+    if (params->def_period)
+        *params->def_period = def_period;
+    if (params->min_period)
+        *params->min_period = def_period;
+
+    params->result = S_OK;
+
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS alsa_get_buffer_size(void *args)
 {
     struct get_buffer_size_params *params = args;
@@ -2176,6 +2233,12 @@ static NTSTATUS alsa_get_position(void *args)
     struct alsa_stream *stream = handle_get_stream(params->stream);
     UINT64 position;
     snd_pcm_state_t alsa_state;
+
+    if (params->device) {
+        FIXME("Device position reporting not implemented\n");
+        params->result = E_NOTIMPL;
+        return STATUS_SUCCESS;
+    }
 
     alsa_lock(stream);
 
@@ -2438,7 +2501,7 @@ unixlib_entry_t __wine_unix_call_funcs[] =
 {
     alsa_not_implemented,
     alsa_not_implemented,
-    alsa_not_implemented,
+    alsa_main_loop,
     alsa_get_endpoint_ids,
     alsa_create_stream,
     alsa_release_stream,
@@ -2452,7 +2515,7 @@ unixlib_entry_t __wine_unix_call_funcs[] =
     alsa_release_capture_buffer,
     alsa_is_format_supported,
     alsa_get_mix_format,
-    alsa_not_implemented,
+    alsa_get_device_period,
     alsa_get_buffer_size,
     alsa_get_latency,
     alsa_get_current_padding,
@@ -2475,6 +2538,19 @@ unixlib_entry_t __wine_unix_call_funcs[] =
 #ifdef _WIN64
 
 typedef UINT PTR32;
+
+static NTSTATUS alsa_wow64_main_loop(void *args)
+{
+    struct
+    {
+        PTR32 event;
+    } *params32 = args;
+    struct main_loop_params params =
+    {
+        .event = ULongToHandle(params32->event)
+    };
+    return alsa_main_loop(&params);
+}
 
 static NTSTATUS alsa_wow64_get_endpoint_ids(void *args)
 {
@@ -2647,6 +2723,28 @@ static NTSTATUS alsa_wow64_get_mix_format(void *args)
     return STATUS_SUCCESS;
 }
 
+static NTSTATUS alsa_wow64_get_device_period(void *args)
+{
+    struct
+    {
+        PTR32 device;
+        EDataFlow flow;
+        HRESULT result;
+        PTR32 def_period;
+        PTR32 min_period;
+    } *params32 = args;
+    struct get_device_period_params params =
+    {
+        .device = ULongToPtr(params32->device),
+        .flow = params32->flow,
+        .def_period = ULongToPtr(params32->def_period),
+        .min_period = ULongToPtr(params32->min_period),
+    };
+    alsa_get_device_period(&params);
+    params32->result = params.result;
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS alsa_wow64_get_buffer_size(void *args)
 {
     struct
@@ -2767,7 +2865,6 @@ static NTSTATUS alsa_wow64_set_volumes(void *args)
         float master_volume;
         PTR32 volumes;
         PTR32 session_volumes;
-        int channel;
     } *params32 = args;
     struct set_volumes_params params =
     {
@@ -2775,7 +2872,6 @@ static NTSTATUS alsa_wow64_set_volumes(void *args)
         .master_volume = params32->master_volume,
         .volumes = ULongToPtr(params32->volumes),
         .session_volumes = ULongToPtr(params32->session_volumes),
-        .channel = params32->channel
     };
     return alsa_set_volumes(&params);
 }
@@ -2859,7 +2955,7 @@ unixlib_entry_t __wine_unix_call_wow64_funcs[] =
 {
     alsa_not_implemented,
     alsa_not_implemented,
-    alsa_not_implemented,
+    alsa_wow64_main_loop,
     alsa_wow64_get_endpoint_ids,
     alsa_wow64_create_stream,
     alsa_wow64_release_stream,
@@ -2873,7 +2969,7 @@ unixlib_entry_t __wine_unix_call_wow64_funcs[] =
     alsa_release_capture_buffer,
     alsa_wow64_is_format_supported,
     alsa_wow64_get_mix_format,
-    alsa_not_implemented,
+    alsa_wow64_get_device_period,
     alsa_wow64_get_buffer_size,
     alsa_wow64_get_latency,
     alsa_wow64_get_current_padding,

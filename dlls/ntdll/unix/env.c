@@ -1857,13 +1857,20 @@ static void init_peb( RTL_USER_PROCESS_PARAMETERS *params, void *module )
     peb->ImageSubSystemMinorVersion = main_image_info.MinorSubsystemVersion;
 
 #ifdef _WIN64
-    if (main_image_info.Machine != current_machine)
+    switch (main_image_info.Machine)
     {
+    case IMAGE_FILE_MACHINE_I386:
+    case IMAGE_FILE_MACHINE_ARMNT:
         NtCurrentTeb()->WowTebOffset = teb_offset;
         NtCurrentTeb()->Tib.ExceptionList = (void *)((char *)NtCurrentTeb() + teb_offset);
         wow_peb = (PEB32 *)((char *)peb + page_size);
-        set_thread_id( NtCurrentTeb(),  GetCurrentProcessId(), GetCurrentThreadId() );
+        set_thread_id( NtCurrentTeb(), GetCurrentProcessId(), GetCurrentThreadId() );
         ERR( "starting %s in experimental wow64 mode\n", debugstr_us(&params->ImagePathName) );
+        break;
+    case IMAGE_FILE_MACHINE_AMD64:
+        if (main_image_info.Machine == current_machine) break;
+        ERR( "starting %s in experimental ARM64EC mode\n", debugstr_us(&params->ImagePathName) );
+        break;
     }
 #endif
 
@@ -1929,7 +1936,7 @@ static RTL_USER_PROCESS_PARAMETERS *build_initial_params( void **module )
     add_registry_environment( &env, &env_pos, &env_size );
     env[env_pos++] = 0;
 
-    status = load_main_exe( NULL, main_argv[1], curdir, &image, module );
+    status = load_main_exe( NULL, main_argv[1], curdir, 0, &image, module );
     if (!status)
     {
         char *loader;
@@ -2009,6 +2016,7 @@ void init_startup_info(void)
     SIZE_T size, info_size, env_size, env_pos;
     RTL_USER_PROCESS_PARAMETERS *params = NULL;
     startup_info_t *info;
+    USHORT machine;
 
     if (!startup_info_size)
     {
@@ -2023,6 +2031,7 @@ void init_startup_info(void)
     {
         wine_server_set_reply( req, info, startup_info_size );
         status = wine_server_call( req );
+        machine = reply->machine;
         info_size = reply->info_size;
         env_size = (wine_server_reply_size( reply ) - info_size) / sizeof(WCHAR);
     }
@@ -2101,8 +2110,8 @@ void init_startup_info(void)
     free( env );
     free( info );
 
-    status = load_main_exe( params->ImagePathName.Buffer, NULL,
-                            params->CommandLine.Buffer, &image, &module );
+    status = load_main_exe( params->ImagePathName.Buffer, NULL, params->CommandLine.Buffer,
+                            machine, &image, &module );
     if (status)
     {
         MESSAGE( "wine: failed to start %s\n", debugstr_us(&params->ImagePathName) );
@@ -2119,7 +2128,7 @@ void init_startup_info(void)
  *           create_startup_info
  */
 void *create_startup_info( const UNICODE_STRING *nt_image, const RTL_USER_PROCESS_PARAMETERS *params,
-                           DWORD *info_size )
+                           const pe_image_info_t *pe_info, DWORD *info_size )
 {
     startup_info_t *info;
     UNICODE_STRING dos_image = *nt_image;
@@ -2145,7 +2154,8 @@ void *create_startup_info( const UNICODE_STRING *nt_image, const RTL_USER_PROCES
 
     info->debug_flags   = params->DebugFlags;
     info->console_flags = params->ConsoleFlags;
-    info->console       = wine_server_obj_handle( params->ConsoleHandle );
+    if (pe_info->subsystem == IMAGE_SUBSYSTEM_WINDOWS_CUI)
+        info->console   = wine_server_obj_handle( params->ConsoleHandle );
     info->hstdin        = wine_server_obj_handle( params->hStdInput );
     info->hstdout       = wine_server_obj_handle( params->hStdOutput );
     info->hstderr       = wine_server_obj_handle( params->hStdError );

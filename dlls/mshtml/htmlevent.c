@@ -83,7 +83,7 @@ static const WCHAR *event_types[] = {
     L"MouseEvent",
     L"Event", /* FIXME */
     L"UIEvent",
-    L"Event", /* FIXME */
+    L"PageTransitionEvent",
     L"MessageEvent",
     L"ProgressEvent",
     L"StorageEvent",
@@ -2583,6 +2583,7 @@ typedef struct {
     DOMEvent event;
     IDOMProgressEvent IDOMProgressEvent_iface;
     nsIDOMProgressEvent *nsevent;
+    BOOL manual_init;
 } DOMProgressEvent;
 
 static inline DOMProgressEvent *impl_from_IDOMProgressEvent(IDOMProgressEvent *iface)
@@ -2670,7 +2671,7 @@ static HRESULT WINAPI DOMProgressEvent_get_total(IDOMProgressEvent *iface, ULONG
 
     TRACE("(%p)->(%p)\n", This, p);
 
-    if(NS_FAILED(nsIDOMProgressEvent_GetLengthComputable(This->nsevent, &b)) || !b) {
+    if(!This->manual_init && (NS_FAILED(nsIDOMProgressEvent_GetLengthComputable(This->nsevent, &b)) || !b)) {
         *p = ~0;
         return S_OK;
     }
@@ -2683,9 +2684,30 @@ static HRESULT WINAPI DOMProgressEvent_initProgressEvent(IDOMProgressEvent *ifac
                                                          ULONGLONG loaded, ULONGLONG total)
 {
     DOMProgressEvent *This = impl_from_IDOMProgressEvent(iface);
-    FIXME("(%p)->(%s %x %x %x %s %s)\n", This, debugstr_w(type), can_bubble, cancelable, lengthComputable,
+    nsAString type_str;
+    nsresult nsres;
+    HRESULT hres;
+
+    TRACE("(%p)->(%s %x %x %x %s %s)\n", This, debugstr_w(type), can_bubble, cancelable, lengthComputable,
           wine_dbgstr_longlong(loaded), wine_dbgstr_longlong(total));
-    return E_NOTIMPL;
+
+    if(This->event.target) {
+        TRACE("called on already dispatched event\n");
+        return S_OK;
+    }
+
+    hres = IDOMEvent_initEvent(&This->event.IDOMEvent_iface, type, can_bubble, cancelable);
+    if(SUCCEEDED(hres)) {
+        nsAString_InitDepend(&type_str, type);
+        nsres = nsIDOMProgressEvent_InitProgressEvent(This->nsevent, &type_str, !!can_bubble, !!cancelable,
+                                                      !!lengthComputable, loaded, total);
+        nsAString_Finish(&type_str);
+        if(NS_FAILED(nsres))
+            return map_nsresult(nsres);
+        This->manual_init = TRUE;
+    }
+
+    return hres;
 }
 
 static const IDOMProgressEventVtbl DOMProgressEventVtbl = {
@@ -3100,9 +3122,6 @@ static DOMEvent *progress_event_ctor(void *iface, nsIDOMEvent *nsevent, eventid_
 {
     DOMProgressEvent *progress_event;
 
-    if(compat_mode < COMPAT_MODE_IE10)
-        return event_ctor(sizeof(DOMEvent), &DOMEvent_dispex, NULL, NULL, nsevent, event_id, compat_mode);
-
     if(!(progress_event = event_ctor(sizeof(DOMProgressEvent), &DOMProgressEvent_dispex,
             DOMProgressEvent_query_interface, DOMProgressEvent_destroy, nsevent, event_id, compat_mode)))
         return NULL;
@@ -3132,6 +3151,7 @@ static DOMEvent *storage_event_ctor(void *iface, nsIDOMEvent *nsevent, eventid_t
 static const struct {
     REFIID iid;
     DOMEvent *(*ctor)(void *iface, nsIDOMEvent *nsevent, eventid_t, compat_mode_t);
+    compat_mode_t min_compat_mode;
 } event_types_ctor_table[] = {
     [EVENT_TYPE_EVENT]          = { NULL,                         generic_event_ctor },
     [EVENT_TYPE_UIEVENT]        = { &IID_nsIDOMUIEvent,           ui_event_ctor },
@@ -3142,7 +3162,7 @@ static const struct {
     [EVENT_TYPE_DRAG]           = { NULL,                         generic_event_ctor },
     [EVENT_TYPE_PAGETRANSITION] = { NULL,                         page_transition_event_ctor },
     [EVENT_TYPE_CUSTOM]         = { &IID_nsIDOMCustomEvent,       custom_event_ctor },
-    [EVENT_TYPE_PROGRESS]       = { &IID_nsIDOMProgressEvent,     progress_event_ctor },
+    [EVENT_TYPE_PROGRESS]       = { &IID_nsIDOMProgressEvent,     progress_event_ctor, COMPAT_MODE_IE10 },
     [EVENT_TYPE_MESSAGE]        = { NULL,                         message_event_ctor },
     [EVENT_TYPE_STORAGE]        = { NULL,                         storage_event_ctor },
 };
@@ -3152,6 +3172,9 @@ static DOMEvent *alloc_event(nsIDOMEvent *nsevent, compat_mode_t compat_mode, ev
 {
     void *iface = NULL;
     DOMEvent *event;
+
+    if(compat_mode < event_types_ctor_table[event_type].min_compat_mode)
+        event_type = EVENT_TYPE_EVENT;
 
     if(event_types_ctor_table[event_type].iid)
         nsIDOMEvent_QueryInterface(nsevent, event_types_ctor_table[event_type].iid, &iface);
@@ -3315,7 +3338,7 @@ HRESULT create_storage_event(HTMLDocumentNode *doc, BSTR key, BSTR old_value, BS
     return S_OK;
 }
 
-static HRESULT call_disp_func(IDispatch *disp, DISPPARAMS *dp, VARIANT *retv)
+HRESULT call_disp_func(IDispatch *disp, DISPPARAMS *dp, VARIANT *retv)
 {
     IDispatchEx *dispex;
     EXCEPINFO ei;

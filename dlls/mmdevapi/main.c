@@ -42,7 +42,7 @@
 #include "winreg.h"
 #include "spatialaudioclient.h"
 
-#include "mmdevapi.h"
+#include "mmdevapi_private.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(mmdevapi);
@@ -100,7 +100,7 @@ static BOOL load_driver(const WCHAR *name, DriverFuncs *driver)
         if(!driver->p##n) { goto fail; } } while(0)
     LDFC(GetEndpointIDs);
     LDFC(GetAudioEndpoint);
-    LDFC(GetAudioSessionManager);
+    LDFC(GetAudioSessionWrapper);
 #undef LDFC
 
     /* optional - do not fail if not found */
@@ -201,6 +201,8 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
                 if (status)
                     WARN("Unable to deinitialize library: %lx\n", status);
             }
+
+            main_loop_stop();
 
             if (!lpvReserved)
                 MMDevEnum_Free();

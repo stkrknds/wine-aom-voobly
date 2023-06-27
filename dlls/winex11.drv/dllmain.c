@@ -30,11 +30,6 @@ static const callback_func callback_funcs[] =
 {
     x11drv_dnd_drop_event,
     x11drv_dnd_leave_event,
-    x11drv_ime_get_cursor_pos,
-    x11drv_ime_set_composition_status,
-    x11drv_ime_set_cursor_pos,
-    x11drv_ime_set_open_status,
-    x11drv_ime_update_association,
 };
 
 C_ASSERT( ARRAYSIZE(callback_funcs) == client_funcs_count );
@@ -52,8 +47,6 @@ static const kernel_callback kernel_callbacks[] =
     x11drv_dnd_enter_event,
     x11drv_dnd_position_event,
     x11drv_dnd_post_drop,
-    x11drv_ime_set_composition_string,
-    x11drv_ime_set_result,
     x11drv_systray_change_owner,
 };
 
@@ -79,16 +72,6 @@ BOOL WINAPI DllMain( HINSTANCE instance, DWORD reason, void *reserved )
     callback_table = NtCurrentTeb()->Peb->KernelCallbackTable;
     memcpy( callback_table + NtUserDriverCallbackFirst, kernel_callbacks, sizeof(kernel_callbacks) );
     return TRUE;
-}
-
-
-/***********************************************************************
- *           wine_create_desktop (winex11.@)
- */
-BOOL CDECL wine_create_desktop( UINT width, UINT height )
-{
-    struct create_desktop_params params = { .width = width, .height = height };
-    return X11DRV_CALL( create_desktop, &params );
 }
 
 /***********************************************************************

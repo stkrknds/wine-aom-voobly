@@ -1411,7 +1411,10 @@ UINT MSI_OpenPackageW(LPCWSTR szPackage, DWORD dwOptions, MSIPACKAGE **pPackage)
         TRACE("opening package %s\n", debugstr_w( localfile ));
         r = MSI_OpenDatabaseW( localfile, MSIDBOPEN_TRANSACT, &db );
         if (r != ERROR_SUCCESS)
+        {
+            free( product_version );
             return r;
+        }
 
         if (product_version)
         {
@@ -1897,7 +1900,12 @@ INT MSI_ProcessMessage( MSIPACKAGE *package, INSTALLMESSAGE eMessageType, MSIREC
             }
 
             template = malloc((wcslen(template_rec) + wcslen(template_prefix) + 1) * sizeof(WCHAR));
-            if (!template) return ERROR_OUTOFMEMORY;
+            if (!template)
+            {
+                free(template_prefix);
+                free(template_rec);
+                return ERROR_OUTOFMEMORY;
+            }
 
             lstrcpyW(template, template_prefix);
             lstrcatW(template, template_rec);

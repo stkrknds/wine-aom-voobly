@@ -75,6 +75,7 @@
 #define MSHTML_E_INVALID_PROPERTY 0x800a01b6
 #define MSHTML_E_INVALID_ACTION   0x800a01bd
 #define MSHTML_E_NODOC            0x800a025c
+#define MSHTML_E_NOT_FUNC         0x800a138a
 
 typedef struct DOMEvent DOMEvent;
 typedef struct HTMLDOMNode HTMLDOMNode;
@@ -804,7 +805,6 @@ typedef struct {
     void (*destructor)(HTMLDOMNode*);
     const cpc_entry_t *cpc_entries;
     HRESULT (*clone)(HTMLDOMNode*,nsIDOMNode*,HTMLDOMNode**);
-    HRESULT (*dispatch_nsevent_hook)(HTMLDOMNode*,DOMEvent*);
     HRESULT (*handle_event)(HTMLDOMNode*,DWORD,nsIDOMEvent*,BOOL*);
     HRESULT (*get_attr_col)(HTMLDOMNode*,HTMLAttributeCollection**);
     EventTarget *(*get_event_prop_target)(HTMLDOMNode*,int);
@@ -1023,6 +1023,7 @@ void ConnectionPointContainer_Destroy(ConnectionPointContainer*) DECLSPEC_HIDDEN
 HRESULT create_gecko_browser(HTMLDocumentObj*,GeckoBrowser**) DECLSPEC_HIDDEN;
 void detach_gecko_browser(GeckoBrowser*) DECLSPEC_HIDDEN;
 
+DWORD get_compat_mode_version(compat_mode_t compat_mode) DECLSPEC_HIDDEN;
 compat_mode_t lock_document_mode(HTMLDocumentNode*) DECLSPEC_HIDDEN;
 
 void init_mutation(nsIComponentManager*) DECLSPEC_HIDDEN;
@@ -1055,6 +1056,7 @@ void init_node_cc(void) DECLSPEC_HIDDEN;
 
 HRESULT nsuri_to_url(LPCWSTR,BOOL,BSTR*) DECLSPEC_HIDDEN;
 
+HRESULT call_disp_func(IDispatch*,DISPPARAMS*,VARIANT*) DECLSPEC_HIDDEN;
 void call_property_onchanged(ConnectionPointContainer*,DISPID) DECLSPEC_HIDDEN;
 HRESULT call_set_active_object(IOleInPlaceUIWindow*,IOleInPlaceActiveObject*) DECLSPEC_HIDDEN;
 
@@ -1208,7 +1210,6 @@ HRESULT HTMLElement_QI(HTMLDOMNode*,REFIID,void**) DECLSPEC_HIDDEN;
 void HTMLElement_destructor(HTMLDOMNode*) DECLSPEC_HIDDEN;
 HRESULT HTMLElement_clone(HTMLDOMNode*,nsIDOMNode*,HTMLDOMNode**) DECLSPEC_HIDDEN;
 HRESULT HTMLElement_get_attr_col(HTMLDOMNode*,HTMLAttributeCollection**) DECLSPEC_HIDDEN;
-HRESULT HTMLElement_dispatch_nsevent_hook(HTMLDOMNode*,DOMEvent*) DECLSPEC_HIDDEN;
 HRESULT HTMLElement_handle_event(HTMLDOMNode*,DWORD,nsIDOMEvent*,BOOL*) DECLSPEC_HIDDEN;
 void HTMLElement_init_dispex_info(dispex_data_t*,compat_mode_t) DECLSPEC_HIDDEN;
 

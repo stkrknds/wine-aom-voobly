@@ -643,6 +643,7 @@ AC_SUBST(TOP_INSTALL_LIB,"")
 AC_SUBST(TOP_INSTALL_DEV,"")
 AC_SUBST(WINELOADER_LDFLAGS,"")
 AC_SUBST(WINEPRELOADER_LDFLAGS,"")
+AC_SUBST(DLLEXT,".so")
 LIBEXT="so"
 WINE_PATH_SONAME_TOOLS
 WINE_CONFIG_HELPERS
@@ -650,6 +651,7 @@ WINE_CONFIG_HELPERS
 case $host_os in
   cygwin*|mingw32*)
     LIBEXT="dll"
+    DLLEXT=""
     EXTRACFLAGS="-D__WINE_PE_BUILD"
     dnl Disable stdcall fixups to catch prototype mismatches
     case $host_cpu in
@@ -767,22 +769,33 @@ case $host_os in
 
     WINE_TRY_CFLAGS([-Wl,-z,defs],[UNIXLDFLAGS="$UNIXLDFLAGS -Wl,-z,defs"])
     WINE_TRY_CFLAGS([-Wl,--export-dynamic],[WINELOADER_LDFLAGS="-Wl,--export-dynamic"])
-    WINEPRELOADER_LDFLAGS="-static -nostartfiles -nodefaultlibs -Wl,-Ttext=0x7d400000"
+    WINEPRELOADER_LDFLAGS="-nostartfiles -nodefaultlibs"
 
-    case $host_cpu in
-      *i[[3456789]]86* | x86_64 | *aarch64* | arm*)
-        WINE_TRY_CFLAGS([-Wl,-Ttext-segment=0x7bc00000],
-                        [case $host_os in
-                         freebsd* | kfreebsd*-gnu) WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,-Ttext-segment=0x60000000" ;;
-                         *) WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,-Ttext-segment=0x7d000000" ;;
-                         esac],
-                        [WINE_TRY_CFLAGS([-Wl,--section-start,.interp=0x7d000400],
-                                         [case $host_os in
-                                            freebsd* | kfreebsd*-gnu) WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,--section-start,.interp=0x60000400" ;;
-                                            *) WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,--section-start,.interp=0x7d000400" ;;
-                                         esac])])
-        WINE_TRY_CFLAGS([-Wl,-z,max-page-size=0x1000],
-                        [WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,-z,max-page-size=0x1000"])
+    case $host_os in
+      linux*)
+        AS_VAR_APPEND([WINELOADER_LDFLAGS],[" -pie"])
+        case $HOST_ARCH in
+          i386|arm)
+            AS_VAR_APPEND([WINEPRELOADER_LDFLAGS],[" -static -Wl,-Ttext=0x7d400000"]) ;;
+          *)
+            WINE_TRY_CFLAGS([-static-pie],
+                            [AS_VAR_APPEND([WINEPRELOADER_LDFLAGS],[" -static-pie"])],
+                            [AS_VAR_APPEND([WINEPRELOADER_LDFLAGS],[" -static -Wl,-Ttext=0x7d7d00000000"])])
+            ;;
+        esac
+        ;;
+      *)
+        case $HOST_ARCH in
+          i386|arm)
+            WINE_TRY_CFLAGS([-Wl,-Ttext-segment=0x60000000],
+                            [AS_VAR_APPEND([WINELOADER_LDFLAGS],[" -Wl,-Ttext-segment=0x60000000"])],
+                            [WINE_TRY_CFLAGS([-Wl,--section-start,.interp=0x60000400],
+                                [AS_VAR_APPEND([WINELOADER_LDFLAGS],[" -Wl,--section-start,.interp=0x60000400"])])])
+            ;;
+          *)
+            AS_VAR_APPEND([WINELOADER_LDFLAGS],[" -pie"])
+            ;;
+        esac
         ;;
     esac
     ;;
@@ -842,11 +855,13 @@ do
 
     saved_CC=$CC
     saved_CFLAGS=$CFLAGS
+    saved_LDFLAGS=$LDFLAGS
 
     CFLAGS=${CROSSCFLAGS:-"-g -O2"}
+    LDFLAGS=$CROSSLDFLAGS
     AS_VAR_COPY([CC],[${wine_arch}_CC])
     AS_VAR_COPY([${wine_arch}_CFLAGS],[CFLAGS])
-    AS_VAR_COPY([${wine_arch}_LDFLAGS],[CROSSLDFLAGS])
+    AS_VAR_COPY([${wine_arch}_LDFLAGS],[LDFLAGS])
     AS_VAR_SET([${wine_arch}_EXTRACFLAGS],["-D__WINE_PE_BUILD -Wall"])
 
     target=""
@@ -892,6 +907,7 @@ do
     then
         CC=$saved_CC
         CFLAGS=$saved_CFLAGS
+        LDFLAGS=$saved_LDFLAGS
         continue
     fi
     AS_VAR_APPEND([PE_ARCHS],[" $wine_arch"])
@@ -944,7 +960,8 @@ do
                                [AS_VAR_APPEND([${wine_arch}_LDFLAGS],[" -Wl,--disable-stdcall-fixup"])]) ;;
       x86_64) WINE_TRY_PE_CFLAGS([-Wformat-overflow])
               WINE_TRY_PE_CFLAGS([-Wnonnull])
-              WINE_TRY_PE_CFLAGS([-mcx16]) ;;
+              WINE_TRY_PE_CFLAGS([-mcx16])
+              WINE_TRY_PE_CFLAGS([-mcmodel=small]) ;;
     esac
 
     dnl Determine debug info format
@@ -982,15 +999,17 @@ do
 
     CC=$saved_CC
     CFLAGS=$saved_CFLAGS
+    LDFLAGS=$saved_LDFLAGS
 done
 
-if test $HOST_ARCH = aarch64 -a "x$PE_ARCHS" = x
+if test $HOST_ARCH = aarch64
 then
-    AC_MSG_ERROR([PE cross-compilation is required for ARM64, please install clang/llvm-dlltool/lld, or llvm-mingw.])
-fi
-
-WINE_NOTICE_WITH(mingw,[test "x$PE_ARCHS" = "x"],
+    test "x$PE_ARCHS" != x || AC_MSG_ERROR([PE cross-compilation is required for ARM64, please install clang/llvm-dlltool/lld, or llvm-mingw.])
+    DLLEXT=""
+else
+    WINE_NOTICE_WITH(mingw,[test "x$PE_ARCHS" = "x"],
                  [MinGW compiler not found, cross-compiling PE files won't be supported.])
+fi
 
 dnl **** External libraries ****
 
@@ -1089,7 +1108,7 @@ then
         if test "$ac_cv_mingw_header_vkd3d_h" = "yes" -a "$ac_cv_mingw_header_vkd3d_shader_h" = "yes"
         then
             WINE_CHECK_MINGW_LIB(vkd3d,vkd3d_set_log_callback,[:],[:],[$VKD3D_PE_LIBS])
-            WINE_CHECK_MINGW_LIB(vkd3d-shader,vkd3d_shader_compile,[:],[:],[$VKD3D_PE_LIBS])
+            WINE_CHECK_MINGW_LIB(vkd3d-shader,vkd3d_shader_serialize_dxbc,[:],[:],[$VKD3D_PE_LIBS])
             if test "$ac_cv_mingw_lib_vkd3d" = "no" -o "$ac_cv_mingw_lib_vkd3d_shader" = "no"
             then
                 VKD3D_PE_CFLAGS=""
@@ -1121,6 +1140,7 @@ WINE_EXTLIB_FLAGS(JXR, jxr, jxr, "-I\$(top_srcdir)/libs/jxr/jxrgluelib -I\$(top_
 WINE_EXTLIB_FLAGS(LCMS2, lcms2, lcms2, "-I\$(top_srcdir)/libs/lcms2/include")
 WINE_EXTLIB_FLAGS(LDAP, ldap, ldap, "-I\$(top_srcdir)/libs/ldap/include")
 WINE_EXTLIB_FLAGS(MPG123, mpg123, mpg123, "-I\$(top_srcdir)/libs/mpg123/src/libmpg123")
+WINE_EXTLIB_FLAGS(MUSL, musl, musl)
 WINE_EXTLIB_FLAGS(PNG, png, "png \$(ZLIB_PE_LIBS)", "-I\$(top_srcdir)/libs/png")
 WINE_EXTLIB_FLAGS(TIFF, tiff, "tiff \$(ZLIB_PE_LIBS)", "-I\$(top_srcdir)/libs/tiff/libtiff")
 WINE_EXTLIB_FLAGS(VKD3D, vkd3d, vkd3d, "-I\$(top_srcdir)/libs/vkd3d/include")
@@ -1339,11 +1359,13 @@ fi
 if test "x$with_wayland" != "xno"
 then
     WINE_PACKAGE_FLAGS(WAYLAND_CLIENT,[wayland-client],,,,
-        [AC_CHECK_HEADERS([wayland-client.h])
-         AC_CHECK_LIB(wayland-client,wl_display_connect,[:],
-                      [WAYLAND_CLIENT_LIBS=""],[$WAYLAND_CLIENT_LIBS])])
+        [AC_CHECK_HEADERS([wayland-client.h],
+           [AC_CHECK_LIB(wayland-client,wl_display_connect,
+              [AC_PATH_PROG(WAYLAND_SCANNER,wayland-scanner,
+                            [`test -n "$PKG_CONFIG" && $PKG_CONFIG --variable=wayland_scanner wayland-scanner 2>/dev/null`])],
+              [WAYLAND_CLIENT_LIBS=""],[$WAYLAND_CLIENT_LIBS])])])
 fi
-WINE_NOTICE_WITH(wayland, [test -z "$WAYLAND_CLIENT_LIBS"],
+WINE_NOTICE_WITH(wayland, [test -z "$WAYLAND_CLIENT_LIBS" -o -z "$WAYLAND_SCANNER"],
                  [Wayland ${notice_platform}development files not found, the Wayland driver won't be supported.],
                  [enable_winewayland_drv])
 
@@ -1890,6 +1912,7 @@ char*f(const char *h,char n) {return strchr(h,n);}]])],[ac_cv_c_logicalop_noisy=
     *) MSVCRTFLAGS="-D_WIN32"
        WINE_TRY_CFLAGS([-fno-builtin],[MSVCRTFLAGS="$MSVCRTFLAGS -fno-builtin"])
        WINE_TRY_CFLAGS([-fshort-wchar],[MSVCRTFLAGS="$MSVCRTFLAGS -fshort-wchar"])
+       WINE_TRY_CFLAGS([-fvisibility=hidden],[MSVCRTFLAGS="$MSVCRTFLAGS -fvisibility=hidden"])
        WINE_TRY_CFLAGS([-Wno-format],[MSVCRTFLAGS="$MSVCRTFLAGS -Wno-format"]) ;;
   esac
 
@@ -2327,7 +2350,7 @@ wine_srcdir=
 test "$srcdir" = . || wine_srcdir="$srcdir/"
 
 WINE_CONFIG_SYMLINK(wine,tools/winewrapper)
-WINE_CONFIG_SYMLINK(wine64,tools/winewrapper,["$HOST_ARCH" = x86_64 -o -n "$with_wine64"])
+WINE_CONFIG_SYMLINK(wine64,tools/winewrapper,["$wine_binary" = wine64 -o -n "$with_wine64"])
 
 WINE_CONFIG_MAKEFILE(dlls/acledit)
 WINE_CONFIG_MAKEFILE(dlls/aclui)
@@ -2626,6 +2649,7 @@ WINE_CONFIG_MAKEFILE(dlls/hlink)
 WINE_CONFIG_MAKEFILE(dlls/hlink/tests)
 WINE_CONFIG_MAKEFILE(dlls/hnetcfg)
 WINE_CONFIG_MAKEFILE(dlls/hnetcfg/tests)
+WINE_CONFIG_MAKEFILE(dlls/hrtfapo)
 WINE_CONFIG_MAKEFILE(dlls/http.sys)
 WINE_CONFIG_MAKEFILE(dlls/httpapi)
 WINE_CONFIG_MAKEFILE(dlls/httpapi/tests)
@@ -3037,6 +3061,7 @@ WINE_CONFIG_MAKEFILE(dlls/traffic)
 WINE_CONFIG_MAKEFILE(dlls/twain.dll16,enable_win16)
 WINE_CONFIG_MAKEFILE(dlls/twain_32)
 WINE_CONFIG_MAKEFILE(dlls/twain_32/tests)
+WINE_CONFIG_MAKEFILE(dlls/twinapi.appcore)
 WINE_CONFIG_MAKEFILE(dlls/typelib.dll16,enable_win16)
 WINE_CONFIG_MAKEFILE(dlls/tzres)
 WINE_CONFIG_MAKEFILE(dlls/ucrtbase)
@@ -3256,6 +3281,7 @@ WINE_CONFIG_MAKEFILE(dlls/xaudio2_6)
 WINE_CONFIG_MAKEFILE(dlls/xaudio2_7)
 WINE_CONFIG_MAKEFILE(dlls/xaudio2_7/tests)
 WINE_CONFIG_MAKEFILE(dlls/xaudio2_8)
+WINE_CONFIG_MAKEFILE(dlls/xaudio2_8/tests)
 WINE_CONFIG_MAKEFILE(dlls/xaudio2_9)
 WINE_CONFIG_MAKEFILE(dlls/xinput1_1)
 WINE_CONFIG_MAKEFILE(dlls/xinput1_2)
@@ -3284,6 +3310,7 @@ WINE_CONFIG_MAKEFILE(libs/lcms2)
 WINE_CONFIG_MAKEFILE(libs/ldap)
 WINE_CONFIG_MAKEFILE(libs/mfuuid)
 WINE_CONFIG_MAKEFILE(libs/mpg123)
+WINE_CONFIG_MAKEFILE(libs/musl)
 WINE_CONFIG_MAKEFILE(libs/png)
 WINE_CONFIG_MAKEFILE(libs/strmbase)
 WINE_CONFIG_MAKEFILE(libs/strmiids)
@@ -3328,6 +3355,7 @@ WINE_CONFIG_MAKEFILE(programs/fc)
 WINE_CONFIG_MAKEFILE(programs/find)
 WINE_CONFIG_MAKEFILE(programs/find/tests)
 WINE_CONFIG_MAKEFILE(programs/findstr)
+WINE_CONFIG_MAKEFILE(programs/findstr/tests)
 WINE_CONFIG_MAKEFILE(programs/fsutil)
 WINE_CONFIG_MAKEFILE(programs/fsutil/tests)
 WINE_CONFIG_MAKEFILE(programs/hh)
@@ -3383,6 +3411,7 @@ WINE_CONFIG_MAKEFILE(programs/svchost)
 WINE_CONFIG_MAKEFILE(programs/systeminfo)
 WINE_CONFIG_MAKEFILE(programs/taskkill)
 WINE_CONFIG_MAKEFILE(programs/tasklist)
+WINE_CONFIG_MAKEFILE(programs/tasklist/tests)
 WINE_CONFIG_MAKEFILE(programs/taskmgr)
 WINE_CONFIG_MAKEFILE(programs/termsv)
 WINE_CONFIG_MAKEFILE(programs/uninstaller)
@@ -3449,7 +3478,7 @@ then
 [wine_fn_output_makedep ()
 {
     AS_MKDIR_P(tools)
-    $CC -I${wine_srcdir}tools -Iinclude -I${wine_srcdir}include -D__WINESRC__ $EXTRACFLAGS $CPPFLAGS $CFLAGS -o tools/makedep$ac_exeext ${wine_srcdir}tools/makedep.c $LDFLAGS
+    $CC -I${wine_srcdir}tools -Iinclude -I${wine_srcdir}include -D__WINESRC__ -DWINE_UNIX_LIB $EXTRACFLAGS $CPPFLAGS $CFLAGS -o tools/makedep$ac_exeext ${wine_srcdir}tools/makedep.c $LDFLAGS
 }])
 fi
 

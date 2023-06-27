@@ -196,7 +196,7 @@
 @ stdcall -syscall NtCreateTransaction(ptr long ptr ptr long long long long ptr ptr)
 @ stdcall -syscall NtCreateUserProcess(ptr ptr long long ptr ptr long long ptr ptr ptr)
 # @ stub NtCreateWaitablePort
-@ stdcall -arch=i386,arm64 NtCurrentTeb()
+@ stdcall -arch=i386 NtCurrentTeb()
 @ stdcall -syscall NtDebugActiveProcess(long long)
 @ stdcall -syscall NtDebugContinue(long ptr long)
 @ stdcall -syscall NtDelayExecution(long ptr)
@@ -700,6 +700,7 @@
 @ stdcall RtlFormatCurrentUserKeyPath(ptr)
 @ stdcall RtlFormatMessage(ptr long long long long ptr ptr long ptr)
 @ stdcall RtlFormatMessageEx(ptr long long long long ptr ptr long ptr long)
+@ stdcall RtlFreeActivationContextStack(ptr)
 @ stdcall RtlFreeAnsiString(ptr)
 @ stdcall RtlFreeHandle(ptr ptr)
 @ stdcall RtlFreeHeap(long long ptr)
@@ -835,6 +836,7 @@
 @ stdcall RtlIsCriticalSectionLocked(ptr)
 @ stdcall RtlIsCriticalSectionLockedByThread(ptr)
 @ stdcall RtlIsDosDeviceName_U(wstr)
+@ stdcall -arch=x86_64 -norelay RtlIsEcCode(ptr)
 @ stub RtlIsGenericTableEmpty
 # @ stub RtlIsGenericTableEmptyAvl
 @ stdcall RtlIsNameLegalDOS8Dot3(ptr ptr ptr)
@@ -1512,6 +1514,7 @@
 @ cdecl -norelay -arch=i386 -ret64 _aullrem(int64 int64)
 @ cdecl -norelay -arch=i386 -ret64 _aullshr(int64 long)
 @ cdecl -arch=i386 -norelay _chkstk()
+@ cdecl _errno()
 @ stub _fltused
 @ cdecl -arch=i386 -ret64 _ftol()
 @ cdecl -arch=i386 -ret64 _ftol2() _ftol
@@ -1702,7 +1705,6 @@
 @ extern -private __wine_syscall_dispatcher
 @ extern -private __wine_unix_call_dispatcher
 @ extern -private __wine_unixlib_handle
-@ extern -arch=arm64 __wine_current_teb
 
 # Debugging
 @ stdcall -norelay __wine_dbg_write(ptr long)

@@ -19,6 +19,7 @@ SOURCES = \
 	appcompatapi.h \
 	appmgmt.h \
 	appmodel.h \
+	appnotify.h \
 	asferr.h \
 	asptlb.idl \
 	asyncinfo.idl \
@@ -212,6 +213,7 @@ SOURCES = \
 	ddk/usbioctl.h \
 	ddk/usbiodef.h \
 	ddk/wdm.h \
+	ddk/winddi.h \
 	ddk/winddiui.h \
 	ddk/winsplp.h \
 	ddk/wsk.h \
@@ -339,6 +341,7 @@ SOURCES = \
 	highlevelmonitorconfigurationapi.h \
 	hlguids.h \
 	hlink.idl \
+	hrtfapoapi.idl \
 	hstring.idl \
 	htiface.idl \
 	htiframe.idl \
@@ -645,6 +648,7 @@ SOURCES = \
 	rmxftmpl.x \
 	roapi.h \
 	roerrorapi.h \
+	rometadataresolution.h \
 	roparameterizediid.idl \
 	row.idl \
 	rowchg.idl \
@@ -816,6 +820,7 @@ SOURCES = \
 	windows.gaming.ui.idl \
 	windows.globalization.idl \
 	windows.graphics.capture.idl \
+	windows.graphics.capture.interop.idl \
 	windows.graphics.directx.direct3d11.idl \
 	windows.graphics.directx.idl \
 	windows.graphics.effects.idl \
@@ -836,6 +841,8 @@ SOURCES = \
 	windows.system.profile.systemmanufacturers.idl \
 	windows.system.threading.idl \
 	windows.system.userprofile.idl \
+	windows.ui.composition.idl \
+	windows.ui.composition.interop.idl \
 	windows.ui.core.idl \
 	windows.ui.idl \
 	windows.ui.viewmanagement.idl \

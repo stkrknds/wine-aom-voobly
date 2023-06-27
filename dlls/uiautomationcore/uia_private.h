@@ -21,6 +21,7 @@
 #include "uiautomation.h"
 #include "uia_classes.h"
 #include "wine/list.h"
+#include "wine/rbtree.h"
 #include "wine/heap.h"
 
 extern HMODULE huia_module DECLSPEC_HIDDEN;
@@ -93,6 +94,59 @@ static inline struct uia_provider *impl_from_IWineUiaProvider(IWineUiaProvider *
     return CONTAINING_RECORD(iface, struct uia_provider, IWineUiaProvider_iface);
 }
 
+enum uia_event_type {
+    EVENT_TYPE_CLIENTSIDE,
+    EVENT_TYPE_SERVERSIDE,
+};
+
+struct uia_event
+{
+    IWineUiaEvent IWineUiaEvent_iface;
+    LONG ref;
+
+    BOOL desktop_subtree_event;
+    SAFEARRAY *runtime_id;
+    int event_id;
+    int scope;
+
+    IWineUiaEventAdviser **event_advisers;
+    int event_advisers_count;
+    SIZE_T event_advisers_arr_size;
+
+    struct list event_list_entry;
+    struct uia_event_map_entry *event_map_entry;
+    LONG event_defunct;
+
+    LONG event_cookie;
+    int event_type;
+    union
+    {
+        struct {
+            struct UiaCacheRequest cache_req;
+            UiaEventCallback *cback;
+
+            /*
+             * This is temporarily used to keep the MTA alive prior to our
+             * introduction of a dedicated event thread.
+             */
+            CO_MTA_USAGE_COOKIE mta_cookie;
+            DWORD git_cookie;
+        } clientside;
+        struct {
+            /*
+             * Similar to the client MTA cookie, used to keep the provider
+             * thread alive as a temporary measure before introducing the
+             * event thread.
+             */
+            IWineUiaNode *node;
+
+            IWineUiaEvent *event_iface;
+            struct rb_entry serverside_event_entry;
+            LONG proc_id;
+        } serverside;
+     } u;
+};
+
 static inline void variant_init_bool(VARIANT *v, BOOL val)
 {
     V_VT(v) = VT_BOOL;
@@ -136,21 +190,44 @@ static inline BOOL uia_array_reserve(void **elements, SIZE_T *capacity, SIZE_T c
 }
 
 /* uia_client.c */
-HRESULT get_safearray_bounds(SAFEARRAY *sa, LONG *lbound, LONG *elems) DECLSPEC_HIDDEN;
-int uia_compare_safearrays(SAFEARRAY *sa1, SAFEARRAY *sa2, int prop_type) DECLSPEC_HIDDEN;
 int get_node_provider_type_at_idx(struct uia_node *node, int idx) DECLSPEC_HIDDEN;
+HRESULT attach_event_to_uia_node(HUIANODE node, struct uia_event *event) DECLSPEC_HIDDEN;
+HRESULT navigate_uia_node(struct uia_node *node, int nav_dir, HUIANODE *out_node) DECLSPEC_HIDDEN;
 HRESULT create_uia_node_from_elprov(IRawElementProviderSimple *elprov, HUIANODE *out_node,
         BOOL get_hwnd_providers) DECLSPEC_HIDDEN;
+HRESULT uia_condition_check(HUIANODE node, struct UiaCondition *condition) DECLSPEC_HIDDEN;
+BOOL uia_condition_matched(HRESULT hr) DECLSPEC_HIDDEN;
 
 /* uia_com_client.c */
 HRESULT create_uia_iface(IUnknown **iface, BOOL is_cui8) DECLSPEC_HIDDEN;
 
+/* uia_event.c */
+HRESULT create_serverside_uia_event(struct uia_event **out_event, LONG process_id, LONG event_cookie) DECLSPEC_HIDDEN;
+HRESULT uia_event_add_provider_event_adviser(IRawElementProviderAdviseEvents *advise_events,
+        struct uia_event *event) DECLSPEC_HIDDEN;
+HRESULT uia_event_add_serverside_event_adviser(IWineUiaEvent *serverside_event, struct uia_event *event) DECLSPEC_HIDDEN;
+
 /* uia_ids.c */
 const struct uia_prop_info *uia_prop_info_from_id(PROPERTYID prop_id) DECLSPEC_HIDDEN;
+const struct uia_event_info *uia_event_info_from_id(EVENTID event_id) DECLSPEC_HIDDEN;
 const struct uia_pattern_info *uia_pattern_info_from_id(PATTERNID pattern_id) DECLSPEC_HIDDEN;
 const struct uia_control_type_info *uia_control_type_info_from_id(CONTROLTYPEID control_type_id) DECLSPEC_HIDDEN;
 
 /* uia_provider.c */
+HRESULT create_base_hwnd_provider(HWND hwnd, IRawElementProviderSimple **elprov) DECLSPEC_HIDDEN;
 void uia_stop_provider_thread(void) DECLSPEC_HIDDEN;
 void uia_provider_thread_remove_node(HUIANODE node) DECLSPEC_HIDDEN;
 LRESULT uia_lresult_from_node(HUIANODE huianode) DECLSPEC_HIDDEN;
+HRESULT create_msaa_provider(IAccessible *acc, long child_id, HWND hwnd, BOOL known_root_acc,
+        IRawElementProviderSimple **elprov) DECLSPEC_HIDDEN;
+
+/* uia_utils.c */
+HRESULT register_interface_in_git(IUnknown *iface, REFIID riid, DWORD *ret_cookie) DECLSPEC_HIDDEN;
+HRESULT unregister_interface_in_git(DWORD git_cookie) DECLSPEC_HIDDEN;
+HRESULT get_interface_in_git(REFIID riid, DWORD git_cookie, IUnknown **ret_iface) DECLSPEC_HIDDEN;
+HRESULT write_runtime_id_base(SAFEARRAY *sa, HWND hwnd) DECLSPEC_HIDDEN;
+void uia_cache_request_destroy(struct UiaCacheRequest *cache_req) DECLSPEC_HIDDEN;
+HRESULT uia_cache_request_clone(struct UiaCacheRequest *dst, struct UiaCacheRequest *src) DECLSPEC_HIDDEN;
+HRESULT get_safearray_dim_bounds(SAFEARRAY *sa, UINT dim, LONG *lbound, LONG *elems) DECLSPEC_HIDDEN;
+HRESULT get_safearray_bounds(SAFEARRAY *sa, LONG *lbound, LONG *elems) DECLSPEC_HIDDEN;
+int uia_compare_safearrays(SAFEARRAY *sa1, SAFEARRAY *sa2, int prop_type) DECLSPEC_HIDDEN;

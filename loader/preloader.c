@@ -89,6 +89,8 @@
 #include "wine/asm.h"
 #include "main.h"
 
+#pragma GCC visibility push(hidden)
+
 /* ELF definitions */
 #define ELF_PREFERRED_ADDRESS(loader, maplength, mapstartpref) (mapstartpref)
 #define ELF_FIXED_ADDRESS(loader, mapstart) ((void) 0)
@@ -108,11 +110,11 @@ static struct wine_preload_info preload_info[] =
     { (void *)0x00000000, 0x00010000 },  /* low 64k */
     { (void *)0x00010000, 0x00100000 },  /* DOS area */
     { (void *)0x00110000, 0x67ef0000 },  /* low memory area */
-    { (void *)0x7f000000, 0x03000000 },  /* top-down allocations + shared heap + virtual heap */
+    { (void *)0x7f000000, 0x03000000 },  /* top-down allocations + shared user data + virtual heap */
 #else
     { (void *)0x000000010000, 0x00100000 },  /* DOS area */
     { (void *)0x000000110000, 0x67ef0000 },  /* low memory area */
-    { (void *)0x00007ff00000, 0x000f0000 },  /* shared user data */
+    { (void *)0x00007f000000, 0x00ff0000 },  /* 32-bit top-down allocations + shared user data */
     { (void *)0x7ffffe000000, 0x01ff0000 },  /* top-down allocations + virtual heap */
 #endif
     { 0, 0 },                            /* PE exe range set with WINEPRELOADRESERVE */
@@ -351,7 +353,7 @@ __ASM_GLOBAL_FUNC(_start,
                   "movq %rsp,%rax\n\t"
                   "leaq -144(%rsp),%rsp\n\t" /* allocate some space for extra aux values */
                   "movq %rax,(%rsp)\n\t"     /* orig stack pointer */
-                  "movq $thread_data,%rsi\n\t"
+                  "movq thread_data(%rip),%rsi\n\t"
                   "movq $0x1002,%rdi\n\t"    /* ARCH_SET_FS */
                   "movq $158,%rax\n\t"       /* SYS_arch_prctl */
                   "syscall\n\t"
@@ -439,7 +441,8 @@ __ASM_GLOBAL_FUNC(_start,
                   "mov x0, SP\n\t"
                   "sub SP, SP, #144\n\t" /* allocate some space for extra aux values */
                   "str x0, [SP]\n\t"     /* orig stack pointer */
-                  "ldr x0, =thread_data\n\t"
+                  "adrp x0, thread_data\n\t"
+                  "add x0, x0, :lo12:thread_data\n\t"
                   "msr tpidr_el0, x0\n\t"
                   "mov x0, SP\n\t"       /* ptr to orig stack pointer */
                   "bl wld_start\n\t"
@@ -1398,7 +1401,7 @@ void* wld_start( void **stack )
     page_size = get_auxiliary( av, AT_PAGESZ, 4096 );
     page_mask = page_size - 1;
 
-    preloader_start = (char *)_start - ((unsigned long)_start & page_mask);
+    preloader_start = (char *)((unsigned long)_start & ~page_mask);
     preloader_end = (char *)((unsigned long)(_end + page_mask) & ~page_mask);
 
 #ifdef DUMP_AUX_INFO
@@ -1495,5 +1498,7 @@ void* wld_start( void **stack )
 
     return (void *)ld_so_map.l_entry;
 }
+
+#pragma GCC visibility pop
 
 #endif /* __linux__ */

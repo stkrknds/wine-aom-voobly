@@ -133,7 +133,7 @@ HRESULT ddraw_surface_update_frontbuffer(struct ddraw_surface *surface,
         if (swap_interval)
             dst_texture = wined3d_swapchain_get_back_buffer(ddraw->wined3d_swapchain, 0);
         else
-            dst_texture = ddraw->wined3d_frontbuffer;
+            dst_texture = wined3d_swapchain_get_front_buffer(ddraw->wined3d_swapchain);
 
         if (SUCCEEDED(hr = wined3d_device_context_blt(ddraw->immediate_context, dst_texture, 0, rect,
                 ddraw_surface_get_any_texture(surface, DDRAW_SURFACE_READ), surface->sub_resource_idx, rect, 0,
@@ -4845,7 +4845,7 @@ static HRESULT WINAPI ddraw_surface7_SetSurfaceDesc(IDirectDrawSurface7 *iface, 
         wined3d_resource_get_desc(wined3d_texture_get_resource(old_texture), &wined3d_desc);
 
         wined3d_desc.width = width;
-        wined3d_desc.width = height;
+        wined3d_desc.height = height;
         wined3d_desc.format = format_id;
 
         if (FAILED(hr = wined3d_texture_create(ddraw->wined3d_device, &wined3d_desc, 1, 1,
@@ -4870,7 +4870,7 @@ static HRESULT WINAPI ddraw_surface7_SetSurfaceDesc(IDirectDrawSurface7 *iface, 
             wined3d_resource_get_desc(wined3d_texture_get_resource(old_draw_texture), &wined3d_desc);
 
             wined3d_desc.width = width;
-            wined3d_desc.width = height;
+            wined3d_desc.height = height;
             wined3d_desc.format = format_id;
 
             if (FAILED(hr = wined3d_texture_create(ddraw->wined3d_device, &wined3d_desc, 1, 1,

@@ -32,7 +32,6 @@
 #include "fltdefs.h"
 #include "ifdef.h"
 #include "netioapi.h"
-#include "tcpestats.h"
 #include "ip2string.h"
 #include "netiodef.h"
 #include "icmpapi.h"
@@ -1018,7 +1017,7 @@ static DWORD gateway_and_prefix_addresses_alloc( IP_ADAPTER_ADDRESSES *aa, ULONG
             luid = (family == AF_INET) ? &key4->luid : &key6->luid;
             if (luid->Value != aa->Luid.Value) continue;
 
-            if (flags & GAA_FLAG_INCLUDE_ALL_GATEWAYS)
+            if (flags & GAA_FLAG_INCLUDE_GATEWAYS)
             {
                 memset( &sockaddr, 0, sizeof(sockaddr) );
                 if (family == AF_INET)
@@ -1268,7 +1267,7 @@ static DWORD adapters_addresses_alloc( ULONG family, ULONG flags, IP_ADAPTER_ADD
         if (err) goto err;
     }
 
-    if (flags & (GAA_FLAG_INCLUDE_ALL_GATEWAYS | GAA_FLAG_INCLUDE_PREFIX))
+    if (flags & (GAA_FLAG_INCLUDE_GATEWAYS | GAA_FLAG_INCLUDE_PREFIX))
     {
         err = call_families( gateway_and_prefix_addresses_alloc, aa, family, flags );
         if (err) goto err;
@@ -4080,6 +4079,19 @@ DWORD WINAPI SetTcpEntry(PMIB_TCPROW pTcpRow)
   return 0;
 }
 
+/***********************************************************************
+ *    GetPerTcpConnectionEStats (IPHLPAPI.@)
+ */
+ULONG WINAPI GetPerTcpConnectionEStats(MIB_TCPROW *row, TCP_ESTATS_TYPE stats, UCHAR *rw, ULONG rw_version,
+                                       ULONG rw_size, UCHAR *ro_static, ULONG ro_static_version,
+                                       ULONG ro_static_size, UCHAR *ro_dynamic, ULONG ro_dynamic_version,
+                                       ULONG ro_dynamic_size)
+{
+    FIXME( "(%p, %d, %p, %ld, %ld, %p, %ld, %ld, %p, %ld, %ld): stub\n", row, stats, rw, rw_version, rw_size,
+           ro_static, ro_static_version, ro_static_size, ro_dynamic, ro_dynamic_version, ro_dynamic_size );
+    return ERROR_CALL_NOT_IMPLEMENTED;
+}
+
 /******************************************************************
  *    SetPerTcpConnectionEStats (IPHLPAPI.@)
  */
@@ -4798,4 +4810,13 @@ DWORD WINAPI Icmp6SendEcho2( HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc_ro
            apc_routine, apc_ctxt, src, dst, request, request_size, opts, reply, reply_size, timeout );
     SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
     return 0;
+}
+
+/***********************************************************************
+ *    GetCurrentThreadCompartmentId (IPHLPAPI.@)
+ */
+NET_IF_COMPARTMENT_ID WINAPI GetCurrentThreadCompartmentId( void )
+{
+    FIXME( "stub\n" );
+    return NET_IF_COMPARTMENT_ID_PRIMARY;
 }

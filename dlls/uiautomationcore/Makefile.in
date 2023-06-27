@@ -7,9 +7,11 @@ EXTRADLLFLAGS = -Wb,--prefer-native
 C_SRCS = \
 	uia_client.c \
 	uia_com_client.c \
+	uia_event.c \
 	uia_ids.c \
 	uia_main.c \
-	uia_provider.c
+	uia_provider.c \
+	uia_utils.c
 
 IDL_SRCS = \
 	uia_classes.idl \

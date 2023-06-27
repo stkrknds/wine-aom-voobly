@@ -310,17 +310,19 @@ typedef struct _SOURCEFILEW
     PWSTR                       FileName;
 } SOURCEFILEW, *PSOURCEFILEW;
 
-#define CBA_DEFERRED_SYMBOL_LOAD_START          0x00000001
-#define CBA_DEFERRED_SYMBOL_LOAD_COMPLETE       0x00000002
-#define CBA_DEFERRED_SYMBOL_LOAD_FAILURE        0x00000003
-#define CBA_SYMBOLS_UNLOADED                    0x00000004
-#define CBA_DUPLICATE_SYMBOL                    0x00000005
-#define CBA_READ_MEMORY                         0x00000006
-#define CBA_DEFERRED_SYMBOL_LOAD_CANCEL         0x00000007
-#define CBA_SET_OPTIONS                         0x00000008
-#define CBA_EVENT                               0x00000010
-#define CBA_DEFERRED_SYMBOL_LOAD_PARTIAL        0x00000020
-#define CBA_DEBUG_INFO                          0x10000000
+#define CBA_DEFERRED_SYMBOL_LOAD_START                  0x00000001
+#define CBA_DEFERRED_SYMBOL_LOAD_COMPLETE               0x00000002
+#define CBA_DEFERRED_SYMBOL_LOAD_FAILURE                0x00000003
+#define CBA_SYMBOLS_UNLOADED                            0x00000004
+#define CBA_DUPLICATE_SYMBOL                            0x00000005
+#define CBA_READ_MEMORY                                 0x00000006
+#define CBA_DEFERRED_SYMBOL_LOAD_CANCEL                 0x00000007
+#define CBA_SET_OPTIONS                                 0x00000008
+#define CBA_EVENT                                       0x00000010
+#define CBA_DEFERRED_SYMBOL_LOAD_PARTIAL                0x00000020
+#define CBA_DEBUG_INFO                                  0x10000000
+#define CBA_SRCSRV_INFO                                 0x20000000
+#define CBA_SRCSRV_EVENT                                0x40000000
 
 typedef struct _IMAGEHLP_CBA_READ_MEMORY
 {
@@ -1098,8 +1100,12 @@ typedef enum
     SYMOPT_EX_MAX,
 
 #ifdef __WINESRC__
+    /* Include ELF/Mach-O modules in module operations */
     SYMOPT_EX_WINE_NATIVE_MODULES = 1000,
+    /* Return the Unix actual path of loaded module */
     SYMOPT_EX_WINE_MODULE_REAL_PATH,
+    /* Return the raw source file path from debug info (not always mapped to DOS) */
+    SYMOPT_EX_WINE_SOURCE_ACTUAL_PATH,
 #endif
 } IMAGEHLP_EXTENDED_OPTIONS;
 
@@ -1111,9 +1117,13 @@ BOOL WINAPI SymSetExtendedOption(IMAGEHLP_EXTENDED_OPTIONS option, BOOL value);
 
 BOOL WINAPI SymSetParentWindow(HWND);
 
-/*************************
- * Version, global stuff *
- *************************/
+/***************************
+ * Symbol servers & stores *
+ ***************************/
+BOOL WINAPI SymSrvGetFileIndexes(PCSTR, GUID *, PDWORD, PDWORD, DWORD);
+BOOL WINAPI SymSrvGetFileIndexesW(PCWSTR, GUID *, PDWORD, PDWORD, DWORD);
+BOOL WINAPI SymSrvGetFileIndexInfo(PCSTR, PSYMSRV_INDEX_INFO, DWORD);
+BOOL WINAPI SymSrvGetFileIndexInfoW(PCWSTR, PSYMSRV_INDEX_INFOW, DWORD);
 
 typedef BOOL     (WINAPI* PSYMBOLSERVERPROC)(PCSTR, PCSTR, PVOID, DWORD, DWORD, PSTR);
 typedef BOOL     (WINAPI* PSYMBOLSERVERPROCA)(PCSTR, PCSTR, PVOID, DWORD, DWORD, PSTR);
@@ -1146,6 +1156,9 @@ typedef BOOL     (WINAPI* PSYMBOLSERVERPINGPROCW)(PCWSTR);
 #define SSRVACTION_TRACE        1
 #define SSRVACTION_QUERYCANCEL  2
 #define SSRVACTION_EVENT        3
+#define SSRVACTION_EVENTW       4
+#define SSRVACTION_SIZE         5
+#define SSRVACTION_HTTPSTATUS   6
 
 /* 32-bit functions */
 

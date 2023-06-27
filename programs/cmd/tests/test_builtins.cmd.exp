@@ -821,9 +821,12 @@ exist wildcard works
 negate exist wildcard works
 exist wildcard bad subdir broken works
 exist subdir ok
-exist subdir with . ok
+exist subdir with \. ok
 exist subdir with \ ok
 exist subdir with \ and quotes ok
+exist subdir with /. ok
+exist subdir with / ok
+exist subdir with / and quotes ok
 ------ for numbers
 negative numbers handled
 negative numbers handled
@@ -1680,6 +1683,15 @@ Finished
 PATH=original
 PATH=try2
 PATH=try3
+------------ Testing PATH Evaluate ------------
+Test normal PATH usage
+I'm here!@space@
+Test PATH usage with leading semicolon
+I'm here!@space@
+Test PATH usage with fallback path
+I'm here!@space@
+Test PATH usage with double semicolon
+I'm here!@space@
 ------------ Testing start /W ------------
 start /W seems to really wait
 ------------ Testing changing the drive letter ----------

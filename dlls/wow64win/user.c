@@ -704,7 +704,6 @@ static NTSTATUS WINAPI wow64_NtUserCallWindowsHook( void *arg, ULONG size )
         BOOL prev_unicode;
         BOOL next_unicode;
     } *params32;
-    void *ret_lparam = (void *)params->lparam;
     UINT lparam32_size = 0, module_size, size32;
     void *ret_ptr;
     ULONG ret_len;
@@ -738,13 +737,11 @@ static NTSTATUS WINAPI wow64_NtUserCallWindowsHook( void *arg, ULONG size )
     case WH_SYSMSGFILTER:
     case WH_MSGFILTER:
     case WH_GETMESSAGE:
-        msg_32to64( (MSG *)(params + 1), (const MSG32 *)(params32 + 1) );
-        if (ret_lparam)
+        if (params->lparam_size == sizeof(MSG))
         {
-            memcpy( ret_lparam, params + 1, params->lparam_size );
-            return ret;
+            msg_32to64( (MSG *)(params + 1), (const MSG32 *)(params32 + 1) );
+            return NtCallbackReturn( params + 1, params->lparam_size, ret );
         }
-        return NtCallbackReturn( params + 1, params->lparam_size, ret );
     }
 
     return ret;
@@ -1619,6 +1616,19 @@ NTSTATUS WINAPI wow64_NtUserDragObject( UINT *args )
     return NtUserDragObject( parent, hwnd, fmt, data, hcursor );
 }
 
+NTSTATUS WINAPI wow64_NtUserDrawCaptionTemp( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+    HDC hdc = get_handle( &args );
+    const RECT *rect = get_ptr( &args );
+    HFONT font = get_handle( &args );
+    HICON icon = get_handle( &args );
+    const WCHAR *str = get_ptr( &args );
+    UINT flags = get_ulong( &args );
+
+    return NtUserDrawCaptionTemp( hwnd, hdc, rect, font, icon, str, flags );
+}
+
 NTSTATUS WINAPI wow64_NtUserDrawIconEx( UINT *args )
 {
     HDC hdc = get_handle( &args );
@@ -1632,6 +1642,17 @@ NTSTATUS WINAPI wow64_NtUserDrawIconEx( UINT *args )
     UINT flags = get_ulong( &args );
 
     return NtUserDrawIconEx( hdc, x0, y0, icon, width, height, istep, hbr, flags );
+}
+
+NTSTATUS WINAPI wow64_NtUserDrawMenuBarTemp( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+    HDC hdc = get_handle( &args );
+    RECT *rect = get_ptr( &args );
+    HMENU handle = get_handle( &args );
+    HFONT font = get_handle( &args );
+
+    return NtUserDrawMenuBarTemp( hwnd, hdc, rect, handle, font );
 }
 
 NTSTATUS WINAPI wow64_NtUserEmptyClipboard( UINT *args )
@@ -1677,6 +1698,15 @@ NTSTATUS WINAPI wow64_NtUserEndMenu( UINT *args )
     return NtUserEndMenu();
 }
 
+NTSTATUS WINAPI wow64_NtUserEndPaint( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+    const PAINTSTRUCT32 *ps32 = get_ptr( &args );
+    PAINTSTRUCT ps;
+
+    return NtUserEndPaint( hwnd, paintstruct_32to64( &ps, ps32 ));
+}
+
 NTSTATUS WINAPI wow64_NtUserEnumDisplayDevices( UINT *args )
 {
     UNICODE_STRING32 *device32 = get_ptr( &args );
@@ -1710,6 +1740,14 @@ NTSTATUS WINAPI wow64_NtUserEnumDisplaySettings( UINT *args )
 
     return NtUserEnumDisplaySettings( unicode_str_32to64( &device, device32 ),
                                       mode, dev_mode, flags );
+}
+
+NTSTATUS WINAPI wow64_NtUserExcludeUpdateRgn( UINT *args )
+{
+    HDC hdc = get_handle( &args );
+    HWND hwnd = get_handle( &args );
+
+    return NtUserExcludeUpdateRgn( hdc, hwnd );
 }
 
 NTSTATUS WINAPI wow64_NtUserFindExistingCursorIcon( UINT *args )
@@ -3116,6 +3154,21 @@ NTSTATUS WINAPI wow64_NtUserMessageCall( UINT *args )
             return message_call_32to64( hwnd, msg, wparam, lparam,
                                         LongToPtr( result32 ), type, ansi );
         }
+
+    case NtUserImeDriverCall:
+        {
+            struct
+            {
+                ULONG himc;
+                ULONG state;
+                ULONG compstr;
+            } *params32 = result_info;
+            struct ime_driver_call_params params;
+            params.himc = UlongToPtr( params32->himc );
+            params.state = UlongToPtr( params32->state );
+            params.compstr = UlongToPtr( params32->compstr );
+            return NtUserMessageCall( hwnd, msg, wparam, lparam, &params, type, ansi );
+        }
     }
 
     return message_call_32to64( hwnd, msg, wparam, lparam, result_info, type, ansi );
@@ -3152,6 +3205,15 @@ NTSTATUS WINAPI wow64_NtUserMsgWaitForMultipleObjectsEx( UINT *args )
     for (i = 0; i < count; i++) handles[i] = LongToHandle( handles32[i] );
 
     return NtUserMsgWaitForMultipleObjectsEx( count, handles, timeout, mask, flags );
+}
+
+NTSTATUS WINAPI wow64_NtUserNotifyIMEStatus( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+    ULONG status = get_ulong( &args );
+
+    NtUserNotifyIMEStatus( hwnd, status );
+    return 0;
 }
 
 NTSTATUS WINAPI wow64_NtUserNotifyWinEvent( UINT *args )
@@ -3256,6 +3318,18 @@ NTSTATUS WINAPI wow64_NtUserPrintWindow( UINT *args )
     return NtUserPrintWindow( hwnd, hdc, flags );
 }
 
+NTSTATUS WINAPI wow64_NtUserQueryDisplayConfig( UINT *args )
+{
+    UINT32 flags = get_ulong( &args );
+    UINT32 *paths_count = get_ptr( &args );
+    DISPLAYCONFIG_PATH_INFO *paths = get_ptr( &args );
+    UINT32 *modes_count = get_ptr( &args );
+    DISPLAYCONFIG_MODE_INFO *modes = get_ptr( &args );
+    DISPLAYCONFIG_TOPOLOGY_ID *topology_id = get_ptr( &args );
+
+    return NtUserQueryDisplayConfig( flags, paths_count, paths, modes_count, modes, topology_id );
+}
+
 NTSTATUS WINAPI wow64_NtUserQueryInputContext( UINT *args )
 {
     HIMC handle = get_handle( &args );
@@ -3316,6 +3390,14 @@ NTSTATUS WINAPI wow64_NtUserRegisterRawInputDevices( UINT *args )
     return NtUserRegisterRawInputDevices( devices64, count, sizeof(*devices64) );
 }
 
+NTSTATUS WINAPI wow64_NtUserReleaseDC( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+    HDC hdc = get_handle( &args );
+
+    return NtUserReleaseDC( hwnd, hdc );
+}
+
 NTSTATUS WINAPI wow64_NtUserRemoveClipboardFormatListener( UINT *args )
 {
     HWND hwnd = get_handle( &args );
@@ -3340,6 +3422,19 @@ NTSTATUS WINAPI wow64_NtUserRemoveProp( UINT *args )
     return HandleToUlong( NtUserRemoveProp( hwnd, str ));
 }
 
+NTSTATUS WINAPI wow64_NtUserScrollDC( UINT *args )
+{
+    HDC hdc = get_handle( &args );
+    INT dx = get_ulong( &args );
+    INT dy = get_ulong( &args );
+    const RECT *scroll = get_ptr( &args );
+    const RECT *clip = get_ptr( &args );
+    HRGN ret_update_rgn = get_handle( &args );
+    RECT *update_rect = get_ptr( &args );
+
+    return NtUserScrollDC( hdc, dx, dy, scroll, clip, ret_update_rgn, update_rect );
+}
+
 NTSTATUS WINAPI wow64_NtUserScrollWindowEx( UINT *args )
 {
     HWND hwnd = get_handle( &args );
@@ -3352,6 +3447,15 @@ NTSTATUS WINAPI wow64_NtUserScrollWindowEx( UINT *args )
     UINT flags = get_ulong( &args );
 
     return NtUserScrollWindowEx( hwnd, dx, dy, rect, clip_rect, update_rgn, update_rect, flags );
+}
+
+NTSTATUS WINAPI wow64_NtUserSelectPalette( UINT *args )
+{
+    HDC hdc = get_handle( &args );
+    HPALETTE hpal = get_handle( &args );
+    WORD bkg = get_ulong( &args );
+
+    return HandleToUlong( NtUserSelectPalette( hdc, hpal, bkg ));
 }
 
 NTSTATUS WINAPI wow64_NtUserSendInput( UINT *args )
@@ -4182,6 +4286,23 @@ NTSTATUS WINAPI wow64_NtUserUpdateInputContext( UINT *args )
     return NtUserUpdateInputContext( handle, attr, value );
 }
 
+NTSTATUS WINAPI wow64_NtUserUpdateLayeredWindow( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+    HDC hdc_dst = get_handle( &args );
+    const POINT *pts_dst = get_ptr( &args );
+    const SIZE *size = get_ptr( &args );
+    HDC hdc_src = get_handle( &args );
+    const POINT *pts_src = get_ptr( &args );
+    COLORREF key = get_ulong( &args );
+    const BLENDFUNCTION *blend = get_ptr( &args );
+    DWORD flags = get_ulong( &args );
+    const RECT *dirty = get_ptr( &args );
+
+    return NtUserUpdateLayeredWindow( hwnd, hdc_dst, pts_dst, size, hdc_src, pts_src,
+                                      key, blend, flags, dirty );
+}
+
 NTSTATUS WINAPI wow64_NtUserValidateRect( UINT *args )
 {
     HWND hwnd = get_handle( &args );
@@ -4232,4 +4353,10 @@ NTSTATUS WINAPI wow64_NtUserDisplayConfigGetDeviceInfo( UINT *args )
     DISPLAYCONFIG_DEVICE_INFO_HEADER *packet = get_ptr( &args );
 
     return NtUserDisplayConfigGetDeviceInfo( packet );
+}
+
+NTSTATUS WINAPI wow64___wine_send_input( UINT *args )
+{
+    ERR( "not supported\n ");
+    return 0;
 }

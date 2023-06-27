@@ -69,6 +69,9 @@ struct oss_stream
 
 WINE_DEFAULT_DEBUG_CHANNEL(oss);
 
+static const REFERENCE_TIME def_period = 100000;
+static const REFERENCE_TIME min_period = 50000;
+
 static NTSTATUS oss_not_implemented(void *args)
 {
     return STATUS_SUCCESS;
@@ -216,6 +219,13 @@ static void get_default_device(EDataFlow flow, char device[OSS_DEVNODE_SIZE])
     TRACE("Default devnode: %s\n", ai.devnode);
     oss_clean_devnode(device, ai.devnode);
     return;
+}
+
+static NTSTATUS oss_main_loop(void *args)
+{
+    struct main_loop_params *params = args;
+    NtSetEvent(params->event, NULL);
+    return STATUS_SUCCESS;
 }
 
 static NTSTATUS oss_get_endpoint_ids(void *args)
@@ -552,10 +562,42 @@ static ULONG_PTR zero_bits(void)
 static NTSTATUS oss_create_stream(void *args)
 {
     struct create_stream_params *params = args;
-    WAVEFORMATEXTENSIBLE *fmtex;
+    WAVEFORMATEXTENSIBLE *fmtex = (WAVEFORMATEXTENSIBLE *)params->fmt;
     struct oss_stream *stream;
     oss_audioinfo ai;
     SIZE_T size;
+
+    params->result = S_OK;
+
+    if (params->share == AUDCLNT_SHAREMODE_SHARED) {
+        params->period = def_period;
+        if (params->duration < 3 * params->period)
+            params->duration = 3 * params->period;
+    } else {
+        if (fmtex->Format.wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+           (fmtex->dwChannelMask == 0 || fmtex->dwChannelMask & SPEAKER_RESERVED))
+            params->result = AUDCLNT_E_UNSUPPORTED_FORMAT;
+        else {
+            if (!params->period)
+                params->period = def_period;
+            if (params->period < min_period || params->period > 5000000)
+                params->result = AUDCLNT_E_INVALID_DEVICE_PERIOD;
+            else if (params->duration > 20000000) /* The smaller the period, the lower this limit. */
+                params->result = AUDCLNT_E_BUFFER_SIZE_ERROR;
+            else if (params->flags & AUDCLNT_STREAMFLAGS_EVENTCALLBACK) {
+                if (params->duration != params->period)
+                    params->result = AUDCLNT_E_BUFDURATION_PERIOD_NOT_EQUAL;
+
+                FIXME("EXCLUSIVE mode with EVENTCALLBACK\n");
+
+                params->result = AUDCLNT_E_DEVICE_IN_USE;
+            } else if (params->duration < 8 * params->period)
+                params->duration = 8 * params->period; /* May grow above 2s. */
+        }
+    }
+
+    if (FAILED(params->result))
+        return STATUS_SUCCESS;
 
     stream = calloc(1, sizeof(*stream));
     if(!stream){
@@ -632,6 +674,7 @@ exit:
         free(stream->fmt);
         free(stream);
     }else{
+        *params->channel_count = params->fmt->nChannels;
         *params->stream = (stream_handle)(UINT_PTR)stream;
     }
 
@@ -1245,6 +1288,20 @@ static NTSTATUS oss_get_mix_format(void *args)
     return STATUS_SUCCESS;
 }
 
+static NTSTATUS oss_get_device_period(void *args)
+{
+    struct get_device_period_params *params = args;
+
+    if (params->def_period)
+        *params->def_period = def_period;
+    if (params->min_period)
+        *params->min_period = min_period;
+
+    params->result = S_OK;
+
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS oss_get_buffer_size(void *args)
 {
     struct get_buffer_size_params *params = args;
@@ -1318,6 +1375,12 @@ static NTSTATUS oss_get_position(void *args)
     struct oss_stream *stream = handle_get_stream(params->stream);
     UINT64 *pos = params->pos, *qpctime = params->qpctime;
 
+    if (params->device) {
+        FIXME("Device position reporting not implemented\n");
+        params->result = E_NOTIMPL;
+        return STATUS_SUCCESS;
+    }
+
     oss_lock(stream);
 
     if(stream->flow == eRender){
@@ -1360,6 +1423,16 @@ static NTSTATUS oss_set_volumes(void *args)
 {
     struct set_volumes_params *params = args;
     struct oss_stream *stream = handle_get_stream(params->stream);
+    UINT16 i;
+
+    if (params->master_volume) {
+        for (i = 0; i < stream->fmt->nChannels; ++i) {
+            if (params->master_volume * params->volumes[i] * params->session_volumes[i] != 1.0f) {
+                FIXME("Volume control is not implemented\n");
+                break;
+            }
+        }
+    }
 
     oss_lock(stream);
     stream->mute = !params->master_volume;
@@ -1619,7 +1692,7 @@ unixlib_entry_t __wine_unix_call_funcs[] =
 {
     oss_not_implemented,
     oss_not_implemented,
-    oss_not_implemented,
+    oss_main_loop,
     oss_get_endpoint_ids,
     oss_create_stream,
     oss_release_stream,
@@ -1633,7 +1706,7 @@ unixlib_entry_t __wine_unix_call_funcs[] =
     oss_release_capture_buffer,
     oss_is_format_supported,
     oss_get_mix_format,
-    oss_not_implemented,
+    oss_get_device_period,
     oss_get_buffer_size,
     oss_get_latency,
     oss_get_current_padding,
@@ -1671,6 +1744,19 @@ static NTSTATUS oss_wow64_test_connect(void *args)
     oss_test_connect(&params);
     params32->priority = params.priority;
     return STATUS_SUCCESS;
+}
+
+static NTSTATUS oss_wow64_main_loop(void *args)
+{
+    struct
+    {
+        PTR32 event;
+    } *params32 = args;
+    struct main_loop_params params =
+    {
+        .event = ULongToHandle(params32->event)
+    };
+    return oss_main_loop(&params);
 }
 
 static NTSTATUS oss_wow64_get_endpoint_ids(void *args)
@@ -1844,6 +1930,28 @@ static NTSTATUS oss_wow64_get_mix_format(void *args)
     return STATUS_SUCCESS;
 }
 
+static NTSTATUS oss_wow64_get_device_period(void *args)
+{
+    struct
+    {
+        PTR32 device;
+        EDataFlow flow;
+        HRESULT result;
+        PTR32 def_period;
+        PTR32 min_period;
+    } *params32 = args;
+    struct get_device_period_params params =
+    {
+        .device = ULongToPtr(params32->device),
+        .flow = params32->flow,
+        .def_period = ULongToPtr(params32->def_period),
+        .min_period = ULongToPtr(params32->min_period),
+    };
+    oss_get_device_period(&params);
+    params32->result = params.result;
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS oss_wow64_get_buffer_size(void *args)
 {
     struct
@@ -1964,7 +2072,6 @@ static NTSTATUS oss_wow64_set_volumes(void *args)
         float master_volume;
         PTR32 volumes;
         PTR32 session_volumes;
-        int channel;
     } *params32 = args;
     struct set_volumes_params params =
     {
@@ -1972,7 +2079,6 @@ static NTSTATUS oss_wow64_set_volumes(void *args)
         .master_volume = params32->master_volume,
         .volumes = ULongToPtr(params32->volumes),
         .session_volumes = ULongToPtr(params32->session_volumes),
-        .channel = params32->channel
     };
     return oss_set_volumes(&params);
 }
@@ -2023,7 +2129,7 @@ unixlib_entry_t __wine_unix_call_wow64_funcs[] =
 {
     oss_not_implemented,
     oss_not_implemented,
-    oss_not_implemented,
+    oss_wow64_main_loop,
     oss_wow64_get_endpoint_ids,
     oss_wow64_create_stream,
     oss_wow64_release_stream,
@@ -2037,7 +2143,7 @@ unixlib_entry_t __wine_unix_call_wow64_funcs[] =
     oss_release_capture_buffer,
     oss_wow64_is_format_supported,
     oss_wow64_get_mix_format,
-    oss_not_implemented,
+    oss_wow64_get_device_period,
     oss_wow64_get_buffer_size,
     oss_wow64_get_latency,
     oss_wow64_get_current_padding,

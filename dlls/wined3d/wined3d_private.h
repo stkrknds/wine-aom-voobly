@@ -1311,6 +1311,7 @@ struct wined3d_shader_semantic
     enum wined3d_decl_usage usage;
     UINT usage_idx;
     enum wined3d_shader_resource_type resource_type;
+    unsigned int sample_count;
     enum wined3d_data_type resource_data_type;
     struct wined3d_shader_dst_param reg;
 };
@@ -2990,7 +2991,9 @@ struct wined3d_light_info
     float exponent;
     float cutoff;
 
-    struct list entry;
+    struct rb_entry entry;
+    struct list changed_entry;
+    bool changed;
 };
 
 /* The default light parameters */
@@ -3085,6 +3088,7 @@ enum wined3d_pci_device
     CARD_AMD_RADEON_PRO_V620        = 0x73a1,
     CARD_AMD_RADEON_PRO_V620_VF     = 0x73ae,
     CARD_AMD_VANGOGH                = 0x163f,
+    CARD_AMD_RAPHAEL                = 0x164e,
 
     CARD_NVIDIA_RIVA_128            = 0x0018,
     CARD_NVIDIA_RIVA_TNT            = 0x0020,
@@ -3876,13 +3880,9 @@ struct wined3d_rasterizer_state
     struct wine_rb_entry entry;
 };
 
-#define LIGHTMAP_SIZE 43
-#define LIGHTMAP_HASHFUNC(x) ((x) % LIGHTMAP_SIZE)
-
 struct wined3d_light_state
 {
-    /* Light hashmap. Collisions are handled using linked lists. */
-    struct list light_map[LIGHTMAP_SIZE];
+    struct rb_tree lights_tree;
     const struct wined3d_light_info *lights[WINED3D_MAX_ACTIVE_LIGHTS];
 };
 
@@ -4877,6 +4877,8 @@ const VkDescriptorImageInfo *wined3d_texture_vk_get_default_image_info(struct wi
 HRESULT wined3d_texture_vk_init(struct wined3d_texture_vk *texture_vk, struct wined3d_device *device,
         const struct wined3d_resource_desc *desc, unsigned int layer_count, unsigned int level_count,
         uint32_t flags, void *parent, const struct wined3d_parent_ops *parent_ops) DECLSPEC_HIDDEN;
+void wined3d_texture_vk_make_generic(struct wined3d_texture_vk *texture_vk,
+        struct wined3d_context_vk *context_vk) DECLSPEC_HIDDEN;
 BOOL wined3d_texture_vk_prepare_texture(struct wined3d_texture_vk *texture_vk,
         struct wined3d_context_vk *context_vk) DECLSPEC_HIDDEN;
 
@@ -5012,6 +5014,8 @@ struct wined3d_saved_states
     DWORD lights : 1;
     DWORD transforms : 1;
     DWORD padding : 1;
+
+    struct list changed_lights;
 };
 
 struct StageState {
@@ -5045,7 +5049,7 @@ void wined3d_stateblock_state_init(struct wined3d_stateblock_state *state,
         const struct wined3d_device *device, uint32_t flags) DECLSPEC_HIDDEN;
 void wined3d_stateblock_state_cleanup(struct wined3d_stateblock_state *state) DECLSPEC_HIDDEN;
 
-void wined3d_light_state_enable_light(struct wined3d_light_state *state, const struct wined3d_d3d_info *d3d_info,
+bool wined3d_light_state_enable_light(struct wined3d_light_state *state, const struct wined3d_d3d_info *d3d_info,
         struct wined3d_light_info *light_info, BOOL enable) DECLSPEC_HIDDEN;
 struct wined3d_light_info *wined3d_light_state_get_light(const struct wined3d_light_state *state,
         unsigned int idx) DECLSPEC_HIDDEN;
@@ -5594,8 +5598,10 @@ void wined3d_shader_resource_view_vk_generate_mipmap(struct wined3d_shader_resou
 HRESULT wined3d_shader_resource_view_vk_init(struct wined3d_shader_resource_view_vk *view_vk,
         const struct wined3d_view_desc *desc, struct wined3d_resource *resource,
         void *parent, const struct wined3d_parent_ops *parent_ops) DECLSPEC_HIDDEN;
-void wined3d_shader_resource_view_vk_update(struct wined3d_shader_resource_view_vk *view_vk,
+void wined3d_shader_resource_view_vk_update_buffer(struct wined3d_shader_resource_view_vk *view_vk,
         struct wined3d_context_vk *context_vk) DECLSPEC_HIDDEN;
+void wined3d_shader_resource_view_vk_update_layout(struct wined3d_shader_resource_view_vk *srv_vk,
+        VkImageLayout layout) DECLSPEC_HIDDEN;
 
 struct wined3d_unordered_access_view
 {

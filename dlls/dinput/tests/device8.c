@@ -34,6 +34,10 @@
 
 #include "dinput_test.h"
 
+#include "initguid.h"
+
+DEFINE_GUID(GUID_keyboard_action_mapping,0x00000001,0x0002,0x0003,0x04,0x05,0x06,0x07,0x08,0x09,0x0a,0x0b);
+
 struct enum_data
 {
     DWORD version;
@@ -395,11 +399,13 @@ void test_overlapped_format( DWORD version )
     /* press D */
     keybd_event( 0, DIK_D, KEYEVENTF_SCANCODE, 0 );
     res = WaitForSingleObject( event, 5000 );
+    flaky_wine_if( GetForegroundWindow() != hwnd && version == 0x800 ) /* FIXME: fvwm sometimes steals input focus */
     ok( res == WAIT_OBJECT_0, "WaitForSingleObject returned %#lx\n", res );
 
     count = 10;
     hr = IDirectInputDevice_GetDeviceData( keyboard, data_size, NULL, &count, 0 );
     ok( hr == DI_OK, "GetDeviceData returned %#lx\n", hr );
+    flaky_wine_if( GetForegroundWindow() != hwnd && version == 0x800 ) /* FIXME: fvwm sometimes steals input focus */
     ok( count == 1, "got count %lu\n", count );
 
     memset( &state, 0xFF, sizeof(state) );
@@ -415,16 +421,19 @@ void test_overlapped_format( DWORD version )
     /* release D */
     keybd_event( 0, DIK_D, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP, 0 );
     res = WaitForSingleObject( event, 5000 );
+    flaky_wine_if( GetForegroundWindow() != hwnd && version == 0x800 ) /* FIXME: fvwm sometimes steals input focus */
     ok( res == WAIT_OBJECT_0, "WaitForSingleObject returned %#lx\n", res );
 
     count = 10;
     hr = IDirectInputDevice_GetDeviceData( keyboard, data_size, NULL, &count, 0 );
     ok( hr == DI_OK, "GetDeviceData returned %#lx\n", hr );
+    flaky_wine_if( GetForegroundWindow() != hwnd && version == 0x800 ) /* FIXME: fvwm sometimes steals input focus */
     ok( count == 1, "got count %lu\n", count );
 
 
 cleanup:
     IUnknown_Release( keyboard );
+    IDirectInput_Release( dinput );
 
     DestroyWindow( hwnd );
     CloseHandle( event );
@@ -682,14 +691,19 @@ static void test_mouse_keyboard(void)
     IDirectInputDevice8_SetCooperativeLevel(di_keyboard, hwnd, DISCL_FOREGROUND|DISCL_EXCLUSIVE);
 
     hr = IDirectInputDevice8_Acquire(di_keyboard);
+    flaky_wine_if( GetForegroundWindow() != hwnd ) /* FIXME: fvwm sometimes steals input focus */
     ok(SUCCEEDED(hr), "IDirectInputDevice8_Acquire failed: %#lx\n", hr);
     hr = IDirectInputDevice8_Acquire(di_mouse);
+    flaky_wine_if( GetForegroundWindow() != hwnd ) /* FIXME: fvwm sometimes steals input focus */
     ok(SUCCEEDED(hr), "IDirectInputDevice8_Acquire failed: %#lx\n", hr);
     raw_devices_count = ARRAY_SIZE(raw_devices);
     memset(raw_devices, 0, sizeof(raw_devices));
     hr = GetRegisteredRawInputDevices(raw_devices, &raw_devices_count, sizeof(RAWINPUTDEVICE));
+    flaky_wine_if( GetForegroundWindow() != hwnd ) /* FIXME: fvwm sometimes steals input focus */
     ok(hr == 3, "GetRegisteredRawInputDevices returned %ld, raw_devices_count: %d\n", hr, raw_devices_count);
+    flaky_wine_if( GetForegroundWindow() != hwnd ) /* FIXME: fvwm sometimes steals input focus */
     ok(raw_devices[0].dwFlags == (RIDEV_CAPTUREMOUSE|RIDEV_NOLEGACY), "Unexpected raw device flags: %#lx\n", raw_devices[0].dwFlags);
+    flaky_wine_if( GetForegroundWindow() != hwnd ) /* FIXME: fvwm sometimes steals input focus */
     ok(raw_devices[2].dwFlags == (RIDEV_NOHOTKEYS|RIDEV_NOLEGACY), "Unexpected raw device flags: %#lx\n", raw_devices[1].dwFlags);
     hr = IDirectInputDevice8_Unacquire(di_keyboard);
     ok(SUCCEEDED(hr), "IDirectInputDevice8_Acquire failed: %#lx\n", hr);
@@ -989,6 +1003,13 @@ static BOOL CALLBACK check_object_count( const DIDEVICEOBJECTINSTANCEW *obj, voi
     DWORD *count = args;
     *count = *count + 1;
     return DIENUM_CONTINUE;
+}
+
+static BOOL CALLBACK check_object_count_bad_retval( const DIDEVICEOBJECTINSTANCEW *obj, void *args )
+{
+    DWORD *count = args;
+    *count = *count + 1;
+    return -1; /* Invalid, but should CONTINUE. Only explicit DIENUM_STOP will stop enumeration. */
 }
 
 static void test_sys_mouse( DWORD version )
@@ -1336,6 +1357,11 @@ static void test_sys_mouse( DWORD version )
     ok( check_objects_params.index >= check_objects_params.expect_count, "missing %u objects\n",
         check_objects_params.expect_count - check_objects_params.index );
 
+    res = 0;
+    hr = IDirectInputDevice8_EnumObjects( device, check_object_count_bad_retval, &res, DIDFT_AXIS );
+    ok( hr == DI_OK, "EnumObjects returned %#lx\n", hr );
+    ok( res == 3, "got %lu expected 3\n", res );
+
     objinst.dwSize = sizeof(DIDEVICEOBJECTINSTANCEW);
     res = MAKELONG( HID_USAGE_GENERIC_X, HID_USAGE_PAGE_GENERIC );
     hr = IDirectInputDevice8_GetObjectInfo( device, &objinst, res, DIPH_BYUSAGE );
@@ -1569,7 +1595,7 @@ cleanup:
     localized = old_localized;
 }
 
-static void test_dik_codes( IDirectInputDevice8W *device, HANDLE event, HWND hwnd )
+static void test_dik_codes( IDirectInputDevice8W *device, HANDLE event, HWND hwnd, DWORD version )
 {
     static const struct key2dik
     {
@@ -1673,6 +1699,7 @@ static void test_dik_codes( IDirectInputDevice8W *device, HANDLE event, HWND hwn
 
             keybd_event( vkey, scan, KEYEVENTF_KEYUP, 0 );
             res = WaitForSingleObject( event, 5000 );
+            flaky_wine_if( GetForegroundWindow() != hwnd && version == 0x800 ) /* FIXME: fvwm sometimes steals input focus */
             ok( !res, "WaitForSingleObject returned %#lx\n", res );
 
             winetest_pop_context();
@@ -1687,6 +1714,56 @@ static void test_dik_codes( IDirectInputDevice8W *device, HANDLE event, HWND hwn
 
     hr = IDirectInputDevice8_Unacquire( device );
     ok( hr == DI_OK, "Unacquire returned %#lx\n", hr );
+}
+
+#define check_member_str_( file, line, val, exp, member )                                         \
+    ok_(file, line)( !strcmp( (val).member, (exp).member ), "got " #member " %s\n",               \
+                     debugstr_a((val).member) )
+#define check_member_str( val, exp, member )                                                      \
+    check_member_str_( __FILE__, __LINE__, val, exp, member )
+
+#define check_diactionA( a, b ) check_diactionA_( __LINE__, a, b )
+static void check_diactionA_( int line, const DIACTIONA *actual, const DIACTIONA *expected )
+{
+    check_member_( __FILE__, line, *actual, *expected, "%#Ix", uAppData );
+    check_member_( __FILE__, line, *actual, *expected, "%#lx", dwSemantic );
+    check_member_( __FILE__, line, *actual, *expected, "%#lx", dwFlags );
+    if (actual->lptszActionName && expected->lptszActionName)
+        check_member_str_( __FILE__, line, *actual, *expected, lptszActionName );
+    else
+        check_member_( __FILE__, line, *actual, *expected, "%p", lptszActionName );
+    check_member_guid_( __FILE__, line, *actual, *expected, guidInstance );
+    check_member_( __FILE__, line, *actual, *expected, "%#lx", dwObjID );
+    check_member_( __FILE__, line, *actual, *expected, "%#lx", dwHow );
+}
+
+#define check_diactionformatA( a, b ) check_diactionformatA_( __LINE__, a, b )
+static void check_diactionformatA_( int line, const DIACTIONFORMATA *actual, const DIACTIONFORMATA *expected )
+{
+    DWORD i;
+    check_member_( __FILE__, line, *actual, *expected, "%#lx", dwSize );
+    check_member_( __FILE__, line, *actual, *expected, "%#lx", dwActionSize );
+    check_member_( __FILE__, line, *actual, *expected, "%#lx", dwDataSize );
+    check_member_( __FILE__, line, *actual, *expected, "%#lx", dwNumActions );
+    for (i = 0; i < min( actual->dwNumActions, expected->dwNumActions ); ++i)
+    {
+        winetest_push_context( "action[%lu]", i );
+        check_diactionA_( line, actual->rgoAction + i, expected->rgoAction + i );
+        winetest_pop_context();
+        if (expected->dwActionSize != sizeof(DIACTIONA)) break;
+        if (actual->dwActionSize != sizeof(DIACTIONA)) break;
+    }
+    check_member_guid_( __FILE__, line, *actual, *expected, guidActionMap );
+    check_member_( __FILE__, line, *actual, *expected, "%#lx", dwGenre );
+    check_member_( __FILE__, line, *actual, *expected, "%#lx", dwBufferSize );
+    check_member_( __FILE__, line, *actual, *expected, "%+ld", lAxisMin );
+    check_member_( __FILE__, line, *actual, *expected, "%+ld", lAxisMax );
+    check_member_( __FILE__, line, *actual, *expected, "%p", hInstString );
+    check_member_( __FILE__, line, *actual, *expected, "%ld", ftTimeStamp.dwLowDateTime );
+    check_member_( __FILE__, line, *actual, *expected, "%ld", ftTimeStamp.dwHighDateTime );
+    todo_wine
+    check_member_( __FILE__, line, *actual, *expected, "%#lx", dwCRC );
+    check_member_str_( __FILE__, line, *actual, *expected, tszActionMap );
 }
 
 static void test_sys_keyboard( DWORD version )
@@ -2131,7 +2208,7 @@ static void test_sys_keyboard( DWORD version )
     hr = IDirectInputDevice8_GetDeviceState( device, sizeof(full_state), full_state );
     ok( hr == DI_OK, "GetDeviceState returned %#lx\n", hr );
     hr = IDirectInputDevice8_Unacquire( device );
-    ok( hr == DI_OK, "Uncquire returned %#lx\n", hr );
+    ok( hr == DI_OK, "Unacquire returned %#lx\n", hr );
     hr = IDirectInputDevice8_SetDataFormat( device, &data_format );
     ok( hr == DI_OK, "SetDataFormat returned %#lx\n", hr );
     hr = IDirectInputDevice8_Acquire( device );
@@ -2178,7 +2255,7 @@ skip_key_tests:
     ActivateKeyboardLayout( old_hkl, 0 );
     UnloadKeyboardLayout( hkl );
 
-    test_dik_codes( device, event, hwnd );
+    test_dik_codes( device, event, hwnd, version );
 
     CloseHandle( event );
     DestroyWindow( hwnd );
@@ -2188,6 +2265,64 @@ skip_key_tests:
 
     winetest_pop_context();
     localized = old_localized;
+}
+
+static void test_sys_keyboard_action_format(void)
+{
+    DIACTIONA actions[] =
+    {
+        {.uAppData = 0x1, .dwSemantic = 0x810004c8, .dwFlags = DIA_APPNOMAP},
+        {.uAppData = 0x1, .dwSemantic = 0x81000448, .dwFlags = 0},
+    };
+    const DIACTIONA expect_actions[ARRAY_SIZE(actions)] =
+    {
+        {.uAppData = 0x1, .dwSemantic = 0x810004c8, .dwFlags = 0, .guidInstance = GUID_SysKeyboard, .dwObjID = 0xc804, .dwHow = DIAH_DEFAULT},
+        {.uAppData = 0x1, .dwSemantic = 0x81000448, .dwFlags = 0, .guidInstance = GUID_SysKeyboard, .dwObjID = 0x4804, .dwHow = DIAH_DEFAULT},
+    };
+    DIACTIONFORMATA action_format =
+    {
+        .dwSize = sizeof(DIACTIONFORMATA),
+        .dwActionSize = sizeof(DIACTIONA),
+        .dwNumActions = ARRAY_SIZE(actions),
+        .dwDataSize = ARRAY_SIZE(actions) * 4,
+        .rgoAction = actions,
+        .dwGenre = 0x1000000,
+        .guidActionMap = GUID_keyboard_action_mapping,
+    };
+    const DIACTIONFORMATA expect_action_format =
+    {
+        .dwSize = sizeof(DIACTIONFORMATA),
+        .dwActionSize = sizeof(DIACTIONA),
+        .dwNumActions = ARRAY_SIZE(expect_actions),
+        .dwDataSize = ARRAY_SIZE(expect_actions) * 4,
+        .rgoAction = (DIACTIONA *)expect_actions,
+        .dwGenre = 0x1000000,
+        .guidActionMap = GUID_keyboard_action_mapping,
+        .dwCRC = 0x68e7e227,
+    };
+    IDirectInputDevice8A *device;
+    IDirectInput8A *dinput;
+    HRESULT hr;
+    LONG ref;
+
+    hr = DirectInput8Create( instance, 0x800, &IID_IDirectInput8A, (void **)&dinput, NULL );
+    ok( hr == DI_OK, "CreateDevice returned %#lx\n", hr );
+    hr = IDirectInput_CreateDevice( dinput, &GUID_SysKeyboard, &device, NULL );
+    ok( hr == DI_OK, "CreateDevice returned %#lx\n", hr );
+    ref = IDirectInput_Release( dinput );
+    ok( ref == 0, "Release returned %ld\n", ref );
+
+    hr = IDirectInputDevice8_BuildActionMap( device, &action_format, NULL, 2 );
+    ok( hr == DI_OK, "BuildActionMap returned %#lx\n", hr );
+    check_diactionformatA(&action_format, &expect_action_format);
+
+    hr = IDirectInputDevice8_SetActionMap( device, &action_format, NULL, 2 );
+    ok( hr == DI_SETTINGSNOTSAVED, "SetActionMap returned %#lx\n", hr );
+    hr = IDirectInputDevice8_SetActionMap( device, &action_format, NULL, 0 );
+    ok( hr == DI_OK, "SetActionMap returned %#lx\n", hr );
+
+    ref = IDirectInputDevice8_Release( device );
+    ok( ref == 0, "Release returned %ld\n", ref );
 }
 
 START_TEST(device8)
@@ -2209,6 +2344,8 @@ START_TEST(device8)
     test_sys_keyboard( 0x500 );
     test_sys_keyboard( 0x700 );
     test_sys_keyboard( 0x800 );
+
+    test_sys_keyboard_action_format();
 
     test_mouse_keyboard();
     test_keyboard_events();

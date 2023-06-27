@@ -110,6 +110,8 @@ struct wg_format
                 WG_VIDEO_FORMAT_YV12,
                 WG_VIDEO_FORMAT_YVYU,
             } format;
+            /* Positive height indicates top-down video; negative height
+             * indicates bottom-up video. */
             int32_t width, height;
             uint32_t fps_n, fps_d;
             RECT padding;
@@ -238,6 +240,12 @@ struct wg_parser_stream_get_preferred_format_params
     struct wg_format *format;
 };
 
+struct wg_parser_stream_get_codec_format_params
+{
+    struct wg_parser_stream *stream;
+    struct wg_format *format;
+};
+
 struct wg_parser_stream_enable_params
 {
     struct wg_parser_stream *stream;
@@ -297,11 +305,19 @@ struct wg_parser_stream_seek_params
     DWORD start_flags, stop_flags;
 };
 
+struct wg_transform_attrs
+{
+    UINT32 output_plane_align;
+    UINT32 input_queue_length;
+    BOOL low_latency;
+};
+
 struct wg_transform_create_params
 {
     struct wg_transform *transform;
     const struct wg_format *input_format;
     const struct wg_format *output_format;
+    const struct wg_transform_attrs *attrs;
 };
 
 struct wg_transform_push_data_params
@@ -333,6 +349,8 @@ struct wg_transform_get_status_params
 
 enum unix_funcs
 {
+    unix_wg_init_gstreamer,
+
     unix_wg_parser_create,
     unix_wg_parser_destroy,
 
@@ -346,6 +364,7 @@ enum unix_funcs
     unix_wg_parser_get_stream,
 
     unix_wg_parser_stream_get_preferred_format,
+    unix_wg_parser_stream_get_codec_format,
     unix_wg_parser_stream_enable,
     unix_wg_parser_stream_disable,
 
@@ -365,6 +384,8 @@ enum unix_funcs
     unix_wg_transform_push_data,
     unix_wg_transform_read_data,
     unix_wg_transform_get_status,
+    unix_wg_transform_drain,
+    unix_wg_transform_flush,
 };
 
 #endif /* __WINE_WINEGSTREAMER_UNIXLIB_H */

@@ -4,17 +4,5 @@
 @ cdecl LoadTabletInfo(long) X11DRV_LoadTabletInfo
 @ cdecl WTInfoW(long long ptr) X11DRV_WTInfoW
 
-# Desktop
-@ cdecl wine_create_desktop(long long)
-
 # System tray
 @ cdecl wine_notify_icon(long ptr)
-
-#IME Interface
-@ stdcall ImeInquire(ptr ptr wstr)
-@ stdcall ImeDestroy(long)
-@ stdcall ImeSelect(long long)
-@ stdcall ImeToAsciiEx(long long ptr ptr long long)
-@ stdcall NotifyIME(long long long long)
-@ stdcall ImeSetCompositionString(long long ptr long ptr long)
-@ stdcall ImeProcessKey(long long long ptr)

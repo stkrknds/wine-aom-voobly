@@ -218,7 +218,6 @@ static DWORD queue_task( struct queue *queue, TASK_CALLBACK task, struct task_he
     if (!callback_running)
     {
         release_object( obj );
-        free( task_hdr );
         ERR( "Submiting threadpool callback failed, err %lu.\n", GetLastError() );
         return ERROR_OUTOFMEMORY;
     }
@@ -5494,6 +5493,7 @@ static DWORD request_get_codepage( struct winhttp_request *request, UINT *codepa
         if (!(buffer = malloc( size ))) return ERROR_OUTOFMEMORY;
         if (!WinHttpQueryHeaders( request->hrequest, WINHTTP_QUERY_CONTENT_TYPE, NULL, buffer, &size, NULL ))
         {
+            free( buffer );
             return GetLastError();
         }
         if ((p = wcsstr( buffer, L"charset" )))

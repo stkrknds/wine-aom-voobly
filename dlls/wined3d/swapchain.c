@@ -275,6 +275,13 @@ struct wined3d_texture * CDECL wined3d_swapchain_get_back_buffer(const struct wi
     return swapchain->back_buffers[back_buffer_idx];
 }
 
+struct wined3d_texture * CDECL wined3d_swapchain_get_front_buffer(const struct wined3d_swapchain *swapchain)
+{
+    TRACE("swapchain %p.\n", swapchain);
+
+    return swapchain->front_buffer;
+}
+
 struct wined3d_output * wined3d_swapchain_get_output(const struct wined3d_swapchain *swapchain)
 {
     TRACE("swapchain %p.\n", swapchain);
@@ -1163,6 +1170,7 @@ static void wined3d_swapchain_vk_rotate(struct wined3d_swapchain *swapchain, str
     struct wined3d_image_vk image0;
     VkDescriptorImageInfo vk_info0;
     VkImageLayout vk_layout0;
+    uint32_t bind_mask0;
     DWORD locations0;
     unsigned int i;
 
@@ -1176,6 +1184,7 @@ static void wined3d_swapchain_vk_rotate(struct wined3d_swapchain *swapchain, str
     /* Back buffer 0 is already in the draw binding. */
     image0 = texture_prev->image;
     vk_layout0 = texture_prev->layout;
+    bind_mask0 = texture_prev->bind_mask;
     vk_info0 = texture_prev->default_image_info;
     locations0 = texture_prev->t.sub_resources[0].locations;
 
@@ -1189,6 +1198,7 @@ static void wined3d_swapchain_vk_rotate(struct wined3d_swapchain *swapchain, str
 
         texture_prev->image = texture->image;
         texture_prev->layout = texture->layout;
+        texture_prev->bind_mask = texture->bind_mask;
         texture_prev->default_image_info = texture->default_image_info;
 
         wined3d_texture_validate_location(&texture_prev->t, 0, sub_resource->locations & supported_locations);
@@ -1199,6 +1209,7 @@ static void wined3d_swapchain_vk_rotate(struct wined3d_swapchain *swapchain, str
 
     texture_prev->image = image0;
     texture_prev->layout = vk_layout0;
+    texture_prev->bind_mask = bind_mask0;
     texture_prev->default_image_info = vk_info0;
 
     wined3d_texture_validate_location(&texture_prev->t, 0, locations0 & supported_locations);
@@ -1530,8 +1541,8 @@ static HRESULT wined3d_swapchain_init(struct wined3d_swapchain *swapchain, struc
     if (swapchain->state.desc.flags & WINED3D_SWAPCHAIN_GDI_COMPATIBLE)
         texture_flags |= WINED3D_TEXTURE_CREATE_GET_DC;
 
-    if (FAILED(hr = device->device_parent->ops->create_swapchain_texture(device->device_parent,
-            parent, &texture_desc, texture_flags, &swapchain->front_buffer)))
+    if (FAILED(hr = wined3d_texture_create(device, &texture_desc, 1, 1, texture_flags,
+            NULL, NULL, &wined3d_null_parent_ops, &swapchain->front_buffer)))
     {
         WARN("Failed to create front buffer, hr %#lx.\n", hr);
         goto err;
@@ -1576,8 +1587,8 @@ static HRESULT wined3d_swapchain_init(struct wined3d_swapchain *swapchain, struc
         for (i = 0; i < swapchain->state.desc.backbuffer_count; ++i)
         {
             TRACE("Creating back buffer %u.\n", i);
-            if (FAILED(hr = device->device_parent->ops->create_swapchain_texture(device->device_parent,
-                    parent, &texture_desc, texture_flags, &swapchain->back_buffers[i])))
+            if (FAILED(hr = wined3d_texture_create(device, &texture_desc, 1, 1, texture_flags,
+                    NULL, NULL, &wined3d_null_parent_ops, &swapchain->back_buffers[i])))
             {
                 WARN("Failed to create back buffer %u, hr %#lx.\n", i, hr);
                 swapchain->state.desc.backbuffer_count = i;
@@ -1604,8 +1615,8 @@ static HRESULT wined3d_swapchain_init(struct wined3d_swapchain *swapchain, struc
             else
                 texture_desc.access = WINED3D_RESOURCE_ACCESS_GPU;
 
-            if (FAILED(hr = device->device_parent->ops->create_swapchain_texture(device->device_parent,
-                    device->device_parent, &texture_desc, 0, &ds)))
+            if (FAILED(hr = wined3d_texture_create(device, &texture_desc, 1, 1, 0,
+                    NULL, NULL, &wined3d_null_parent_ops, &ds)))
             {
                 WARN("Failed to create the auto depth/stencil surface, hr %#lx.\n", hr);
                 goto err;

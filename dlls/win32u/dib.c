@@ -205,9 +205,11 @@ static BOOL bitmapinfo_from_user_bitmapinfo( BITMAPINFO *dst, const BITMAPINFO *
 {
     void *src_colors;
 
-    if (coloruse > DIB_PAL_COLORS + 1) return FALSE;  /* FIXME: handle DIB_PAL_COLORS+1 format */
+    if (coloruse > DIB_PAL_INDICES) return FALSE;
     if (!bitmapinfoheader_from_user_bitmapinfo( &dst->bmiHeader, &info->bmiHeader )) return FALSE;
     if (!is_valid_dib_format( &dst->bmiHeader, allow_compression )) return FALSE;
+    if (coloruse == DIB_PAL_INDICES && (dst->bmiHeader.biBitCount != 1 ||
+                dst->bmiHeader.biCompression != BI_RGB)) return FALSE;
 
     src_colors = (char *)info + info->bmiHeader.biSize;
 
@@ -229,6 +231,18 @@ static BOOL bitmapinfo_from_user_bitmapinfo( BITMAPINFO *dst, const BITMAPINFO *
         {
             memcpy( dst->bmiColors, src_colors, colors * sizeof(WORD) );
             max_colors = colors;
+        }
+        else if (coloruse == DIB_PAL_INDICES)
+        {
+            dst->bmiColors[0].rgbRed = 0;
+            dst->bmiColors[0].rgbGreen = 0;
+            dst->bmiColors[0].rgbBlue = 0;
+            dst->bmiColors[0].rgbReserved = 0;
+            dst->bmiColors[1].rgbRed = 0xff;
+            dst->bmiColors[1].rgbGreen = 0xff;
+            dst->bmiColors[1].rgbBlue = 0xff;
+            dst->bmiColors[1].rgbReserved = 0;
+            colors = max_colors;
         }
         else if (info->bmiHeader.biSize != sizeof(BITMAPCOREHEADER))
         {
@@ -462,9 +476,9 @@ fail:
 
 
 
-INT CDECL nulldrv_StretchDIBits( PHYSDEV dev, INT xDst, INT yDst, INT widthDst, INT heightDst,
-                                 INT xSrc, INT ySrc, INT widthSrc, INT heightSrc, const void *bits,
-                                 BITMAPINFO *src_info, UINT coloruse, DWORD rop )
+INT nulldrv_StretchDIBits( PHYSDEV dev, INT xDst, INT yDst, INT widthDst, INT heightDst,
+                           INT xSrc, INT ySrc, INT widthSrc, INT heightSrc, const void *bits,
+                           BITMAPINFO *src_info, UINT coloruse, DWORD rop )
 {
     DC *dc = get_nulldrv_dc( dev );
     char dst_buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
@@ -641,27 +655,10 @@ INT WINAPI NtGdiStretchDIBitsInternal( HDC hdc, INT xDst, INT yDst, INT widthDst
 }
 
 
-/******************************************************************************
- * SetDIBits [GDI32.@]
- *
- * Sets pixels in a bitmap using colors from DIB.
- *
- * PARAMS
- *    hdc       [I] Handle to device context
- *    hbitmap   [I] Handle to bitmap
- *    startscan [I] Starting scan line
- *    lines     [I] Number of scan lines
- *    bits      [I] Array of bitmap bits
- *    info      [I] Address of structure with data
- *    coloruse  [I] Type of color indexes to use
- *
- * RETURNS
- *    Success: Number of scan lines copied
- *    Failure: 0
- */
-INT WINAPI SetDIBits( HDC hdc, HBITMAP hbitmap, UINT startscan,
-		      UINT lines, LPCVOID bits, const BITMAPINFO *info,
-		      UINT coloruse )
+/* Sets pixels in a bitmap using colors from DIB, see SetDIBits */
+static int set_di_bits( HDC hdc, HBITMAP hbitmap, UINT startscan,
+                        UINT lines, LPCVOID bits, const BITMAPINFO *info,
+                        UINT coloruse )
 {
     BITMAPOBJ *bitmap;
     char src_bmibuf[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
@@ -675,7 +672,7 @@ INT WINAPI SetDIBits( HDC hdc, HBITMAP hbitmap, UINT startscan,
     INT src_to_dst_offset;
     HRGN clip = 0;
 
-    if (!bitmapinfo_from_user_bitmapinfo( src_info, info, coloruse, TRUE ) || coloruse > DIB_PAL_COLORS)
+    if (!bitmapinfo_from_user_bitmapinfo( src_info, info, coloruse, TRUE ))
     {
         RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
         return 0;
@@ -698,6 +695,8 @@ INT WINAPI SetDIBits( HDC hdc, HBITMAP hbitmap, UINT startscan,
     if (coloruse == DIB_PAL_COLORS && !fill_color_table_from_pal_colors( src_info, hdc )) return 0;
 
     if (!(bitmap = GDI_GetObjPtr( hbitmap, NTGDI_OBJ_BITMAP ))) return 0;
+
+    if (coloruse == DIB_PAL_INDICES && bitmap->dib.dsBm.bmBitsPixel != 1) return 0;
 
     if (src_info->bmiHeader.biCompression == BI_RLE4 || src_info->bmiHeader.biCompression == BI_RLE8)
     {
@@ -766,9 +765,9 @@ done:
 }
 
 
-INT CDECL nulldrv_SetDIBitsToDevice( PHYSDEV dev, INT x_dst, INT y_dst, DWORD cx, DWORD cy,
-                                     INT x_src, INT y_src, UINT startscan, UINT lines,
-                                     const void *bits, BITMAPINFO *src_info, UINT coloruse )
+INT nulldrv_SetDIBitsToDevice( PHYSDEV dev, INT x_dst, INT y_dst, DWORD cx, DWORD cy,
+                               INT x_src, INT y_src, UINT startscan, UINT lines,
+                               const void *bits, BITMAPINFO *src_info, UINT coloruse )
 {
     DC *dc = get_nulldrv_dc( dev );
     char dst_buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
@@ -896,6 +895,8 @@ INT WINAPI NtGdiSetDIBitsToDeviceInternal( HDC hdc, INT xDest, INT yDest, DWORD 
     PHYSDEV physdev;
     INT ret = 0;
     DC *dc;
+
+    if (xform) return set_di_bits( hdc, xform, startscan, lines, bits, bmi, coloruse );
 
     if (!bits) return 0;
     if (!bitmapinfo_from_user_bitmapinfo( info, bmi, coloruse, TRUE ))
@@ -1452,7 +1453,7 @@ HBITMAP WINAPI NtGdiCreateDIBitmapInternal( HDC hdc, INT width, INT height, DWOR
     {
         if (init & CBM_INIT)
         {
-            if (SetDIBits( hdc, handle, 0, height, bits, data, coloruse ) == 0)
+            if (set_di_bits( hdc, handle, 0, height, bits, data, coloruse ) == 0)
             {
                 NtGdiDeleteObjectApp( handle );
                 handle = 0;

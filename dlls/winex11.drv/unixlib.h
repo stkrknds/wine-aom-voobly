@@ -21,7 +21,6 @@
 
 enum x11drv_funcs
 {
-    unix_create_desktop,
     unix_init,
     unix_systray_clear,
     unix_systray_dock,
@@ -31,19 +30,10 @@ enum x11drv_funcs
     unix_tablet_get_packet,
     unix_tablet_info,
     unix_tablet_load_info,
-    unix_xim_preedit_state,
-    unix_xim_reset,
     unix_funcs_count,
 };
 
 #define X11DRV_CALL(func, params) WINE_UNIX_CALL( unix_ ## func, params )
-
-/* x11drv_create_desktop params */
-struct create_desktop_params
-{
-    UINT width;
-    UINT height;
-};
 
 /* x11drv_init params */
 struct init_params
@@ -83,8 +73,6 @@ enum x11drv_client_funcs
     client_func_dnd_enter_event,
     client_func_dnd_position_event,
     client_func_dnd_post_drop,
-    client_func_ime_set_composition_string,
-    client_func_ime_set_result,
     client_func_systray_change_owner,
     client_func_last
 };
@@ -96,11 +84,6 @@ enum client_callback
 {
     client_dnd_drop_event,
     client_dnd_leave_event,
-    client_ime_get_cursor_pos,
-    client_ime_set_composition_status,
-    client_ime_set_cursor_pos,
-    client_ime_set_open_status,
-    client_ime_update_association,
     client_funcs_count
 };
 

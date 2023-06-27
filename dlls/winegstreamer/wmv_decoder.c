@@ -446,7 +446,7 @@ static HRESULT WINAPI media_object_GetOutputType(IMediaObject *iface, DWORD inde
         return DMO_E_TYPE_NOT_SET;
 
     width = decoder->input_format.u.video_wmv.width;
-    height = decoder->input_format.u.video_wmv.height;
+    height = abs(decoder->input_format.u.video_wmv.height);
     subtype = wmv_decoder_output_types[type_index].subtype;
     if (FAILED(hr = MFCalculateImageSize(subtype, width, height, &image_size)))
     {
@@ -540,6 +540,7 @@ static HRESULT WINAPI media_object_SetOutputType(IMediaObject *iface, DWORD inde
         const DMO_MEDIA_TYPE *type, DWORD flags)
 {
     struct wmv_decoder *decoder = impl_from_IMediaObject(iface);
+    struct wg_transform_attrs attrs = {0};
     struct wg_format wg_format;
     unsigned int i;
 
@@ -593,7 +594,7 @@ static HRESULT WINAPI media_object_SetOutputType(IMediaObject *iface, DWORD inde
         wg_transform_destroy(decoder->wg_transform);
         decoder->wg_transform = NULL;
     }
-    if (!(decoder->wg_transform = wg_transform_create(&decoder->input_format, &decoder->output_format)))
+    if (!(decoder->wg_transform = wg_transform_create(&decoder->input_format, &decoder->output_format, &attrs)))
         return E_FAIL;
 
     return S_OK;
@@ -632,7 +633,7 @@ static HRESULT WINAPI media_object_GetOutputSizeInfo(IMediaObject *iface, DWORD 
         return DMO_E_TYPE_NOT_SET;
 
     if (FAILED(hr = MFCalculateImageSize(&decoder->output_subtype,
-            decoder->output_format.u.video.width, decoder->output_format.u.video.height, (UINT32 *)size)))
+            decoder->output_format.u.video.width, abs(decoder->output_format.u.video.height), (UINT32 *)size)))
     {
         FIXME("Failed to get image size of subtype %s.\n", debugstr_guid(&decoder->output_subtype));
         return hr;
@@ -656,14 +657,27 @@ static HRESULT WINAPI media_object_SetInputMaxLatency(IMediaObject *iface, DWORD
 
 static HRESULT WINAPI media_object_Flush(IMediaObject *iface)
 {
-    FIXME("iface %p stub!\n", iface);
-    return E_NOTIMPL;
+    struct wmv_decoder *decoder = impl_from_IMediaObject(iface);
+    HRESULT hr;
+
+    TRACE("iface %p.\n", iface);
+
+    if (FAILED(hr = wg_transform_flush(decoder->wg_transform)))
+        return hr;
+
+    wg_sample_queue_flush(decoder->wg_sample_queue, TRUE);
+
+    return S_OK;
 }
 
 static HRESULT WINAPI media_object_Discontinuity(IMediaObject *iface, DWORD index)
 {
-    FIXME("iface %p, index %lu stub!\n", iface, index);
-    return E_NOTIMPL;
+    TRACE("iface %p, index %lu.\n", iface, index);
+
+    if (index > 0)
+        return DMO_E_INVALIDSTREAMINDEX;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI media_object_AllocateStreamingResources(IMediaObject *iface)
@@ -680,8 +694,16 @@ static HRESULT WINAPI media_object_FreeStreamingResources(IMediaObject *iface)
 
 static HRESULT WINAPI media_object_GetInputStatus(IMediaObject *iface, DWORD index, DWORD *flags)
 {
-    FIXME("iface %p, index %lu, flags %p stub!\n", iface, index, flags);
-    return E_NOTIMPL;
+    TRACE("iface %p, index %lu, flags %p.\n", iface, index, flags);
+
+    if (index > 0)
+        return DMO_E_INVALIDSTREAMINDEX;
+    if (!flags)
+        return E_POINTER;
+
+    *flags = DMO_INPUT_STATUSF_ACCEPT_DATA;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI media_object_ProcessInput(IMediaObject *iface, DWORD index,
@@ -873,13 +895,14 @@ HRESULT wmv_decoder_create(IUnknown *outer, IUnknown **out)
             .height = 1080,
         },
     };
+    struct wg_transform_attrs attrs = {0};
     struct wg_transform *transform;
     struct wmv_decoder *decoder;
     HRESULT hr;
 
     TRACE("outer %p, out %p.\n", outer, out);
 
-    if (!(transform = wg_transform_create(&input_format, &output_format)))
+    if (!(transform = wg_transform_create(&input_format, &output_format, &attrs)))
     {
         ERR_(winediag)("GStreamer doesn't support WMV decoding, please install appropriate plugins.\n");
         return E_FAIL;

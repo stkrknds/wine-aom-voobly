@@ -19,8 +19,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#define NONAMELESSUNION
-
 #include <stdio.h>
 #include <winsock2.h>
 #include <windows.h>
@@ -145,14 +143,14 @@ static void print_basic_information(void)
     IP_ADAPTER_ADDRESSES *adapters;
     ULONG out = 0;
 
-    if (GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_ALL_GATEWAYS,
+    if (GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_GATEWAYS,
                              NULL, NULL, &out) == ERROR_BUFFER_OVERFLOW)
     {
         adapters = HeapAlloc(GetProcessHeap(), 0, out);
         if (!adapters)
             exit(1);
 
-        if (GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_ALL_GATEWAYS,
+        if (GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_GATEWAYS,
                                  NULL, adapters, &out) == ERROR_SUCCESS)
         {
             IP_ADAPTER_ADDRESSES *p;
@@ -293,14 +291,14 @@ static void print_full_information(void)
         HeapFree(GetProcessHeap(), 0, info);
     }
 
-    if (GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_ALL_GATEWAYS,
+    if (GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_GATEWAYS,
                              NULL, NULL, &out) == ERROR_BUFFER_OVERFLOW)
     {
         adapters = HeapAlloc(GetProcessHeap(), 0, out);
         if (!adapters)
             exit(1);
 
-        if (GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_ALL_GATEWAYS,
+        if (GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_GATEWAYS,
                                  NULL, adapters, &out) == ERROR_SUCCESS)
         {
             IP_ADAPTER_ADDRESSES *p;
@@ -317,7 +315,7 @@ static void print_full_information(void)
                 print_field(STRING_CONN_DNS_SUFFIX, p->DnsSuffix);
                 print_field(STRING_DESCRIPTION, p->Description);
                 print_field(STRING_PHYS_ADDR, physaddr_to_string(physaddr_buf, p->PhysicalAddress, p->PhysicalAddressLength));
-                print_field(STRING_DHCP_ENABLED, boolean_to_string(p->u1.Flags & IP_ADAPTER_DHCP_ENABLED));
+                print_field(STRING_DHCP_ENABLED, boolean_to_string(p->Flags & IP_ADAPTER_DHCP_ENABLED));
 
                 /* FIXME: Output autoconfiguration status. */
 

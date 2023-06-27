@@ -154,53 +154,53 @@ static inline void add_bounds_rect( RECT *bounds, const RECT *rect )
 
 /* Wine driver X11 functions */
 
-extern BOOL CDECL X11DRV_Arc( PHYSDEV dev, INT left, INT top, INT right,
-                              INT bottom, INT xstart, INT ystart, INT xend, INT yend ) DECLSPEC_HIDDEN;
-extern BOOL CDECL X11DRV_Chord( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
-                                INT xstart, INT ystart, INT xend, INT yend ) DECLSPEC_HIDDEN;
-extern NTSTATUS CDECL X11DRV_D3DKMTCheckVidPnExclusiveOwnership( const D3DKMT_CHECKVIDPNEXCLUSIVEOWNERSHIP *desc ) DECLSPEC_HIDDEN;
-extern NTSTATUS CDECL X11DRV_D3DKMTCloseAdapter( const D3DKMT_CLOSEADAPTER *desc ) DECLSPEC_HIDDEN;
-extern NTSTATUS CDECL X11DRV_D3DKMTOpenAdapterFromLuid( D3DKMT_OPENADAPTERFROMLUID *desc ) DECLSPEC_HIDDEN;
-extern NTSTATUS CDECL X11DRV_D3DKMTQueryVideoMemoryInfo( D3DKMT_QUERYVIDEOMEMORYINFO *desc ) DECLSPEC_HIDDEN;
-extern NTSTATUS CDECL X11DRV_D3DKMTSetVidPnSourceOwner( const D3DKMT_SETVIDPNSOURCEOWNER *desc ) DECLSPEC_HIDDEN;
-extern BOOL CDECL X11DRV_Ellipse( PHYSDEV dev, INT left, INT top, INT right, INT bottom ) DECLSPEC_HIDDEN;
-extern BOOL CDECL X11DRV_ExtFloodFill( PHYSDEV dev, INT x, INT y, COLORREF color, UINT fillType ) DECLSPEC_HIDDEN;
-extern BOOL CDECL X11DRV_FillPath( PHYSDEV dev ) DECLSPEC_HIDDEN;
-extern BOOL CDECL X11DRV_GetDeviceGammaRamp( PHYSDEV dev, LPVOID ramp ) DECLSPEC_HIDDEN;
-extern BOOL CDECL X11DRV_GetICMProfile( PHYSDEV dev, BOOL allow_default, LPDWORD size, LPWSTR filename ) DECLSPEC_HIDDEN;
-extern DWORD CDECL X11DRV_GetImage( PHYSDEV dev, BITMAPINFO *info,
-                                    struct gdi_image_bits *bits, struct bitblt_coords *src ) DECLSPEC_HIDDEN;
-extern COLORREF CDECL X11DRV_GetNearestColor( PHYSDEV dev, COLORREF color ) DECLSPEC_HIDDEN;
-extern UINT CDECL X11DRV_GetSystemPaletteEntries( PHYSDEV dev, UINT start, UINT count, LPPALETTEENTRY entries ) DECLSPEC_HIDDEN;
-extern BOOL CDECL X11DRV_GradientFill( PHYSDEV dev, TRIVERTEX *vert_array, ULONG nvert,
-                                       void *grad_array, ULONG ngrad, ULONG mode ) DECLSPEC_HIDDEN;
-extern BOOL CDECL X11DRV_LineTo( PHYSDEV dev, INT x, INT y) DECLSPEC_HIDDEN;
-extern BOOL CDECL X11DRV_PaintRgn( PHYSDEV dev, HRGN hrgn ) DECLSPEC_HIDDEN;
-extern BOOL CDECL X11DRV_PatBlt( PHYSDEV dev, struct bitblt_coords *dst, DWORD rop ) DECLSPEC_HIDDEN;
-extern BOOL CDECL X11DRV_Pie( PHYSDEV dev, INT left, INT top, INT right,
-                              INT bottom, INT xstart, INT ystart, INT xend, INT yend ) DECLSPEC_HIDDEN;
-extern BOOL CDECL X11DRV_PolyPolygon( PHYSDEV dev, const POINT* pt, const INT* counts, UINT polygons) DECLSPEC_HIDDEN;
-extern BOOL CDECL X11DRV_PolyPolyline( PHYSDEV dev, const POINT* pt, const DWORD* counts, DWORD polylines) DECLSPEC_HIDDEN;
-extern DWORD CDECL X11DRV_PutImage( PHYSDEV dev, HRGN clip, BITMAPINFO *info,
-                                    const struct gdi_image_bits *bits, struct bitblt_coords *src,
-                                    struct bitblt_coords *dst, DWORD rop ) DECLSPEC_HIDDEN;
-extern UINT CDECL X11DRV_RealizeDefaultPalette( PHYSDEV dev ) DECLSPEC_HIDDEN;
-extern UINT CDECL X11DRV_RealizePalette( PHYSDEV dev, HPALETTE hpal, BOOL primary ) DECLSPEC_HIDDEN;
-extern BOOL CDECL X11DRV_Rectangle(PHYSDEV dev, INT left, INT top, INT right, INT bottom) DECLSPEC_HIDDEN;
-extern BOOL CDECL X11DRV_RoundRect( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
-                                    INT ell_width, INT ell_height ) DECLSPEC_HIDDEN;
-extern HBRUSH CDECL X11DRV_SelectBrush( PHYSDEV dev, HBRUSH hbrush, const struct brush_pattern *pattern ) DECLSPEC_HIDDEN;
-extern HPEN CDECL X11DRV_SelectPen( PHYSDEV dev, HPEN hpen, const struct brush_pattern *pattern ) DECLSPEC_HIDDEN;
-extern COLORREF CDECL X11DRV_SetDCBrushColor( PHYSDEV dev, COLORREF crColor ) DECLSPEC_HIDDEN;
-extern COLORREF CDECL X11DRV_SetDCPenColor( PHYSDEV dev, COLORREF crColor ) DECLSPEC_HIDDEN;
-extern void CDECL X11DRV_SetDeviceClipping( PHYSDEV dev, HRGN rgn ) DECLSPEC_HIDDEN;
-extern BOOL CDECL X11DRV_SetDeviceGammaRamp( PHYSDEV dev, LPVOID ramp ) DECLSPEC_HIDDEN;
-extern COLORREF CDECL X11DRV_SetPixel( PHYSDEV dev, INT x, INT y, COLORREF color ) DECLSPEC_HIDDEN;
-extern BOOL CDECL X11DRV_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
-                                     PHYSDEV src_dev, struct bitblt_coords *src, DWORD rop ) DECLSPEC_HIDDEN;
-extern BOOL CDECL X11DRV_StrokeAndFillPath( PHYSDEV dev ) DECLSPEC_HIDDEN;
-extern BOOL CDECL X11DRV_StrokePath( PHYSDEV dev ) DECLSPEC_HIDDEN;
-extern BOOL CDECL X11DRV_UnrealizePalette( HPALETTE hpal ) DECLSPEC_HIDDEN;
+extern BOOL X11DRV_Arc( PHYSDEV dev, INT left, INT top, INT right,
+                        INT bottom, INT xstart, INT ystart, INT xend, INT yend ) DECLSPEC_HIDDEN;
+extern BOOL X11DRV_Chord( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
+                          INT xstart, INT ystart, INT xend, INT yend ) DECLSPEC_HIDDEN;
+extern NTSTATUS X11DRV_D3DKMTCheckVidPnExclusiveOwnership( const D3DKMT_CHECKVIDPNEXCLUSIVEOWNERSHIP *desc ) DECLSPEC_HIDDEN;
+extern NTSTATUS X11DRV_D3DKMTCloseAdapter( const D3DKMT_CLOSEADAPTER *desc ) DECLSPEC_HIDDEN;
+extern NTSTATUS X11DRV_D3DKMTOpenAdapterFromLuid( D3DKMT_OPENADAPTERFROMLUID *desc ) DECLSPEC_HIDDEN;
+extern NTSTATUS X11DRV_D3DKMTQueryVideoMemoryInfo( D3DKMT_QUERYVIDEOMEMORYINFO *desc ) DECLSPEC_HIDDEN;
+extern NTSTATUS X11DRV_D3DKMTSetVidPnSourceOwner( const D3DKMT_SETVIDPNSOURCEOWNER *desc ) DECLSPEC_HIDDEN;
+extern BOOL X11DRV_Ellipse( PHYSDEV dev, INT left, INT top, INT right, INT bottom ) DECLSPEC_HIDDEN;
+extern BOOL X11DRV_ExtFloodFill( PHYSDEV dev, INT x, INT y, COLORREF color, UINT fillType ) DECLSPEC_HIDDEN;
+extern BOOL X11DRV_FillPath( PHYSDEV dev ) DECLSPEC_HIDDEN;
+extern BOOL X11DRV_GetDeviceGammaRamp( PHYSDEV dev, LPVOID ramp ) DECLSPEC_HIDDEN;
+extern BOOL X11DRV_GetICMProfile( PHYSDEV dev, BOOL allow_default, LPDWORD size, LPWSTR filename ) DECLSPEC_HIDDEN;
+extern DWORD X11DRV_GetImage( PHYSDEV dev, BITMAPINFO *info,
+                              struct gdi_image_bits *bits, struct bitblt_coords *src ) DECLSPEC_HIDDEN;
+extern COLORREF X11DRV_GetNearestColor( PHYSDEV dev, COLORREF color ) DECLSPEC_HIDDEN;
+extern UINT X11DRV_GetSystemPaletteEntries( PHYSDEV dev, UINT start, UINT count, LPPALETTEENTRY entries ) DECLSPEC_HIDDEN;
+extern BOOL X11DRV_GradientFill( PHYSDEV dev, TRIVERTEX *vert_array, ULONG nvert,
+                                 void *grad_array, ULONG ngrad, ULONG mode ) DECLSPEC_HIDDEN;
+extern BOOL X11DRV_LineTo( PHYSDEV dev, INT x, INT y) DECLSPEC_HIDDEN;
+extern BOOL X11DRV_PaintRgn( PHYSDEV dev, HRGN hrgn ) DECLSPEC_HIDDEN;
+extern BOOL X11DRV_PatBlt( PHYSDEV dev, struct bitblt_coords *dst, DWORD rop ) DECLSPEC_HIDDEN;
+extern BOOL X11DRV_Pie( PHYSDEV dev, INT left, INT top, INT right,
+                        INT bottom, INT xstart, INT ystart, INT xend, INT yend ) DECLSPEC_HIDDEN;
+extern BOOL X11DRV_PolyPolygon( PHYSDEV dev, const POINT* pt, const INT* counts, UINT polygons) DECLSPEC_HIDDEN;
+extern BOOL X11DRV_PolyPolyline( PHYSDEV dev, const POINT* pt, const DWORD* counts, DWORD polylines) DECLSPEC_HIDDEN;
+extern DWORD X11DRV_PutImage( PHYSDEV dev, HRGN clip, BITMAPINFO *info,
+                              const struct gdi_image_bits *bits, struct bitblt_coords *src,
+                              struct bitblt_coords *dst, DWORD rop ) DECLSPEC_HIDDEN;
+extern UINT X11DRV_RealizeDefaultPalette( PHYSDEV dev ) DECLSPEC_HIDDEN;
+extern UINT X11DRV_RealizePalette( PHYSDEV dev, HPALETTE hpal, BOOL primary ) DECLSPEC_HIDDEN;
+extern BOOL X11DRV_Rectangle(PHYSDEV dev, INT left, INT top, INT right, INT bottom) DECLSPEC_HIDDEN;
+extern BOOL X11DRV_RoundRect( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
+                              INT ell_width, INT ell_height ) DECLSPEC_HIDDEN;
+extern HBRUSH X11DRV_SelectBrush( PHYSDEV dev, HBRUSH hbrush, const struct brush_pattern *pattern ) DECLSPEC_HIDDEN;
+extern HPEN X11DRV_SelectPen( PHYSDEV dev, HPEN hpen, const struct brush_pattern *pattern ) DECLSPEC_HIDDEN;
+extern COLORREF X11DRV_SetDCBrushColor( PHYSDEV dev, COLORREF crColor ) DECLSPEC_HIDDEN;
+extern COLORREF X11DRV_SetDCPenColor( PHYSDEV dev, COLORREF crColor ) DECLSPEC_HIDDEN;
+extern void X11DRV_SetDeviceClipping( PHYSDEV dev, HRGN rgn ) DECLSPEC_HIDDEN;
+extern BOOL X11DRV_SetDeviceGammaRamp( PHYSDEV dev, LPVOID ramp ) DECLSPEC_HIDDEN;
+extern COLORREF X11DRV_SetPixel( PHYSDEV dev, INT x, INT y, COLORREF color ) DECLSPEC_HIDDEN;
+extern BOOL X11DRV_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
+                               PHYSDEV src_dev, struct bitblt_coords *src, DWORD rop ) DECLSPEC_HIDDEN;
+extern BOOL X11DRV_StrokeAndFillPath( PHYSDEV dev ) DECLSPEC_HIDDEN;
+extern BOOL X11DRV_StrokePath( PHYSDEV dev ) DECLSPEC_HIDDEN;
+extern BOOL X11DRV_UnrealizePalette( HPALETTE hpal ) DECLSPEC_HIDDEN;
 
 extern BOOL X11DRV_ActivateKeyboardLayout( HKL hkl, UINT flags ) DECLSPEC_HIDDEN;
 extern void X11DRV_Beep(void) DECLSPEC_HIDDEN;
@@ -208,18 +208,21 @@ extern INT X11DRV_GetKeyNameText( LONG lparam, LPWSTR buffer, INT size ) DECLSPE
 extern UINT X11DRV_MapVirtualKeyEx( UINT code, UINT map_type, HKL hkl ) DECLSPEC_HIDDEN;
 extern INT X11DRV_ToUnicodeEx( UINT virtKey, UINT scanCode, const BYTE *lpKeyState,
                                LPWSTR bufW, int bufW_size, UINT flags, HKL hkl ) DECLSPEC_HIDDEN;
+extern UINT X11DRV_ImeToAsciiEx( UINT vkey, UINT vsc, const BYTE *state,
+                                 COMPOSITIONSTRING *compstr, HIMC himc ) DECLSPEC_HIDDEN;
 extern SHORT X11DRV_VkKeyScanEx( WCHAR wChar, HKL hkl ) DECLSPEC_HIDDEN;
+extern void X11DRV_NotifyIMEStatus( HWND hwnd, UINT status ) DECLSPEC_HIDDEN;
 extern void X11DRV_DestroyCursorIcon( HCURSOR handle ) DECLSPEC_HIDDEN;
-extern void X11DRV_SetCursor( HCURSOR handle ) DECLSPEC_HIDDEN;
+extern void X11DRV_SetCursor( HWND hwnd, HCURSOR handle ) DECLSPEC_HIDDEN;
 extern BOOL X11DRV_SetCursorPos( INT x, INT y ) DECLSPEC_HIDDEN;
 extern BOOL X11DRV_GetCursorPos( LPPOINT pos ) DECLSPEC_HIDDEN;
-extern BOOL X11DRV_ClipCursor( LPCRECT clip ) DECLSPEC_HIDDEN;
+extern BOOL X11DRV_ClipCursor( const RECT *clip, BOOL reset ) DECLSPEC_HIDDEN;
 extern LONG X11DRV_ChangeDisplaySettings( LPDEVMODEW displays, LPCWSTR primary_name, HWND hwnd, DWORD flags, LPVOID lpvoid ) DECLSPEC_HIDDEN;
 extern BOOL X11DRV_GetCurrentDisplaySettings( LPCWSTR name, BOOL is_primary, LPDEVMODEW devmode ) DECLSPEC_HIDDEN;
 extern INT X11DRV_GetDisplayDepth( LPCWSTR name, BOOL is_primary ) DECLSPEC_HIDDEN;
 extern BOOL X11DRV_UpdateDisplayDevices( const struct gdi_device_manager *device_manager,
                                          BOOL force, void *param ) DECLSPEC_HIDDEN;
-extern BOOL X11DRV_CreateDesktopWindow( HWND hwnd ) DECLSPEC_HIDDEN;
+extern BOOL X11DRV_CreateDesktop( const WCHAR *name, UINT width, UINT height ) DECLSPEC_HIDDEN;
 extern BOOL X11DRV_CreateWindow( HWND hwnd ) DECLSPEC_HIDDEN;
 extern LRESULT X11DRV_DesktopWindowProc( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp ) DECLSPEC_HIDDEN;
 extern void X11DRV_DestroyWindow( HWND hwnd ) DECLSPEC_HIDDEN;
@@ -229,6 +232,7 @@ extern void X11DRV_GetDC( HDC hdc, HWND hwnd, HWND top, const RECT *win_rect,
 extern void X11DRV_ReleaseDC( HWND hwnd, HDC hdc ) DECLSPEC_HIDDEN;
 extern BOOL X11DRV_ScrollDC( HDC hdc, INT dx, INT dy, HRGN update ) DECLSPEC_HIDDEN;
 extern void X11DRV_SetCapture( HWND hwnd, UINT flags ) DECLSPEC_HIDDEN;
+extern void X11DRV_SetDesktopWindow( HWND hwnd ) DECLSPEC_HIDDEN;
 extern void X11DRV_SetLayeredWindowAttributes( HWND hwnd, COLORREF key, BYTE alpha,
                                                DWORD flags ) DECLSPEC_HIDDEN;
 extern void X11DRV_SetParent( HWND hwnd, HWND parent, HWND old_parent ) DECLSPEC_HIDDEN;
@@ -384,8 +388,7 @@ struct x11drv_thread_data
     Window   selection_wnd;        /* window used for selection interactions */
     unsigned long warp_serial;     /* serial number of last pointer warp request */
     Window   clip_window;          /* window used for cursor clipping */
-    HWND     clip_hwnd;            /* message window stored in desktop while clipping is active */
-    DWORD    clip_reset;           /* time when clipping was last reset */
+    BOOL     clipping_cursor;      /* whether thread is currently clipping the cursor */
 #ifdef HAVE_X11_EXTENSIONS_XINPUT2_H
     enum { xi_unavailable = -1, xi_unknown, xi_disabled, xi_enabled } xi2_state; /* XInput2 state */
     void    *xi2_devices;          /* list of XInput2 devices (valid when state is enabled) */
@@ -435,12 +438,10 @@ extern BOOL keyboard_grabbed DECLSPEC_HIDDEN;
 extern unsigned int screen_bpp DECLSPEC_HIDDEN;
 extern BOOL usexrandr DECLSPEC_HIDDEN;
 extern BOOL usexvidmode DECLSPEC_HIDDEN;
-extern BOOL ximInComposeMode DECLSPEC_HIDDEN;
 extern BOOL use_take_focus DECLSPEC_HIDDEN;
 extern BOOL use_primary_selection DECLSPEC_HIDDEN;
 extern BOOL use_system_cursors DECLSPEC_HIDDEN;
 extern BOOL show_systray DECLSPEC_HIDDEN;
-extern BOOL grab_pointer DECLSPEC_HIDDEN;
 extern BOOL grab_fullscreen DECLSPEC_HIDDEN;
 extern BOOL usexcomposite DECLSPEC_HIDDEN;
 extern BOOL managed_mode DECLSPEC_HIDDEN;
@@ -585,9 +586,6 @@ enum x11drv_window_messages
     WM_X11DRV_UPDATE_CLIPBOARD = 0x80001000,
     WM_X11DRV_SET_WIN_REGION,
     WM_X11DRV_DESKTOP_RESIZED,
-    WM_X11DRV_SET_CURSOR,
-    WM_X11DRV_CLIP_CURSOR_NOTIFY,
-    WM_X11DRV_CLIP_CURSOR_REQUEST,
     WM_X11DRV_DELETE_TAB,
     WM_X11DRV_ADD_TAB
 };
@@ -641,7 +639,6 @@ struct x11drv_win_data
 extern struct x11drv_win_data *get_win_data( HWND hwnd ) DECLSPEC_HIDDEN;
 extern void release_win_data( struct x11drv_win_data *data ) DECLSPEC_HIDDEN;
 extern Window X11DRV_get_whole_window( HWND hwnd ) DECLSPEC_HIDDEN;
-extern XIC X11DRV_get_ic( HWND hwnd ) DECLSPEC_HIDDEN;
 extern Window get_dummy_parent(void) DECLSPEC_HIDDEN;
 
 extern void sync_gl_drawable( HWND hwnd, BOOL known_child ) DECLSPEC_HIDDEN;
@@ -679,15 +676,11 @@ extern XContext winContext DECLSPEC_HIDDEN;
 /* X context to associate an X cursor to a Win32 cursor handle */
 extern XContext cursor_context DECLSPEC_HIDDEN;
 
+extern BOOL is_current_process_focused(void) DECLSPEC_HIDDEN;
 extern void X11DRV_SetFocus( HWND hwnd ) DECLSPEC_HIDDEN;
 extern void set_window_cursor( Window window, HCURSOR handle ) DECLSPEC_HIDDEN;
-extern void sync_window_cursor( Window window ) DECLSPEC_HIDDEN;
-extern LRESULT clip_cursor_notify( HWND hwnd, HWND prev_clip_hwnd, HWND new_clip_hwnd ) DECLSPEC_HIDDEN;
-extern LRESULT clip_cursor_request( HWND hwnd, BOOL fullscreen, BOOL reset ) DECLSPEC_HIDDEN;
-extern void ungrab_clipping_window(void) DECLSPEC_HIDDEN;
-extern void reset_clipping_window(void) DECLSPEC_HIDDEN;
 extern void retry_grab_clipping_window(void) DECLSPEC_HIDDEN;
-extern BOOL clip_fullscreen_window( HWND hwnd, BOOL reset ) DECLSPEC_HIDDEN;
+extern void ungrab_clipping_window(void) DECLSPEC_HIDDEN;
 extern void move_resize_window( HWND hwnd, int dir ) DECLSPEC_HIDDEN;
 extern void X11DRV_InitKeyboard( Display *display ) DECLSPEC_HIDDEN;
 extern BOOL X11DRV_ProcessEvents( DWORD mask ) DECLSPEC_HIDDEN;
@@ -709,6 +702,9 @@ extern void init_recursive_mutex( pthread_mutex_t *mutex ) DECLSPEC_HIDDEN;
 #define DEPTH_COUNT 3
 extern const unsigned int *depths DECLSPEC_HIDDEN;
 
+/* Use a distinct type for the settings id, to avoid mixups other types of ids */
+typedef struct { ULONG_PTR id; } x11drv_settings_id;
+
 /* Required functions for changing and enumerating display settings */
 struct x11drv_settings_handler
 {
@@ -722,7 +718,7 @@ struct x11drv_settings_handler
      * Following functions use this id to identify the device.
      *
      * Return FALSE if the device cannot be found and TRUE on success */
-    BOOL (*get_id)(const WCHAR *device_name, BOOL is_primary, ULONG_PTR *id);
+    BOOL (*get_id)(const WCHAR *device_name, BOOL is_primary, x11drv_settings_id *id);
 
     /* get_modes() will be called to get a list of supported modes of the device of id in modes
      * with respect to flags, which could be 0, EDS_RAWMODE or EDS_ROTATEDMODE. If the implementation
@@ -733,7 +729,7 @@ struct x11drv_settings_handler
      * dmDisplayFlags and dmDisplayFrequency
      *
      * Return FALSE on failure with parameters unchanged and error code set. Return TRUE on success */
-    BOOL (*get_modes)(ULONG_PTR id, DWORD flags, DEVMODEW **modes, UINT *mode_count);
+    BOOL (*get_modes)(x11drv_settings_id id, DWORD flags, DEVMODEW **modes, UINT *mode_count);
 
     /* free_modes() will be called to free the mode list returned from get_modes() */
     void (*free_modes)(DEVMODEW *modes);
@@ -745,24 +741,22 @@ struct x11drv_settings_handler
      * dmDisplayFrequency and dmPosition
      *
      * Return FALSE on failure with parameters unchanged and error code set. Return TRUE on success */
-    BOOL (*get_current_mode)(ULONG_PTR id, DEVMODEW *mode);
+    BOOL (*get_current_mode)(x11drv_settings_id id, DEVMODEW *mode);
 
     /* set_current_mode() will be called to change the display mode of the display device of id.
      * mode must be a valid mode from get_modes() with optional fields, such as dmPosition set.
      *
      * Return DISP_CHANGE_*, same as ChangeDisplaySettingsExW() return values */
-    LONG (*set_current_mode)(ULONG_PTR id, const DEVMODEW *mode);
+    LONG (*set_current_mode)(x11drv_settings_id id, const DEVMODEW *mode);
 };
 
 extern void X11DRV_Settings_SetHandler(const struct x11drv_settings_handler *handler) DECLSPEC_HIDDEN;
 
 extern void X11DRV_init_desktop( Window win, unsigned int width, unsigned int height ) DECLSPEC_HIDDEN;
 extern void X11DRV_resize_desktop(void) DECLSPEC_HIDDEN;
-extern void init_registry_display_settings(void) DECLSPEC_HIDDEN;
 extern BOOL is_virtual_desktop(void) DECLSPEC_HIDDEN;
 extern BOOL is_desktop_fullscreen(void) DECLSPEC_HIDDEN;
 extern BOOL is_detached_mode(const DEVMODEW *) DECLSPEC_HIDDEN;
-extern BOOL create_desktop_win_data( Window win ) DECLSPEC_HIDDEN;
 void X11DRV_Settings_Init(void) DECLSPEC_HIDDEN;
 
 void X11DRV_XF86VM_Init(void) DECLSPEC_HIDDEN;
@@ -811,7 +805,6 @@ struct x11drv_display_device_handler
     void (*register_event_handlers)(void);
 };
 
-extern BOOL get_host_primary_gpu(struct gdi_gpu *gpu) DECLSPEC_HIDDEN;
 extern void X11DRV_DisplayDevices_SetHandler(const struct x11drv_display_device_handler *handler) DECLSPEC_HIDDEN;
 extern void X11DRV_DisplayDevices_Init(BOOL force) DECLSPEC_HIDDEN;
 extern void X11DRV_DisplayDevices_RegisterEventHandlers(void) DECLSPEC_HIDDEN;
@@ -820,10 +813,12 @@ extern BOOL X11DRV_DisplayDevices_SupportEventHandlers(void) DECLSPEC_HIDDEN;
 extern struct x11drv_display_device_handler desktop_handler DECLSPEC_HIDDEN;
 
 /* XIM support */
-extern BOOL X11DRV_InitXIM( const WCHAR *input_style ) DECLSPEC_HIDDEN;
-extern XIC X11DRV_CreateIC(XIM xim, struct x11drv_win_data *data) DECLSPEC_HIDDEN;
-extern void X11DRV_SetupXIM(void) DECLSPEC_HIDDEN;
-extern void X11DRV_XIMLookupChars( const char *str, UINT count ) DECLSPEC_HIDDEN;
+extern BOOL xim_init( const WCHAR *input_style ) DECLSPEC_HIDDEN;
+extern void xim_thread_attach( struct x11drv_thread_data *data ) DECLSPEC_HIDDEN;
+extern BOOL xim_in_compose_mode(void) DECLSPEC_HIDDEN;
+extern void xim_set_result_string( HWND hwnd, const char *str, UINT count ) DECLSPEC_HIDDEN;
+extern XIC X11DRV_get_ic( HWND hwnd ) DECLSPEC_HIDDEN;
+extern void xim_set_focus( HWND hwnd, BOOL focus ) DECLSPEC_HIDDEN;
 
 #define XEMBED_MAPPED  (1 << 0)
 
@@ -838,7 +833,6 @@ static inline BOOL is_window_rect_mapped( const RECT *rect )
 
 /* unixlib interface */
 
-extern NTSTATUS x11drv_create_desktop( void *arg ) DECLSPEC_HIDDEN;
 extern NTSTATUS x11drv_systray_clear( void *arg ) DECLSPEC_HIDDEN;
 extern NTSTATUS x11drv_systray_dock( void *arg ) DECLSPEC_HIDDEN;
 extern NTSTATUS x11drv_systray_hide( void *arg ) DECLSPEC_HIDDEN;
@@ -847,8 +841,6 @@ extern NTSTATUS x11drv_tablet_attach_queue( void *arg ) DECLSPEC_HIDDEN;
 extern NTSTATUS x11drv_tablet_get_packet( void *arg ) DECLSPEC_HIDDEN;
 extern NTSTATUS x11drv_tablet_load_info( void *arg ) DECLSPEC_HIDDEN;
 extern NTSTATUS x11drv_tablet_info( void *arg ) DECLSPEC_HIDDEN;
-extern NTSTATUS x11drv_xim_preedit_state( void *arg ) DECLSPEC_HIDDEN;
-extern NTSTATUS x11drv_xim_reset( void *arg ) DECLSPEC_HIDDEN;
 
 extern NTSTATUS x11drv_client_func( enum x11drv_client_funcs func, const void *params,
                                     ULONG size ) DECLSPEC_HIDDEN;

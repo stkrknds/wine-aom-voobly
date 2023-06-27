@@ -130,6 +130,8 @@ struct user_thread_info
     UINT                          kbd_layout_id;          /* Current keyboard layout ID */
     struct rawinput_thread_data  *rawinput;               /* RawInput thread local data / buffer */
     UINT                          spy_indent;             /* Current spy indent */
+    BOOL                          clipping_cursor;        /* thread is currently clipping */
+    DWORD                         clipping_reset;         /* time when clipping was last reset */
 };
 
 C_ASSERT( sizeof(struct user_thread_info) <= sizeof(((TEB *)0)->Win32ClientInfo) );
@@ -228,6 +230,10 @@ struct dce *set_class_dce( struct tagCLASS *class, struct dce *dce ) DECLSPEC_HI
 BOOL needs_ime_window( HWND hwnd ) DECLSPEC_HIDDEN;
 extern void register_builtin_classes(void) DECLSPEC_HIDDEN;
 extern void register_desktop_class(void) DECLSPEC_HIDDEN;
+
+/* imm.c */
+extern LRESULT ime_driver_call( HWND hwnd, enum wine_ime_call call, WPARAM wparam, LPARAM lparam,
+                                struct ime_driver_call_params *params ) DECLSPEC_HIDDEN;
 
 /* cursoricon.c */
 HICON alloc_cursoricon_handle( BOOL is_icon ) DECLSPEC_HIDDEN;

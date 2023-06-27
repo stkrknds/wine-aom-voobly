@@ -68,6 +68,7 @@ static struct video_decoder *impl_from_IMFTransform(IMFTransform *iface)
 
 static HRESULT try_create_wg_transform(struct video_decoder *decoder)
 {
+    struct wg_transform_attrs attrs = {0};
     struct wg_format input_format;
     struct wg_format output_format;
 
@@ -86,7 +87,7 @@ static HRESULT try_create_wg_transform(struct video_decoder *decoder)
     output_format.u.video.fps_d = 0;
     output_format.u.video.fps_n = 0;
 
-    if (!(decoder->wg_transform = wg_transform_create(&input_format, &output_format)))
+    if (!(decoder->wg_transform = wg_transform_create(&input_format, &output_format, &attrs)))
     {
         ERR("Failed to create transform with input major_type %u.\n", input_format.major_type);
         return E_FAIL;
@@ -310,8 +311,6 @@ static HRESULT WINAPI transform_SetOutputType(IMFTransform *iface, DWORD id, IMF
     {
         mf_media_type_to_wg_format(decoder->output_type, &output_format);
 
-        output_format.u.video.width = frame_size >> 32;
-        output_format.u.video.height = (UINT32)frame_size;
         output_format.u.video.fps_d = 0;
         output_format.u.video.fps_n = 0;
 
@@ -483,6 +482,9 @@ HRESULT WINAPI winegstreamer_create_video_decoder(IMFTransform **out)
     HRESULT hr;
 
     TRACE("out %p.\n", out);
+
+    if (!init_gstreamer())
+        return E_FAIL;
 
     if (!(decoder = calloc(1, sizeof(*decoder))))
         return E_OUTOFMEMORY;

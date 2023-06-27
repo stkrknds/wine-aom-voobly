@@ -69,8 +69,6 @@
 #include <stdarg.h>
 
 #define COBJMACROS
-#define NONAMELESSUNION
-
 #include <windows.h>
 #include <winternl.h>
 #include <shlobj.h>
@@ -1974,6 +1972,46 @@ static BOOL is_extension_banned(LPCWSTR extension)
     return FALSE;
 }
 
+static BOOL on_exclude_list(const WCHAR *command)
+{
+    static const WCHAR default_exclude_list[] = L"ieframe.dll\0iexplore.exe\0notepad.exe\0"
+                                                L"winebrowser.exe\0wordpad.exe\0";
+    WCHAR *exclude_list = NULL;
+    const WCHAR *pattern;
+    HKEY key;
+    DWORD size;
+    LSTATUS status;
+    BOOL found = FALSE;
+
+    if ((key = open_associations_reg_key()))
+    {
+        status = RegGetValueW(key, NULL, L"Exclude", RRF_RT_REG_MULTI_SZ, NULL, NULL, &size);
+        if (status == ERROR_SUCCESS)
+        {
+            exclude_list = xmalloc(size);
+            status = RegGetValueW(key, NULL, L"Exclude", RRF_RT_REG_MULTI_SZ, NULL, exclude_list, &size);
+            if (status != ERROR_SUCCESS)
+            {
+                heap_free(exclude_list);
+                exclude_list = NULL;
+            }
+        }
+        RegCloseKey(key);
+    }
+
+    for (pattern = exclude_list ? exclude_list : default_exclude_list; *pattern; pattern += wcslen(pattern) + 1)
+    {
+        if (wcsstr(command, pattern))
+        {
+            found = TRUE;
+            break;
+        }
+    }
+
+    heap_free(exclude_list);
+    return found;
+}
+
 static WCHAR *get_special_mime_type(LPCWSTR extension)
 {
     if (!wcsicmp(extension, L".lnk"))
@@ -2054,6 +2092,15 @@ static BOOL generate_associations(const WCHAR *packages_dir, const WCHAR *applic
             WCHAR *mimeProgId = NULL;
             struct rb_string_entry *entry;
 
+            commandW = assoc_query(ASSOCSTR_COMMAND, extensionW, L"open");
+            if (commandW == NULL)
+                /* no command => no application is associated */
+                goto end;
+
+            if (on_exclude_list(commandW))
+                /* command is on the exclude list => desktop integration is not desirable */
+                goto end;
+
             wcslwr(extensionW);
             friendlyDocNameW = assoc_query(ASSOCSTR_FRIENDLYDOCNAME, extensionW, NULL);
 
@@ -2092,11 +2139,6 @@ static BOOL generate_associations(const WCHAR *packages_dir, const WCHAR *applic
                 write_freedesktop_mime_type_entry(packages_dir, extensionW, mimeType, friendlyDocNameW);
                 hasChanged = TRUE;
             }
-
-            commandW = assoc_query(ASSOCSTR_COMMAND, extensionW, L"open");
-            if (commandW == NULL)
-                /* no command => no application is associated */
-                goto end;
 
             executableW = assoc_query(ASSOCSTR_EXECUTABLE, extensionW, L"open");
             if (executableW)
@@ -2320,9 +2362,9 @@ static BOOL InvokeShellLinkerForURL( IUniformResourceLocatorW *url, LPCWSTR link
     WINE_TRACE("path       : %s\n", wine_dbgstr_w(urlPath));
 
     ps[0].ulKind = PRSPEC_PROPID;
-    ps[0].u.propid = PID_IS_ICONFILE;
+    ps[0].propid = PID_IS_ICONFILE;
     ps[1].ulKind = PRSPEC_PROPID;
-    ps[1].u.propid = PID_IS_ICONINDEX;
+    ps[1].propid = PID_IS_ICONINDEX;
 
     hr = url->lpVtbl->QueryInterface(url, &IID_IPropertySetStorage, (void **) &pPropSetStg);
     if (SUCCEEDED(hr))

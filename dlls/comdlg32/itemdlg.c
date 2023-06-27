@@ -599,7 +599,7 @@ static HRESULT on_default_action(FileDialogImpl *This)
             }
         }
 
-        pidla[i] = COMDLG32_SHSimpleIDListFromPathAW(canon_filename);
+        pidla[i] = SHSimpleIDListFromPath(canon_filename);
 
         if(psf_parent && !(open_action == ONOPEN_BROWSE))
             IShellFolder_Release(psf_parent);
@@ -1896,6 +1896,7 @@ static void init_toolbar(FileDialogImpl *This, HWND hwnd)
     HWND htoolbar;
     TBADDBITMAP tbab;
     TBBUTTON button[2];
+    int height;
 
     htoolbar = CreateWindowExW(0, TOOLBARCLASSNAMEW, NULL, TBSTYLE_FLAT | WS_CHILD | WS_VISIBLE,
                                0, 0, 0, 0,
@@ -1920,7 +1921,8 @@ static void init_toolbar(FileDialogImpl *This, HWND hwnd)
     button[1].iString = 0;
 
     SendMessageW(htoolbar, TB_ADDBUTTONSW, 2, (LPARAM)button);
-    SendMessageW(htoolbar, TB_SETBUTTONSIZE, 0, MAKELPARAM(24,24));
+    height = MulDiv(24, This->dpi_y, USER_DEFAULT_SCREEN_DPI);
+    SendMessageW(htoolbar, TB_SETBUTTONSIZE, 0, MAKELPARAM(height, height));
     SendMessageW(htoolbar, TB_AUTOSIZE, 0, 0);
 }
 
@@ -4156,6 +4158,9 @@ static HRESULT WINAPI IFileDialogCustomize_fnRemoveControlItem(IFileDialogCustom
         DWORD position;
 
         item = get_item(ctrl, dwIDItem, CDCS_VISIBLE|CDCS_ENABLED, &position);
+
+        if (!item)
+            return E_INVALIDARG;
 
         if ((item->cdcstate & (CDCS_VISIBLE|CDCS_ENABLED)) == (CDCS_VISIBLE|CDCS_ENABLED))
         {

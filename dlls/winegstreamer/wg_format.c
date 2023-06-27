@@ -40,9 +40,6 @@
 
 #include "unix_private.h"
 
-GST_DEBUG_CATEGORY_EXTERN(wine);
-#define GST_CAT_DEFAULT wine
-
 static enum wg_audio_format wg_audio_format_from_gst(GstAudioFormat format)
 {
     switch (format)
@@ -232,6 +229,59 @@ static void wg_format_from_caps_video_cinepak(struct wg_format *format, const Gs
     format->u.video_cinepak.fps_d = fps_d;
 }
 
+static void wg_format_from_caps_video_wmv(struct wg_format *format, const GstCaps *caps)
+{
+    const GstStructure *structure = gst_caps_get_structure(caps, 0);
+    gint width, height, fps_n, fps_d, wmv_version = 0;
+    gchar format_buffer[5] = {'W','M','V','0',0};
+    enum wg_wmv_video_format wmv_format;
+    const gchar *wmv_format_str = NULL;
+
+    if (!gst_structure_get_int(structure, "width", &width))
+    {
+        GST_WARNING("Missing \"width\" value.");
+        return;
+    }
+    if (!gst_structure_get_int(structure, "height", &height))
+    {
+        GST_WARNING("Missing \"height\" value.");
+        return;
+    }
+
+    if (!(wmv_format_str = gst_structure_get_string(structure, "format")))
+    {
+        if (!gst_structure_get_int(structure, "wmvversion", &wmv_version))
+            GST_WARNING("Unable to get WMV format.");
+        format_buffer[3] += wmv_version;
+        wmv_format_str = format_buffer;
+    }
+    if (!strcmp(wmv_format_str, "WMV1"))
+        wmv_format = WG_WMV_VIDEO_FORMAT_WMV1;
+    else if (!strcmp(wmv_format_str, "WMV2"))
+        wmv_format = WG_WMV_VIDEO_FORMAT_WMV2;
+    else if (!strcmp(wmv_format_str, "WMV3"))
+        wmv_format = WG_WMV_VIDEO_FORMAT_WMV3;
+    else if (!strcmp(wmv_format_str, "WMVA"))
+        wmv_format = WG_WMV_VIDEO_FORMAT_WMVA;
+    else if (!strcmp(wmv_format_str, "WVC1"))
+        wmv_format = WG_WMV_VIDEO_FORMAT_WVC1;
+    else
+        wmv_format = WG_WMV_VIDEO_FORMAT_UNKNOWN;
+
+    if (!gst_structure_get_fraction(structure, "framerate", &fps_n, &fps_d))
+    {
+        fps_n = 0;
+        fps_d = 1;
+    }
+
+    format->major_type = WG_MAJOR_TYPE_VIDEO_WMV;
+    format->u.video_wmv.width = width;
+    format->u.video_wmv.height = height;
+    format->u.video_wmv.format = wmv_format;
+    format->u.video_wmv.fps_n = fps_n;
+    format->u.video_wmv.fps_d = fps_d;
+}
+
 void wg_format_from_caps(struct wg_format *format, const GstCaps *caps)
 {
     const GstStructure *structure = gst_caps_get_structure(caps, 0);
@@ -260,6 +310,10 @@ void wg_format_from_caps(struct wg_format *format, const GstCaps *caps)
     else if (!strcmp(name, "video/x-cinepak"))
     {
         wg_format_from_caps_video_cinepak(format, caps);
+    }
+    else if (!strcmp(name, "video/x-wmv"))
+    {
+        wg_format_from_caps_video_wmv(format, caps);
     }
     else
     {
@@ -426,12 +480,17 @@ static GstCaps *wg_format_to_caps_video(const struct wg_format *format)
     {
         for (i = 0; i < gst_caps_get_size(caps); ++i)
         {
+            GstStructure *structure = gst_caps_get_structure(caps, i);
+
             if (!format->u.video.width)
-                gst_structure_remove_fields(gst_caps_get_structure(caps, i), "width", NULL);
+                gst_structure_remove_fields(structure, "width", NULL);
             if (!format->u.video.height)
-                gst_structure_remove_fields(gst_caps_get_structure(caps, i), "height", NULL);
+                gst_structure_remove_fields(structure, "height", NULL);
             if (!format->u.video.fps_d && !format->u.video.fps_n)
-                gst_structure_remove_fields(gst_caps_get_structure(caps, i), "framerate", NULL);
+                gst_structure_remove_fields(structure, "framerate", NULL);
+
+            /* Remove fields which we don't specify but might have some default value */
+            gst_structure_remove_fields(structure, "colorimetry", "chroma-site", NULL);
         }
     }
     return caps;
@@ -517,11 +576,10 @@ static GstCaps *wg_format_to_caps_video_h264(const struct wg_format *format)
             GST_FIXME("H264 profile attribute %u not implemented.", format->u.video_h264.profile);
             /* fallthrough */
         case eAVEncH264VProfile_unknown:
-            profile = NULL;
+            profile = "baseline";
             break;
     }
-    if (profile)
-        gst_caps_set_simple(caps, "profile", G_TYPE_STRING, profile, NULL);
+    gst_caps_set_simple(caps, "profile", G_TYPE_STRING, profile, NULL);
 
     switch (format->u.video_h264.level)
     {

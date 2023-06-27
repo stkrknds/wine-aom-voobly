@@ -2150,7 +2150,7 @@ int set_selection( ME_TextEditor *editor, int to, int from )
 
     if (!editor->bHideSelection) ME_InvalidateSelection( editor );
     end = set_selection_cursors( editor, to, from );
-    editor_ensure_visible( editor, &editor->pCursors[0] );
+    ME_UpdateRepaint( editor, FALSE );
     if (!editor->bHideSelection) ME_InvalidateSelection( editor );
     update_caret( editor );
     ME_SendSelChange( editor );
@@ -4140,6 +4140,8 @@ LRESULT editor_handle_message( ME_TextEditor *editor, UINT msg, WPARAM wParam,
         if (dwIndex == GCS_COMPSTR)
           set_selection_cursors(editor,editor->imeStartIndex,
                           editor->imeStartIndex + dwBufLen/sizeof(WCHAR));
+        else
+          editor->imeStartIndex = ME_GetCursorOfs(&editor->pCursors[0]);
     }
     ME_ReleaseStyle(style);
     ME_CommitUndo(editor);

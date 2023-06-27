@@ -185,6 +185,19 @@ void wg_parser_stream_get_preferred_format(struct wg_parser_stream *stream, stru
     WINE_UNIX_CALL(unix_wg_parser_stream_get_preferred_format, &params);
 }
 
+void wg_parser_stream_get_codec_format(struct wg_parser_stream *stream, struct wg_format *format)
+{
+    struct wg_parser_stream_get_codec_format_params params =
+    {
+        .stream = stream,
+        .format = format,
+    };
+
+    TRACE("stream %p, format %p.\n", stream, format);
+
+    WINE_UNIX_CALL(unix_wg_parser_stream_get_codec_format, &params);
+}
+
 void wg_parser_stream_enable(struct wg_parser_stream *stream, const struct wg_format *format)
 {
     struct wg_parser_stream_enable_params params =
@@ -324,12 +337,13 @@ void wg_parser_stream_seek(struct wg_parser_stream *stream, double rate,
 }
 
 struct wg_transform *wg_transform_create(const struct wg_format *input_format,
-        const struct wg_format *output_format)
+        const struct wg_format *output_format, const struct wg_transform_attrs *attrs)
 {
     struct wg_transform_create_params params =
     {
         .input_format = input_format,
         .output_format = output_format,
+        .attrs = attrs,
     };
 
     TRACE("input_format %p, output_format %p.\n", input_format, output_format);
@@ -411,6 +425,100 @@ bool wg_transform_set_output_format(struct wg_transform *transform, struct wg_fo
     TRACE("transform %p, format %p.\n", transform, format);
 
     return !WINE_UNIX_CALL(unix_wg_transform_set_output_format, &params);
+}
+
+HRESULT wg_transform_drain(struct wg_transform *transform)
+{
+    NTSTATUS status;
+
+    TRACE("transform %p.\n", transform);
+
+    if ((status = WINE_UNIX_CALL(unix_wg_transform_drain, transform)))
+    {
+        WARN("wg_transform_drain returned status %#lx\n", status);
+        return HRESULT_FROM_NT(status);
+    }
+
+    return S_OK;
+}
+
+HRESULT wg_transform_flush(struct wg_transform *transform)
+{
+    NTSTATUS status;
+
+    TRACE("transform %p.\n", transform);
+
+    if ((status = WINE_UNIX_CALL(unix_wg_transform_flush, transform)))
+    {
+        WARN("wg_transform_flush returned status %#lx\n", status);
+        return HRESULT_FROM_NT(status);
+    }
+
+    return S_OK;
+}
+
+#define ALIGN(n, alignment) (((n) + (alignment) - 1) & ~((alignment) - 1))
+
+unsigned int wg_format_get_stride(const struct wg_format *format)
+{
+    const unsigned int width = format->u.video.width;
+
+    switch (format->u.video.format)
+    {
+        case WG_VIDEO_FORMAT_AYUV:
+            return width * 4;
+
+        case WG_VIDEO_FORMAT_BGRA:
+        case WG_VIDEO_FORMAT_BGRx:
+            return width * 4;
+
+        case WG_VIDEO_FORMAT_BGR:
+            return ALIGN(width * 3, 4);
+
+        case WG_VIDEO_FORMAT_UYVY:
+        case WG_VIDEO_FORMAT_YUY2:
+        case WG_VIDEO_FORMAT_YVYU:
+            return ALIGN(width * 2, 4);
+
+        case WG_VIDEO_FORMAT_RGB15:
+        case WG_VIDEO_FORMAT_RGB16:
+            return ALIGN(width * 2, 4);
+
+        case WG_VIDEO_FORMAT_I420:
+        case WG_VIDEO_FORMAT_NV12:
+        case WG_VIDEO_FORMAT_YV12:
+            return ALIGN(width, 4); /* Y plane */
+
+        case WG_VIDEO_FORMAT_UNKNOWN:
+            FIXME("Cannot calculate stride for unknown video format.\n");
+    }
+
+    return 0;
+}
+
+bool wg_video_format_is_rgb(enum wg_video_format format)
+{
+    switch (format)
+    {
+        case WG_VIDEO_FORMAT_BGRA:
+        case WG_VIDEO_FORMAT_BGRx:
+        case WG_VIDEO_FORMAT_BGR:
+        case WG_VIDEO_FORMAT_RGB15:
+        case WG_VIDEO_FORMAT_RGB16:
+            return true;
+
+        case WG_VIDEO_FORMAT_AYUV:
+        case WG_VIDEO_FORMAT_I420:
+        case WG_VIDEO_FORMAT_NV12:
+        case WG_VIDEO_FORMAT_UYVY:
+        case WG_VIDEO_FORMAT_YUY2:
+        case WG_VIDEO_FORMAT_YV12:
+        case WG_VIDEO_FORMAT_YVYU:
+        case WG_VIDEO_FORMAT_UNKNOWN:
+            break;
+    }
+
+    return false;
 }
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, void *reserved)
@@ -551,6 +659,9 @@ HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID iid, void **out)
 static BOOL CALLBACK init_gstreamer_proc(INIT_ONCE *once, void *param, void **ctx)
 {
     HINSTANCE handle;
+
+    if (WINE_UNIX_CALL(unix_wg_init_gstreamer, NULL))
+        return FALSE;
 
     /* Unloading glib is a bad idea.. it installs atexit handlers,
      * so never unload the dll after loading */

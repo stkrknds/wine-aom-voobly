@@ -155,6 +155,7 @@ enum unix_call
     unix_vkCmdResolveImage2KHR,
     unix_vkCmdSetAlphaToCoverageEnableEXT,
     unix_vkCmdSetAlphaToOneEnableEXT,
+    unix_vkCmdSetAttachmentFeedbackLoopEnableEXT,
     unix_vkCmdSetBlendConstants,
     unix_vkCmdSetCheckpointNV,
     unix_vkCmdSetCoarseSampleOrderNV,
@@ -173,6 +174,7 @@ enum unix_call
     unix_vkCmdSetCullMode,
     unix_vkCmdSetCullModeEXT,
     unix_vkCmdSetDepthBias,
+    unix_vkCmdSetDepthBias2EXT,
     unix_vkCmdSetDepthBiasEnable,
     unix_vkCmdSetDepthBiasEnableEXT,
     unix_vkCmdSetDepthBounds,
@@ -509,6 +511,7 @@ enum unix_call
     unix_vkInitializePerformanceApiINTEL,
     unix_vkInvalidateMappedMemoryRanges,
     unix_vkMapMemory,
+    unix_vkMapMemory2KHR,
     unix_vkMergePipelineCaches,
     unix_vkMergeValidationCachesEXT,
     unix_vkQueueBeginDebugUtilsLabelEXT,
@@ -545,6 +548,7 @@ enum unix_call
     unix_vkTrimCommandPoolKHR,
     unix_vkUninitializePerformanceApiINTEL,
     unix_vkUnmapMemory,
+    unix_vkUnmapMemory2KHR,
     unix_vkUpdateDescriptorSetWithTemplate,
     unix_vkUpdateDescriptorSetWithTemplateKHR,
     unix_vkUpdateDescriptorSets,
@@ -1670,6 +1674,12 @@ struct vkCmdSetAlphaToOneEnableEXT_params
     VkBool32 alphaToOneEnable;
 };
 
+struct vkCmdSetAttachmentFeedbackLoopEnableEXT_params
+{
+    VkCommandBuffer commandBuffer;
+    VkImageAspectFlags aspectMask;
+};
+
 struct vkCmdSetBlendConstants_params
 {
     VkCommandBuffer commandBuffer;
@@ -1790,6 +1800,12 @@ struct vkCmdSetDepthBias_params
     float depthBiasConstantFactor;
     float depthBiasClamp;
     float depthBiasSlopeFactor;
+};
+
+struct vkCmdSetDepthBias2EXT_params
+{
+    VkCommandBuffer commandBuffer;
+    const VkDepthBiasInfoEXT *pDepthBiasInfo;
 };
 
 struct vkCmdSetDepthBiasEnable_params
@@ -4398,6 +4414,14 @@ struct vkMapMemory_params
     VkResult result;
 };
 
+struct vkMapMemory2KHR_params
+{
+    VkDevice device;
+    const VkMemoryMapInfoKHR *pMemoryMapInfo;
+    void **ppData;
+    VkResult result;
+};
+
 struct vkMergePipelineCaches_params
 {
     VkDevice device;
@@ -4663,6 +4687,13 @@ struct vkUnmapMemory_params
 {
     VkDevice device;
     VkDeviceMemory DECLSPEC_ALIGN(8) memory;
+};
+
+struct vkUnmapMemory2KHR_params
+{
+    VkDevice device;
+    const VkMemoryUnmapInfoKHR *pMemoryUnmapInfo;
+    VkResult result;
 };
 
 struct vkUpdateDescriptorSetWithTemplate_params

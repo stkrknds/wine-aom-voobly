@@ -22,6 +22,7 @@
 #include <winuser.h>
 #include <wingdi.h>
 #include <imm.h>
+#include <immdev.h>
 #include <winternl.h>
 
 /* KernelCallbackTable codes, not compatible with Windows */
@@ -285,6 +286,9 @@ struct unpack_dde_message_params
 #define SPY_RESULT_OK      0x0001
 #define SPY_RESULT_DEFWND  0x0002
 
+/* CreateDesktop wine specific flag */
+#define DF_WINE_CREATE_DESKTOP   0x80000000
+
 /* NtUserMessageCall codes */
 enum
 {
@@ -305,6 +309,7 @@ enum
     NtUserSpyEnter            = 0x0304,
     NtUserSpyExit             = 0x0305,
     NtUserWinProcResult       = 0x0306,
+    NtUserImeDriverCall       = 0x0307,
 };
 
 /* NtUserThunkedMenuItemInfo codes */
@@ -478,6 +483,7 @@ enum wine_internal_message
     WM_WINE_KEYBOARD_LL_HOOK,
     WM_WINE_MOUSE_LL_HOOK,
     WM_WINE_CLIPCURSOR,
+    WM_WINE_SETCURSOR,
     WM_WINE_UPDATEWINDOWSTATE,
     WM_WINE_FIRST_DRIVER_MSG = 0x80001000,  /* range of messages reserved for the USER driver */
     WM_WINE_LAST_DRIVER_MSG = 0x80001fff
@@ -489,6 +495,25 @@ enum wine_internal_message
 #define IME_INTERNAL_DEACTIVATE 0x18
 #define IME_INTERNAL_HKL_ACTIVATE    0x19
 #define IME_INTERNAL_HKL_DEACTIVATE  0x20
+
+/* internal WM_IME_NOTIFY wparams, not compatible with Windows */
+#define IMN_WINE_SET_OPEN_STATUS  0x000f
+#define IMN_WINE_SET_COMP_STRING  0x0010
+
+/* builtin IME driver calls */
+enum wine_ime_call
+{
+    WINE_IME_PROCESS_KEY,
+    WINE_IME_TO_ASCII_EX,
+};
+
+/* NtUserImeDriverCall params */
+struct ime_driver_call_params
+{
+    HIMC himc;
+    const BYTE *state;
+    COMPOSITIONSTRING *compstr;
+};
 
 #define WM_SYSTIMER  0x0118
 
@@ -808,6 +833,7 @@ LRESULT WINAPI NtUserMessageCall( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
 BOOL    WINAPI NtUserMoveWindow( HWND hwnd, INT x, INT y, INT cx, INT cy, BOOL repaint );
 DWORD   WINAPI NtUserMsgWaitForMultipleObjectsEx( DWORD count, const HANDLE *handles,
                                                   DWORD timeout, DWORD mask, DWORD flags );
+void    WINAPI NtUserNotifyIMEStatus( HWND hwnd, UINT status );
 void    WINAPI NtUserNotifyWinEvent( DWORD event, HWND hwnd, LONG object_id, LONG child_id );
 HWINSTA WINAPI NtUserOpenWindowStation( OBJECT_ATTRIBUTES *attr, ACCESS_MASK access );
 BOOL    WINAPI NtUserOpenClipboard( HWND hwnd, ULONG unk );
@@ -818,6 +844,9 @@ BOOL    WINAPI NtUserPerMonitorDPIPhysicalToLogicalPoint( HWND hwnd, POINT *pt )
 BOOL    WINAPI NtUserPostMessage( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam );
 BOOL    WINAPI NtUserPostThreadMessage( DWORD thread, UINT msg, WPARAM wparam, LPARAM lparam );
 BOOL    WINAPI NtUserPrintWindow( HWND hwnd, HDC hdc, UINT flags );
+LONG    WINAPI NtUserQueryDisplayConfig( UINT32 flags, UINT32 *paths_count, DISPLAYCONFIG_PATH_INFO *paths,
+                                         UINT32 *modes_count, DISPLAYCONFIG_MODE_INFO *modes,
+                                         DISPLAYCONFIG_TOPOLOGY_ID *topology_id);
 UINT_PTR WINAPI NtUserQueryInputContext( HIMC handle, UINT attr );
 HWND    WINAPI NtUserRealChildWindowFromPoint( HWND parent, LONG x, LONG y );
 BOOL    WINAPI NtUserRedrawWindow( HWND hwnd, const RECT *rect, HRGN hrgn, UINT flags );
@@ -1504,5 +1533,8 @@ static inline BOOL NtUserShowOwnedPopups( HWND hwnd, BOOL show )
 {
     return NtUserCallHwndParam( hwnd, show, NtUserCallHwndParam_ShowOwnedPopups );
 }
+
+/* Wine extensions */
+BOOL WINAPI __wine_send_input( HWND hwnd, const INPUT *input, const RAWINPUT *rawinput );
 
 #endif /* _NTUSER_ */

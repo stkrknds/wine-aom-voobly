@@ -2765,7 +2765,7 @@ static const MSIVIEWOPS transform_view_ops =
     NULL
 };
 
-UINT TransformView_Create( MSIDATABASE *db, string_table *st, LPCWSTR name, MSIVIEW **view )
+static UINT TransformView_Create( MSIDATABASE *db, string_table *st, LPCWSTR name, MSIVIEW **view )
 {
     static const WCHAR query_pfx[] = L"SELECT `Column`, `Data`, `Current` FROM `_TransformView` WHERE `Table`='";
     static const WCHAR query_sfx[] = L"' AND `Row` IS NULL AND `Current` IS NOT NULL AND `new` = 1";
@@ -2779,7 +2779,7 @@ UINT TransformView_Create( MSIDATABASE *db, string_table *st, LPCWSTR name, MSIV
 
     name_len = wcslen( name );
 
-    r = TABLE_CreateView( db, name, view );
+    r = TABLE_CreateView( db, name, (MSIVIEW **)&tv );
     if (r == ERROR_INVALID_PARAMETER)
     {
         /* table does not exist */
@@ -2790,15 +2790,10 @@ UINT TransformView_Create( MSIDATABASE *db, string_table *st, LPCWSTR name, MSIV
 
         tv->db = db;
         memcpy( tv->name, name, name_len * sizeof(WCHAR) );
-        *view = (MSIVIEW*)tv;
     }
     else if (r != ERROR_SUCCESS)
     {
         return r;
-    }
-    else
-    {
-        tv = (struct table_view *)*view;
     }
 
     tv->view.ops = &transform_view_ops;
@@ -2847,6 +2842,7 @@ UINT TransformView_Create( MSIDATABASE *db, string_table *st, LPCWSTR name, MSIV
     {
         MSI_ViewClose( q );
         msiobj_release( &q->hdr );
+        *view = (MSIVIEW *)tv;
         return ERROR_SUCCESS;
     }
 
@@ -2856,7 +2852,7 @@ UINT TransformView_Create( MSIDATABASE *db, string_table *st, LPCWSTR name, MSIV
         MSI_ViewClose( q );
         msiobj_release( &q->hdr );
         free( tv );
-        return r;
+        return ERROR_OUTOFMEMORY;
     }
 
     while (MSI_ViewFetch( q, &rec ) == ERROR_SUCCESS)
@@ -2883,6 +2879,7 @@ UINT TransformView_Create( MSIDATABASE *db, string_table *st, LPCWSTR name, MSIV
     memcpy( colinfo, tv->columns, tv->num_cols * sizeof(*colinfo) );
     tv->columns = colinfo;
     tv->num_cols += add_col;
+    *view = (MSIVIEW *)tv;
     return ERROR_SUCCESS;
 }
 
