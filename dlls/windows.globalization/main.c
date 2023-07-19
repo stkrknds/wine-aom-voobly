@@ -39,15 +39,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(locale);
 
-static const char *debugstr_hstring(HSTRING hstr)
-{
-    const WCHAR *str;
-    UINT32 len;
-    if (hstr && !((ULONG_PTR)hstr >> 16)) return "(invalid)";
-    str = WindowsGetStringRawBuffer(hstr, &len);
-    return wine_dbgstr_wn(str, len);
-}
-
 struct hstring_vector
 {
     IVectorView_HSTRING IVectorView_HSTRING_iface;
@@ -630,11 +621,23 @@ static HRESULT STDMETHODCALLTYPE windows_globalization_language_factory_QueryInt
     return E_NOINTERFACE;
 }
 
+static ULONG STDMETHODCALLTYPE windows_globalization_language_factory_AddRef(IActivationFactory *iface)
+{
+    struct language_factory *factory = impl_language_factory_from_IActivationFactory(iface);
+    return InterlockedIncrement(&factory->ref);
+}
+
+static ULONG STDMETHODCALLTYPE windows_globalization_language_factory_Release(IActivationFactory *iface)
+{
+    struct language_factory *factory = impl_language_factory_from_IActivationFactory(iface);
+    return InterlockedDecrement(&factory->ref);
+}
+
 static const struct IActivationFactoryVtbl activation_factory_language_vtbl =
 {
     windows_globalization_language_factory_QueryInterface,
-    windows_globalization_AddRef,
-    windows_globalization_Release,
+    windows_globalization_language_factory_AddRef,
+    windows_globalization_language_factory_Release,
     /* IInspectable methods */
     windows_globalization_GetIids,
     windows_globalization_GetRuntimeClassName,

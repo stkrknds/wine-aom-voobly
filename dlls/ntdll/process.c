@@ -49,6 +49,15 @@ PEB * WINAPI RtlGetCurrentPeb(void)
 }
 
 
+/******************************************************************************
+ *              RtlIsCurrentProcess  (NTDLL.@)
+ */
+BOOLEAN WINAPI RtlIsCurrentProcess( HANDLE handle )
+{
+    return handle == NtCurrentProcess() || !NtCompareObjects( handle, NtCurrentProcess() );
+}
+
+
 /******************************************************************
  *		RtlWow64EnableFsRedirection   (NTDLL.@)
  */
@@ -115,6 +124,21 @@ NTSTATUS WINAPI RtlWow64GetProcessMachines( HANDLE process, USHORT *current_ret,
     }
     if (current_ret) *current_ret = current;
     if (native_ret) *native_ret = native;
+    return status;
+}
+
+
+/**********************************************************************
+ *           RtlWow64GetSharedInfoProcess  (NTDLL.@)
+ */
+NTSTATUS WINAPI RtlWow64GetSharedInfoProcess( HANDLE process, BOOLEAN *is_wow64, WOW64INFO *info )
+{
+    PEB32 *peb32;
+    NTSTATUS status = NtQueryInformationProcess( process, ProcessWow64Information,
+                                                 &peb32, sizeof(peb32), NULL );
+    if (status) return status;
+    if (peb32) status = NtReadVirtualMemory( process, peb32 + 1, info, sizeof(*info), NULL );
+    *is_wow64 = !!peb32;
     return status;
 }
 

@@ -1255,6 +1255,19 @@ typedef enum _FILE_INFORMATION_CLASS {
     FileReplaceCompletionInformation,
     FileHardLinkFullIdInformation,
     FileIdExtdBothDirectoryInformation,
+    FileDispositionInformationEx,
+    FileRenameInformationEx,
+    FileRenameInformationExBypassAccessCheck,
+    FileDesiredStorageClassInformation,
+    FileStatInformation,
+    FileMemoryPartitionInformation,
+    FileStatLxInformation,
+    FileCaseSensitiveInformation,
+    FileLinkInformationEx,
+    FileLinkInformationExBypassAccessCheck,
+    FileStorageReserveIdInformation,
+    FileCaseSensitiveInformationForceAccessCheck,
+    FileKnownFolderInformation,
     FileMaximumInformation
 } FILE_INFORMATION_CLASS, *PFILE_INFORMATION_CLASS;
 
@@ -1424,6 +1437,17 @@ typedef struct _FILE_DISPOSITION_INFORMATION {
     BOOLEAN DoDeleteFile;
 } FILE_DISPOSITION_INFORMATION, *PFILE_DISPOSITION_INFORMATION;
 
+typedef struct _FILE_DISPOSITION_INFORMATION_EX {
+    ULONG Flags;
+} FILE_DISPOSITION_INFORMATION_EX, *PFILE_DISPOSITION_INFORMATION_EX;
+
+#define FILE_DISPOSITION_DO_NOT_DELETE              0x00000000
+#define FILE_DISPOSITION_DELETE                     0x00000001
+#define FILE_DISPOSITION_POSIX_SEMANTICS            0x00000002
+#define FILE_DISPOSITION_FORCE_IMAGE_SECTION_CHECK  0x00000004
+#define FILE_DISPOSITION_ON_CLOSE                   0x00000008
+#define FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE  0x00000010
+
 typedef struct _FILE_POSITION_INFORMATION {
     LARGE_INTEGER CurrentByteOffset;
 } FILE_POSITION_INFORMATION, *PFILE_POSITION_INFORMATION;
@@ -1591,6 +1615,12 @@ typedef enum _FSINFOCLASS {
     FileFsControlInformation,
     FileFsFullSizeInformation,
     FileFsObjectIdInformation,
+    FileFsDriverPathInformation,
+    FileFsVolumeFlagsInformation,
+    FileFsSectorSizeInformation,
+    FileFsDataCopyInformation,
+    FileFsMetadataSizeInformation,
+    FileFsFullSizeInformationEx,
     FileFsMaximumInformation
 } FS_INFORMATION_CLASS, *PFS_INFORMATION_CLASS;
 
@@ -1603,6 +1633,8 @@ typedef enum _KEY_INFORMATION_CLASS {
     KeyFlagsInformation,
     KeyVirtualizationInformation,
     KeyHandleTagsInformation,
+    KeyTrustInformation,
+    KeyLayerInformation,
     MaxKeyInfoClass
 } KEY_INFORMATION_CLASS;
 
@@ -1611,7 +1643,8 @@ typedef enum _KEY_VALUE_INFORMATION_CLASS {
     KeyValueFullInformation,
     KeyValuePartialInformation,
     KeyValueFullInformationAlign64,
-    KeyValuePartialInformationAlign64
+    KeyValuePartialInformationAlign64,
+    KeyValueLayerInformation,
 } KEY_VALUE_INFORMATION_CLASS;
 
 typedef enum _OBJECT_INFORMATION_CLASS {
@@ -1619,7 +1652,9 @@ typedef enum _OBJECT_INFORMATION_CLASS {
     ObjectNameInformation,
     ObjectTypeInformation,
     ObjectTypesInformation,
-    ObjectDataInformation
+    ObjectHandleFlagInformation,
+    ObjectSessionInformation,
+    ObjectSessionObjectInformation,
 } OBJECT_INFORMATION_CLASS, *POBJECT_INFORMATION_CLASS;
 
 typedef enum _PROCESSINFOCLASS {
@@ -1675,9 +1710,66 @@ typedef enum _PROCESSINFOCLASS {
     ProcessConsoleHostProcess = 49,
     ProcessWindowInformation = 50,
     ProcessHandleInformation = 51,
+    ProcessMitigationPolicy = 52,
+    ProcessDynamicFunctionTableInformation = 53,
+    ProcessHandleCheckingMode = 54,
+    ProcessKeepAliveCount = 55,
+    ProcessRevokeFileHandles = 56,
+    ProcessWorkingSetControl = 57,
     ProcessHandleTable = 58,
+    ProcessCheckStackExtentsMode = 59,
+    ProcessCommandLineInformation = 60,
+    ProcessProtectionInformation = 61,
+    ProcessMemoryExhaustion = 62,
+    ProcessFaultInformation = 63,
+    ProcessTelemetryIdInformation = 64,
+    ProcessCommitReleaseInformation = 65,
+    ProcessDefaultCpuSetsInformation = 66,
+    ProcessAllowedCpuSetsInformation = 67,
+    ProcessSubsystemProcess = 68,
+    ProcessJobMemoryInformation = 69,
+    ProcessInPrivate = 70,
+    ProcessRaiseUMExceptionOnInvalidHandleClose = 71,
+    ProcessIumChallengeResponse = 72,
+    ProcessChildProcessInformation = 73,
+    ProcessHighGraphicsPriorityInformation = 74,
+    ProcessSubsystemInformation = 75,
+    ProcessEnergyValues = 76,
     ProcessPowerThrottlingState = 77,
+    ProcessReserved3Information = 78,
+    ProcessWin32kSyscallFilterInformation = 79,
+    ProcessDisableSystemAllowedCpuSets = 80,
+    ProcessWakeInformation = 81,
+    ProcessEnergyTrackingState = 82,
+    ProcessManageWritesToExecutableMemory = 83,
+    ProcessCaptureTrustletLiveDump = 84,
+    ProcessTelemetryCoverage = 85,
+    ProcessEnclaveInformation = 86,
+    ProcessEnableReadWriteVmLogging = 87,
+    ProcessUptimeInformation = 88,
+    ProcessImageSection = 89,
+    ProcessDebugAuthInformation = 90,
+    ProcessSystemResourceManagement = 91,
+    ProcessSequenceNumber = 92,
+    ProcessLoaderDetour = 93,
+    ProcessSecurityDomainInformation = 94,
+    ProcessCombineSecurityDomainsInformation = 95,
+    ProcessEnableLogging = 96,
     ProcessLeapSecondInformation = 97,
+    ProcessFiberShadowStackAllocation = 98,
+    ProcessFreeFiberShadowStackAllocation = 99,
+    ProcessAltSystemCallInformation = 100,
+    ProcessDynamicEHContinuationTargets = 101,
+    ProcessDynamicEnforcedCetCompatibleRanges = 102,
+    ProcessCreateStateChange = 103,
+    ProcessApplyStateChange = 104,
+    ProcessEnableOptionalXStateFeatures = 105,
+    ProcessAltPrefetchParam = 106,
+    ProcessAssignCpuPartitions = 107,
+    ProcessPriorityClassEx = 108,
+    ProcessMembershipInformation = 109,
+    ProcessEffectiveIoPriority = 110,
+    ProcessEffectivePagePriority = 111,
     MaxProcessInfoClass,
 #ifdef __WINESRC__
     ProcessWineMakeProcessSystem = 1000,
@@ -1921,6 +2013,22 @@ typedef enum _SYSTEM_INFORMATION_CLASS {
     SystemDifRemovePluginVerificationOnDriver = 220,
     SystemShadowStackInformation = 221,
     SystemBuildVersionInformation = 222,
+    SystemPoolLimitInformation = 223,
+    SystemCodeIntegrityAddDynamicStore = 224,
+    SystemCodeIntegrityClearDynamicStores = 225,
+    SystemDifPoolTrackingInformation = 226,
+    SystemPoolZeroingInformation = 227,
+    SystemDpcWatchdogInformation = 228,
+    SystemDpcWatchdogInformation2 = 229,
+    SystemSupportedProcessorArchitectures2 = 230,
+    SystemSingleProcessorRelationshipInformation = 231,
+    SystemXfgCheckFailureInformation = 232,
+    SystemIommuStateInformation = 233,
+    SystemHypervisorMinrootInformation = 234,
+    SystemHypervisorBootPagesInformation = 235,
+    SystemPointerAuthInformation = 236,
+    SystemSecureKernelDebuggerInformation = 237,
+    SystemOriginalImageFeatureInformation = 238,
 #ifdef __WINESRC__
     SystemWineVersionInformation = 1000,
 #endif
@@ -1999,6 +2107,11 @@ typedef enum _THREADINFOCLASS {
     ThreadManageWritesToExecutableMemory,
     ThreadPowerThrottlingState,
     ThreadWorkloadClass,
+    ThreadCreateStateChange,
+    ThreadApplyStateChange,
+    ThreadStrongerBadHandleChecks,
+    ThreadEffectiveIoPriority,
+    ThreadEffectivePagePriority,
     MaxThreadInfoClass,
 #ifdef __WINESRC__
     ThreadWineNativeThreadName = 1000,
@@ -2050,6 +2163,8 @@ typedef enum _MEMORY_INFORMATION_CLASS {
     MemoryEnclaveImageInformation,
     MemoryBasicInformationCapped,
     MemoryPhysicalContiguityInformation,
+    MemoryBadInformation,
+    MemoryBadInformationAllProcesses,
 #ifdef __WINESRC__
     MemoryWineUnixFuncs = 1000,
     MemoryWineUnixWow64Funcs,
@@ -2103,6 +2218,23 @@ typedef struct _MEMORY_REGION_INFORMATION
     ULONG_PTR NodePreference;
 } MEMORY_REGION_INFORMATION, *PMEMORY_REGION_INFORMATION;
 
+typedef struct _MEMORY_IMAGE_INFORMATION
+{
+    PVOID ImageBase;
+    SIZE_T SizeOfImage;
+    union
+    {
+        ULONG ImageFlags;
+        struct
+        {
+            ULONG ImagePartialMap : 1;
+            ULONG ImageNotExecutable : 1;
+            ULONG ImageSigningLevel : 4;
+            ULONG Reserved : 26;
+        };
+    };
+} MEMORY_IMAGE_INFORMATION, *PMEMORY_IMAGE_INFORMATION;
+
 typedef enum _MUTANT_INFORMATION_CLASS
 {
     MutantBasicInformation
@@ -2129,7 +2261,12 @@ typedef enum
 {
     VmPrefetchInformation,
     VmPagePriorityInformation,
-    VmCfgCallTargetInformation
+    VmCfgCallTargetInformation,
+    VmPageDirtyStateInformation,
+    VmImageHotPatchInformation,
+    VmPhysicalContiguityInformation,
+    VmVirtualMachinePrepopulateInformation,
+    VmRemoveFromWorkingSetInformation,
 } VIRTUAL_MEMORY_INFORMATION_CLASS, *PVIRTUAL_MEMORY_INFORMATION_CLASS;
 
 typedef struct _MEMORY_RANGE_ENTRY
@@ -2290,10 +2427,10 @@ typedef struct _OBJECT_ATTRIBUTES {
 } OBJECT_ATTRIBUTES, *POBJECT_ATTRIBUTES;
 #endif
 
-typedef struct _OBJECT_DATA_INFORMATION {
-    BOOLEAN InheritHandle;
+typedef struct _OBJECT_HANDLE_FLAG_INFORMATION {
+    BOOLEAN Inherit;
     BOOLEAN ProtectFromClose;
-} OBJECT_DATA_INFORMATION, *POBJECT_DATA_INFORMATION;
+} OBJECT_HANDLE_FLAG_INFORMATION, *POBJECT_HANDLE_FLAG_INFORMATION;
 
 typedef struct _OBJECT_BASIC_INFORMATION {
     ULONG  Attributes;
@@ -3972,6 +4109,7 @@ typedef struct _WOW64INFO
     ULONG   unknown[5];
     USHORT  NativeMachineType;
     USHORT  EmulatedMachineType;
+    ULONG   unknown2;
 } WOW64INFO;
 
 #define WOW64_CPUFLAGS_MSFT64   0x01
@@ -4526,8 +4664,10 @@ NTSYSAPI NTSTATUS  WINAPI RtlFlsFree(ULONG);
 NTSYSAPI NTSTATUS  WINAPI RtlFlsGetValue(ULONG,void **);
 NTSYSAPI NTSTATUS  WINAPI RtlFlsSetValue(ULONG,void *);
 NTSYSAPI NTSTATUS  WINAPI RtlFormatCurrentUserKeyPath(PUNICODE_STRING);
+#ifdef __ms_va_list
 NTSYSAPI NTSTATUS  WINAPI RtlFormatMessage(LPCWSTR,ULONG,BOOLEAN,BOOLEAN,BOOLEAN,__ms_va_list *,LPWSTR,ULONG,ULONG*);
 NTSYSAPI NTSTATUS  WINAPI RtlFormatMessageEx(LPCWSTR,ULONG,BOOLEAN,BOOLEAN,BOOLEAN,__ms_va_list *,LPWSTR,ULONG,ULONG*,ULONG);
+#endif
 NTSYSAPI void      WINAPI RtlFreeActivationContextStack(ACTIVATION_CONTEXT_STACK *);
 NTSYSAPI void      WINAPI RtlFreeAnsiString(PANSI_STRING);
 NTSYSAPI BOOLEAN   WINAPI RtlFreeHandle(RTL_HANDLE_TABLE *,RTL_HANDLE *);
@@ -4609,6 +4749,8 @@ NTSYSAPI NTSTATUS  WINAPI RtlIntegerToUnicodeString(ULONG,ULONG,UNICODE_STRING *
 NTSYSAPI BOOLEAN   WINAPI RtlIsActivationContextActive(HANDLE);
 NTSYSAPI BOOL      WINAPI RtlIsCriticalSectionLocked(RTL_CRITICAL_SECTION *);
 NTSYSAPI BOOL      WINAPI RtlIsCriticalSectionLockedByThread(RTL_CRITICAL_SECTION *);
+NTSYSAPI BOOLEAN   WINAPI RtlIsCurrentProcess(HANDLE);
+NTSYSAPI BOOLEAN   WINAPI RtlIsCurrentThread(HANDLE);
 NTSYSAPI ULONG     WINAPI RtlIsDosDeviceName_U(PCWSTR);
 #ifdef __x86_64__
 NTSYSAPI BOOLEAN   WINAPI RtlIsEcCode(const void*);
@@ -4775,6 +4917,7 @@ NTSYSAPI NTSTATUS  WINAPI RtlWow64EnableFsRedirection(BOOLEAN);
 NTSYSAPI NTSTATUS  WINAPI RtlWow64EnableFsRedirectionEx(ULONG,ULONG*);
 NTSYSAPI USHORT    WINAPI RtlWow64GetCurrentMachine(void);
 NTSYSAPI NTSTATUS  WINAPI RtlWow64GetProcessMachines(HANDLE,USHORT*,USHORT*);
+NTSYSAPI NTSTATUS  WINAPI RtlWow64GetSharedInfoProcess(HANDLE,BOOLEAN*,WOW64INFO*);
 NTSYSAPI NTSTATUS  WINAPI RtlWow64IsWowGuestMachineSupported(USHORT,BOOLEAN*);
 NTSYSAPI NTSTATUS  WINAPI RtlWriteRegistryValue(ULONG,PCWSTR,PCWSTR,ULONG,PVOID,ULONG);
 NTSYSAPI NTSTATUS  WINAPI RtlZombifyActivationContext(HANDLE);
@@ -4820,8 +4963,10 @@ NTSYSAPI void      WINAPI TpWaitForIoCompletion(TP_IO *,BOOL);
 NTSYSAPI void      WINAPI TpWaitForTimer(TP_TIMER *,BOOL);
 NTSYSAPI void      WINAPI TpWaitForWait(TP_WAIT *,BOOL);
 NTSYSAPI void      WINAPI TpWaitForWork(TP_WORK *,BOOL);
+#ifdef __ms_va_list
 NTSYSAPI NTSTATUS  WINAPI vDbgPrintEx(ULONG,ULONG,LPCSTR,__ms_va_list);
 NTSYSAPI NTSTATUS  WINAPI vDbgPrintExWithPrefix(LPCSTR,ULONG,ULONG,LPCSTR,__ms_va_list);
+#endif
 
 /* 32-bit or 64-bit only functions */
 

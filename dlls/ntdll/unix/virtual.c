@@ -4128,6 +4128,13 @@ static void virtual_release_address_space(void)
     char *base = (char *)0x82000000;
     char *limit = get_wow_user_space_limit();
 
+#if defined(__APPLE__) && !defined(__i386__)
+    /* On 64-bit macOS, don't release any address space.
+     * It needs to be reserved for use by Wow64
+     */
+    return;
+#endif
+
     if (limit > (char *)0xfffff000) return;  /* 64-bit limit, nothing to do */
 
     if (limit > base)
@@ -4353,6 +4360,10 @@ static NTSTATUS get_extended_params( const MEM_EXTENDED_PARAMETER *parameters, U
         case MemExtendedParameterAddressRequirements:
         {
             MEM_ADDRESS_REQUIREMENTS *r = parameters[i].Pointer;
+            ULONG_PTR limit;
+
+            if (is_wow64()) limit = (ULONG_PTR)get_wow_user_space_limit();
+            else limit = (ULONG_PTR)user_space_limit;
 
             if (r->Alignment)
             {
@@ -4366,7 +4377,7 @@ static NTSTATUS get_extended_params( const MEM_EXTENDED_PARAMETER *parameters, U
             if (r->LowestStartingAddress)
             {
                 *limit_low = (ULONG_PTR)r->LowestStartingAddress;
-                if (*limit_low >= (ULONG_PTR)user_space_limit || (*limit_low & granularity_mask))
+                if (*limit_low >= limit || (*limit_low & granularity_mask))
                 {
                     WARN( "Invalid limit %p.\n", r->LowestStartingAddress );
                     return STATUS_INVALID_PARAMETER;
@@ -4375,7 +4386,7 @@ static NTSTATUS get_extended_params( const MEM_EXTENDED_PARAMETER *parameters, U
             if (r->HighestEndingAddress)
             {
                 *limit_high = (ULONG_PTR)r->HighestEndingAddress;
-                if (*limit_high > (ULONG_PTR)user_space_limit ||
+                if (*limit_high > limit ||
                     *limit_high <= *limit_low ||
                     ((*limit_high + 1) & (page_mask - 1)))
                 {
@@ -4967,6 +4978,40 @@ static unsigned int get_memory_section_name( HANDLE process, LPCVOID addr,
     return status;
 }
 
+static unsigned int get_memory_image_info( HANDLE process, LPCVOID addr, MEMORY_IMAGE_INFORMATION *info,
+                                           SIZE_T len, SIZE_T *res_len )
+{
+    unsigned int status;
+
+    if (len < sizeof(*info)) return STATUS_INFO_LENGTH_MISMATCH;
+    memset( info, 0, sizeof(*info) );
+
+    SERVER_START_REQ( get_image_view_info )
+    {
+        req->process = wine_server_obj_handle( process );
+        req->addr = wine_server_client_ptr( addr );
+        status = wine_server_call( req );
+        if (!status && reply->base)
+        {
+            info->ImageBase = wine_server_get_ptr( reply->base );
+            info->SizeOfImage = reply->size;
+            info->ImageSigningLevel = 12;
+        }
+    }
+    SERVER_END_REQ;
+
+    if (status == STATUS_NOT_MAPPED_VIEW)
+    {
+        MEMORY_BASIC_INFORMATION basic_info;
+
+        status = get_basic_memory_info( process, addr, &basic_info, sizeof(basic_info), NULL );
+        if (status || basic_info.State == MEM_FREE) status = STATUS_INVALID_ADDRESS;
+    }
+
+    if (!status && res_len) *res_len = sizeof(*info);
+    return status;
+}
+
 
 /***********************************************************************
  *             NtQueryVirtualMemory   (NTDLL.@)
@@ -4994,6 +5039,9 @@ NTSTATUS WINAPI NtQueryVirtualMemory( HANDLE process, LPCVOID addr,
 
         case MemoryRegionInformation:
             return get_memory_region_info( process, addr, buffer, len, res_len );
+
+        case MemoryImageInformation:
+            return get_memory_image_info( process, addr, buffer, len, res_len );
 
         case MemoryWineUnixFuncs:
         case MemoryWineUnixWow64Funcs:

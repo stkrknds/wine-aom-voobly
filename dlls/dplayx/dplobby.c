@@ -20,8 +20,6 @@
 #include <string.h>
 
 #define COBJMACROS
-#define NONAMELESSUNION
-
 #include "windef.h"
 #include "winbase.h"
 #include "winerror.h"
@@ -38,7 +36,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(dplay);
 
 /* Forward declarations for this module helper methods */
 HRESULT DPL_CreateCompoundAddress ( LPCDPCOMPOUNDADDRESSELEMENT lpElements, DWORD dwElementCount,
-                                    LPVOID lpAddress, LPDWORD lpdwAddressSize, BOOL bAnsiInterface )DECLSPEC_HIDDEN;
+                                    LPVOID lpAddress, LPDWORD lpdwAddressSize, BOOL bAnsiInterface );
 
 static HRESULT DPL_CreateAddress( REFGUID guidSP, REFGUID guidDataType, LPCVOID lpData, DWORD dwDataSize,
                            LPVOID lpAddress, LPDWORD lpdwAddressSize, BOOL bAnsiInterface );
@@ -954,9 +952,9 @@ static HRESULT WINAPI IDirectPlayLobby3AImpl_EnumLocalApplications( IDirectPlayL
     CLSIDFromString( buff, &serviceProviderGUID );
     /* FIXME: Have I got a memory leak on the serviceProviderGUID? */
 
-    dplAppInfo.dwSize               = sizeof( dplAppInfo );
-    dplAppInfo.guidApplication      = serviceProviderGUID;
-    dplAppInfo.u.lpszAppNameA = subKeyName;
+    dplAppInfo.dwSize          = sizeof( dplAppInfo );
+    dplAppInfo.guidApplication = serviceProviderGUID;
+    dplAppInfo.lpszAppNameA    = subKeyName;
 
     EnterCriticalSection( &This->lock );
 

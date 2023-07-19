@@ -30,9 +30,6 @@
 #include <ctype.h>
 #include <stddef.h>
 
-#define NONAMELESSSTRUCT
-#define NONAMELESSUNION
-
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 #include "windef.h"
@@ -1898,17 +1895,17 @@ BOOL WINAPI IsValidDevmodeW(PDEVMODEW dm, SIZE_T size)
     } map[] =
     {
 #define F_SIZE(field) FIELD_OFFSET(DEVMODEW, field) + sizeof(dm->field)
-        { DM_ORIENTATION, F_SIZE(u1.s1.dmOrientation) },
-        { DM_PAPERSIZE, F_SIZE(u1.s1.dmPaperSize) },
-        { DM_PAPERLENGTH, F_SIZE(u1.s1.dmPaperLength) },
-        { DM_PAPERWIDTH, F_SIZE(u1.s1.dmPaperWidth) },
-        { DM_SCALE, F_SIZE(u1.s1.dmScale) },
-        { DM_COPIES, F_SIZE(u1.s1.dmCopies) },
-        { DM_DEFAULTSOURCE, F_SIZE(u1.s1.dmDefaultSource) },
-        { DM_PRINTQUALITY, F_SIZE(u1.s1.dmPrintQuality) },
-        { DM_POSITION, F_SIZE(u1.s2.dmPosition) },
-        { DM_DISPLAYORIENTATION, F_SIZE(u1.s2.dmDisplayOrientation) },
-        { DM_DISPLAYFIXEDOUTPUT, F_SIZE(u1.s2.dmDisplayFixedOutput) },
+        { DM_ORIENTATION, F_SIZE(dmOrientation) },
+        { DM_PAPERSIZE, F_SIZE(dmPaperSize) },
+        { DM_PAPERLENGTH, F_SIZE(dmPaperLength) },
+        { DM_PAPERWIDTH, F_SIZE(dmPaperWidth) },
+        { DM_SCALE, F_SIZE(dmScale) },
+        { DM_COPIES, F_SIZE(dmCopies) },
+        { DM_DEFAULTSOURCE, F_SIZE(dmDefaultSource) },
+        { DM_PRINTQUALITY, F_SIZE(dmPrintQuality) },
+        { DM_POSITION, F_SIZE(dmPosition) },
+        { DM_DISPLAYORIENTATION, F_SIZE(dmDisplayOrientation) },
+        { DM_DISPLAYFIXEDOUTPUT, F_SIZE(dmDisplayFixedOutput) },
         { DM_COLOR, F_SIZE(dmColor) },
         { DM_DUPLEX, F_SIZE(dmDuplex) },
         { DM_YRESOLUTION, F_SIZE(dmYResolution) },
@@ -1919,8 +1916,8 @@ BOOL WINAPI IsValidDevmodeW(PDEVMODEW dm, SIZE_T size)
         { DM_BITSPERPEL, F_SIZE(dmBitsPerPel) },
         { DM_PELSWIDTH, F_SIZE(dmPelsWidth) },
         { DM_PELSHEIGHT, F_SIZE(dmPelsHeight) },
-        { DM_DISPLAYFLAGS, F_SIZE(u2.dmDisplayFlags) },
-        { DM_NUP, F_SIZE(u2.dmNup) },
+        { DM_DISPLAYFLAGS, F_SIZE(dmDisplayFlags) },
+        { DM_NUP, F_SIZE(dmNup) },
         { DM_DISPLAYFREQUENCY, F_SIZE(dmDisplayFrequency) },
         { DM_ICMMETHOD, F_SIZE(dmICMMethod) },
         { DM_ICMINTENT, F_SIZE(dmICMIntent) },
@@ -2979,7 +2976,7 @@ BOOL WINAPI SetJobA(HANDLE hPrinter, DWORD JobId, DWORD Level,
                     LPBYTE pJob, DWORD Command)
 {
     BOOL ret;
-    LPBYTE JobW;
+    void *JobW;
     UNICODE_STRING usBuffer;
 
     TRACE("(%p, %ld, %ld, %p, %ld)\n",hPrinter, JobId, Level, pJob, Command);
@@ -2996,7 +2993,7 @@ BOOL WINAPI SetJobA(HANDLE hPrinter, DWORD JobId, DWORD Level,
         JOB_INFO_1W *info1W = malloc(sizeof(*info1W));
         JOB_INFO_1A *info1A = (JOB_INFO_1A*)pJob;
 
-        JobW = (LPBYTE)info1W;
+        JobW = info1W;
         info1W->pUserName = asciitounicode(&usBuffer, info1A->pUserName);
         info1W->pDocument = asciitounicode(&usBuffer, info1A->pDocument);
         info1W->pDatatype = asciitounicode(&usBuffer, info1A->pDatatype);
@@ -3012,7 +3009,7 @@ BOOL WINAPI SetJobA(HANDLE hPrinter, DWORD JobId, DWORD Level,
         JOB_INFO_2W *info2W = malloc(sizeof(*info2W));
         JOB_INFO_2A *info2A = (JOB_INFO_2A*)pJob;
 
-        JobW = (LPBYTE)info2W;
+        JobW = info2W;
         info2W->pUserName = asciitounicode(&usBuffer, info2A->pUserName);
         info2W->pDocument = asciitounicode(&usBuffer, info2A->pDocument);
         info2W->pNotifyName = asciitounicode(&usBuffer, info2A->pNotifyName);
@@ -3045,7 +3042,7 @@ BOOL WINAPI SetJobA(HANDLE hPrinter, DWORD JobId, DWORD Level,
     {
     case 1:
       {
-        JOB_INFO_1W *info1W = (JOB_INFO_1W*)JobW;
+        JOB_INFO_1W *info1W = JobW;
         free(info1W->pUserName);
         free(info1W->pDocument);
         free(info1W->pDatatype);
@@ -3054,7 +3051,7 @@ BOOL WINAPI SetJobA(HANDLE hPrinter, DWORD JobId, DWORD Level,
       }
     case 2:
       {
-        JOB_INFO_2W *info2W = (JOB_INFO_2W*)JobW;
+        JOB_INFO_2W *info2W = JobW;
         free(info2W->pUserName);
         free(info2W->pDocument);
         free(info2W->pNotifyName);

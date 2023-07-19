@@ -918,31 +918,60 @@ static HMODULE load_graphics_driver( const WCHAR *driver, GUID *guid )
     return module;
 }
 
-static void initialize_display_settings(void)
+static const char *debugstr_devmodew( const DEVMODEW *devmode )
 {
-    DISPLAY_DEVICEW ddW;
-    DEVMODEW dmW;
-    DWORD i = 0;
+    char position[32] = {0};
+
+    if (devmode->dmFields & DM_POSITION)
+    {
+        snprintf( position, sizeof(position), " at (%d,%d)",
+                 (int)devmode->dmPosition.x, (int)devmode->dmPosition.y );
+    }
+
+    return wine_dbg_sprintf( "%ux%u %ubits %uHz rotated %u degrees%s",
+                             (unsigned int)devmode->dmPelsWidth,
+                             (unsigned int)devmode->dmPelsHeight,
+                             (unsigned int)devmode->dmBitsPerPel,
+                             (unsigned int)devmode->dmDisplayFrequency,
+                             (unsigned int)devmode->dmDisplayOrientation * 90,
+                             position );
+}
+
+static void initialize_display_settings( unsigned int width, unsigned int height )
+{
+    DISPLAY_DEVICEW device = {.cb = sizeof(DISPLAY_DEVICEW)};
+    DWORD i = 0, flags = CDS_GLOBAL | CDS_UPDATEREGISTRY;
 
     /* Store current display mode in the registry */
-    ddW.cb = sizeof(ddW);
-    memset(&dmW, 0, sizeof(dmW));
-    dmW.dmSize = sizeof(dmW);
-    while (EnumDisplayDevicesW( NULL, i++, &ddW, 0 ))
+    while (EnumDisplayDevicesW( NULL, i++, &device, 0 ))
     {
-        if (!EnumDisplaySettingsExW( ddW.DeviceName, ENUM_CURRENT_SETTINGS, &dmW, 0))
+        DEVMODEW devmode = {.dmSize = sizeof(DEVMODEW)};
+
+        if (!EnumDisplaySettingsExW( device.DeviceName, ENUM_CURRENT_SETTINGS, &devmode, 0))
         {
-            ERR( "Failed to query current display settings for %s.\n", debugstr_w(ddW.DeviceName) );
+            ERR( "Failed to query current display settings for %s.\n", debugstr_w( device.DeviceName ) );
             continue;
         }
 
-        TRACE( "Device %s current display mode %lux%lu %luBits %luHz at %ld,%ld.\n",
-               debugstr_w( ddW.DeviceName ), dmW.dmPelsWidth, dmW.dmPelsHeight,
-               dmW.dmBitsPerPel, dmW.dmDisplayFrequency, dmW.dmPosition.x, dmW.dmPosition.y );
+        TRACE( "Device %s current display mode %s.\n", debugstr_w( device.DeviceName ), debugstr_devmodew( &devmode ) );
 
-        if (ChangeDisplaySettingsExW( ddW.DeviceName, &dmW, 0,
-                                      CDS_GLOBAL | CDS_NORESET | CDS_UPDATEREGISTRY, 0 ))
-            ERR( "Failed to initialize registry display settings for %s.\n", debugstr_w(ddW.DeviceName) );
+        if (ChangeDisplaySettingsExW( device.DeviceName, &devmode, 0, flags | CDS_NORESET, 0 ))
+            ERR( "Failed to initialize registry display settings for %s.\n", debugstr_w( device.DeviceName ) );
+    }
+
+    if (!using_root)
+    {
+        DEVMODEW devmode =
+        {
+            .dmSize = sizeof(DEVMODEW),
+            .dmFields = DM_PELSWIDTH | DM_PELSHEIGHT,
+            .dmPelsWidth = width,
+            .dmPelsHeight = height,
+        };
+
+        /* in virtual desktop mode, set the primary display settings to match desktop size */
+        if (ChangeDisplaySettingsExW( NULL, &devmode, 0, flags, NULL ))
+            ERR( "Failed to set primary display settings.\n" );
     }
 }
 
@@ -1070,7 +1099,7 @@ void manage_desktop( WCHAR *arg )
         if (thread) CloseHandle( thread );
         SystemParametersInfoW( SPI_SETDESKWALLPAPER, 0, NULL, FALSE );
         ClipCursor( NULL );
-        initialize_display_settings();
+        initialize_display_settings( width, height );
         initialize_appbar();
 
         if (using_root) enable_shell = FALSE;

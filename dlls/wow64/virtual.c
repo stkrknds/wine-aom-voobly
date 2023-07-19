@@ -126,6 +126,8 @@ NTSTATUS WINAPI wow64_NtAllocateVirtualMemory( UINT *args )
                                       size_32to64( &size, size32 ), type, protect );
     if (!status)
     {
+        if (pBTCpuNotifyMemoryAlloc && RtlIsCurrentProcess(process))
+            pBTCpuNotifyMemoryAlloc( addr, size, type, protect );
         put_addr( addr32, addr );
         put_size( size32, size );
     }
@@ -150,7 +152,8 @@ NTSTATUS WINAPI wow64_NtAllocateVirtualMemoryEx( UINT *args )
     SIZE_T size;
     NTSTATUS status;
     MEM_EXTENDED_PARAMETER *params64;
-    BOOL set_limit = (!*addr32 && process == GetCurrentProcess());
+    BOOL is_current = RtlIsCurrentProcess( process );
+    BOOL set_limit = (!*addr32 && is_current);
 
     if ((status = mem_extended_parameters_32to64( &params64, params32, &count, set_limit ))) return status;
 
@@ -158,6 +161,7 @@ NTSTATUS WINAPI wow64_NtAllocateVirtualMemoryEx( UINT *args )
                                         type, protect, params64, count );
     if (!status)
     {
+        if (pBTCpuNotifyMemoryAlloc && is_current) pBTCpuNotifyMemoryAlloc( addr, size, type, protect );
         put_addr( addr32, addr );
         put_size( size32, size );
     }
@@ -212,12 +216,14 @@ NTSTATUS WINAPI wow64_NtFreeVirtualMemory( UINT *args )
     ULONG *size32 = get_ptr( &args );
     ULONG type = get_ulong( &args );
 
-    void *addr;
-    SIZE_T size;
+    void *addr = ULongToPtr( *addr32 );
+    SIZE_T size = *size32;
     NTSTATUS status;
 
-    status = NtFreeVirtualMemory( process, addr_32to64( &addr, addr32 ),
-                                  size_32to64( &size, size32 ), type );
+    if (pBTCpuNotifyMemoryFree && RtlIsCurrentProcess( process ))
+        pBTCpuNotifyMemoryFree( addr, size );
+
+    status = NtFreeVirtualMemory( process, &addr, &size, type );
     if (!status)
     {
         put_addr( addr32, addr );
@@ -353,9 +359,12 @@ NTSTATUS WINAPI wow64_NtMapViewOfSection( UINT *args )
     {
         SECTION_IMAGE_INFORMATION info;
 
-        if (!NtQuerySection( handle, SectionImageInformation, &info, sizeof(info), NULL ))
+        if (RtlIsCurrentProcess( process ) &&
+            !NtQuerySection( handle, SectionImageInformation, &info, sizeof(info), NULL ) &&
+            info.Machine == current_machine)
         {
-            if (info.Machine == current_machine) init_image_mapping( addr );
+            if (pBTCpuNotifyMapViewOfSection) pBTCpuNotifyMapViewOfSection( addr );
+            init_image_mapping( addr );
         }
         put_addr( addr32, addr );
         put_size( size32, size );
@@ -382,7 +391,8 @@ NTSTATUS WINAPI wow64_NtMapViewOfSectionEx( UINT *args )
     SIZE_T size;
     NTSTATUS status;
     MEM_EXTENDED_PARAMETER *params64;
-    BOOL set_limit = (!*addr32 && process == GetCurrentProcess());
+    BOOL is_current = RtlIsCurrentProcess( process );
+    BOOL set_limit = (!*addr32 && is_current);
 
     if ((status = mem_extended_parameters_32to64( &params64, params32, &count, set_limit ))) return status;
 
@@ -392,9 +402,12 @@ NTSTATUS WINAPI wow64_NtMapViewOfSectionEx( UINT *args )
     {
         SECTION_IMAGE_INFORMATION info;
 
-        if (!NtQuerySection( handle, SectionImageInformation, &info, sizeof(info), NULL ))
+        if (is_current &&
+            !NtQuerySection( handle, SectionImageInformation, &info, sizeof(info), NULL ) &&
+            info.Machine == current_machine)
         {
-            if (info.Machine == current_machine) init_image_mapping( addr );
+            if (pBTCpuNotifyMapViewOfSection) pBTCpuNotifyMapViewOfSection( addr );
+            init_image_mapping( addr );
         }
         put_addr( addr32, addr );
         put_size( size32, size );
@@ -413,12 +426,14 @@ NTSTATUS WINAPI wow64_NtProtectVirtualMemory( UINT *args )
     ULONG new_prot = get_ulong( &args );
     ULONG *old_prot = get_ptr( &args );
 
-    void *addr;
-    SIZE_T size;
+    void *addr = ULongToPtr( *addr32 );
+    SIZE_T size = *size32;
     NTSTATUS status;
 
-    status = NtProtectVirtualMemory( process, addr_32to64( &addr, addr32 ),
-                                     size_32to64( &size, size32 ), new_prot, old_prot );
+    if (pBTCpuNotifyMemoryProtect && RtlIsCurrentProcess(process))
+        pBTCpuNotifyMemoryProtect( addr, size, new_prot );
+
+    status = NtProtectVirtualMemory( process, &addr, &size, new_prot, old_prot );
     if (!status)
     {
         put_addr( addr32, addr );
@@ -493,7 +508,7 @@ NTSTATUS WINAPI wow64_NtQueryVirtualMemory( UINT *args )
     {
         if (len < sizeof(MEMORY_REGION_INFORMATION32))
             status = STATUS_INFO_LENGTH_MISMATCH;
-        if ((ULONG_PTR)addr > highest_user_address)
+        else if ((ULONG_PTR)addr > highest_user_address)
             status = STATUS_INVALID_PARAMETER;
         else
         {
@@ -531,6 +546,27 @@ NTSTATUS WINAPI wow64_NtQueryVirtualMemory( UINT *args )
             for (i = 0; i < count; i++) info32[i].VirtualAttributes.Flags = info[i].VirtualAttributes.Flags;
             res_len = count * sizeof(*info32);
         }
+        break;
+    }
+
+    case MemoryImageInformation: /* MEMORY_IMAEG_INFORMATION */
+    {
+        if (len < sizeof(MEMORY_IMAGE_INFORMATION32)) return STATUS_INFO_LENGTH_MISMATCH;
+
+        if ((ULONG_PTR)addr > highest_user_address) status = STATUS_INVALID_PARAMETER;
+        else
+        {
+            MEMORY_IMAGE_INFORMATION info;
+            MEMORY_IMAGE_INFORMATION32 *info32 = ptr;
+
+            if (!(status = NtQueryVirtualMemory( handle, addr, class, &info, sizeof(info), &res_len )))
+            {
+                info32->ImageBase   = PtrToUlong( info.ImageBase );
+                info32->SizeOfImage = info.SizeOfImage;
+                info32->ImageFlags  = info.ImageFlags;
+            }
+        }
+        res_len = sizeof(MEMORY_IMAGE_INFORMATION32);
         break;
     }
 
@@ -665,6 +701,9 @@ NTSTATUS WINAPI wow64_NtUnmapViewOfSection( UINT *args )
     HANDLE process = get_handle( &args );
     void *addr = get_ptr( &args );
 
+    if (pBTCpuNotifyUnmapViewOfSection && RtlIsCurrentProcess( process ))
+        pBTCpuNotifyUnmapViewOfSection( addr );
+
     return NtUnmapViewOfSection( process, addr );
 }
 
@@ -677,6 +716,9 @@ NTSTATUS WINAPI wow64_NtUnmapViewOfSectionEx( UINT *args )
     HANDLE process = get_handle( &args );
     void *addr = get_ptr( &args );
     ULONG flags = get_ulong( &args );
+
+    if (pBTCpuNotifyUnmapViewOfSection && RtlIsCurrentProcess( process ))
+        pBTCpuNotifyUnmapViewOfSection( addr );
 
     return NtUnmapViewOfSectionEx( process, addr, flags );
 }

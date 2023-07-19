@@ -407,6 +407,7 @@ static struct strarray get_link_args( struct options *opts, const char *output_n
         if (opts->nostartfiles || opts->use_msvcrt) strarray_add( &flags, "-nostartfiles" );
         if (opts->subsystem) strarray_add( &flags, strmake("-Wl,--subsystem,%s", opts->subsystem ));
 
+        strarray_add( &flags, "-Wl,--exclude-all-symbols" );
         strarray_add( &flags, "-Wl,--nxcompat" );
 
         if (opts->image_base) strarray_add( &flags, strmake("-Wl,--image-base,%s", opts->image_base ));
@@ -988,7 +989,8 @@ static const char *build_spec_obj( struct options *opts, const char *spec_file, 
         if (opts->large_address_aware) strarray_add( &spec_args, "--large-address-aware" );
     }
 
-    if (opts->target.platform == PLATFORM_WINDOWS) strarray_add(&spec_args, "--safeseh");
+    if (opts->target.platform == PLATFORM_WINDOWS && opts->target.cpu == CPU_i386)
+        strarray_add(&spec_args, "--safeseh");
 
     if (entry_point)
     {
