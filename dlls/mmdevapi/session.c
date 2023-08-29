@@ -28,8 +28,7 @@
 #include <wine/debug.h>
 #include <wine/unixlib.h>
 
-#include "unixlib.h"
-#include "mmdevdrv.h"
+#include "mmdevapi_private.h"
 
 #define NULL_PTR_ERR MAKE_HRESULT(SEVERITY_ERROR, FACILITY_WIN32, RPC_X_NULL_REF_POINTER)
 
@@ -40,7 +39,7 @@ extern void sessions_unlock(void) DECLSPEC_HIDDEN;
 
 extern void set_stream_volumes(struct audio_client *This) DECLSPEC_HIDDEN;
 
-struct list sessions = LIST_INIT(sessions);
+static struct list sessions = LIST_INIT(sessions);
 
 static inline struct audio_session_wrapper *impl_from_IAudioSessionControl2(IAudioSessionControl2 *iface)
 {
@@ -100,7 +99,7 @@ static ULONG WINAPI control_Release(IAudioSessionControl2 *iface)
             IAudioClient3_Release(&This->client->IAudioClient3_iface);
         }
 
-        HeapFree(GetProcessHeap(), 0, This);
+        free(This);
     }
 
     return ref;
@@ -127,7 +126,7 @@ static HRESULT WINAPI control_GetState(IAudioSessionControl2 *iface, AudioSessio
 
     LIST_FOR_EACH_ENTRY(client, &This->session->clients, struct audio_client, entry) {
         params.stream = client->stream;
-        WINE_UNIX_CALL(is_started, &params);
+        wine_unix_call(is_started, &params);
         if (params.result == S_OK) {
             *state = AudioSessionStateActive;
             sessions_unlock();
@@ -245,7 +244,7 @@ static HRESULT WINAPI control_SetDuckingPreference(IAudioSessionControl2 *iface,
     return S_OK;
 }
 
-const IAudioSessionControl2Vtbl AudioSessionControl2_Vtbl =
+static const IAudioSessionControl2Vtbl AudioSessionControl2_Vtbl =
 {
     control_QueryInterface,
     control_AddRef,
@@ -416,7 +415,7 @@ static HRESULT WINAPI channelvolume_GetAllVolumes(IChannelAudioVolume *iface, UI
     return S_OK;
 }
 
-const IChannelAudioVolumeVtbl ChannelAudioVolume_Vtbl =
+static const IChannelAudioVolumeVtbl ChannelAudioVolume_Vtbl =
 {
     channelvolume_QueryInterface,
     channelvolume_AddRef,
@@ -542,7 +541,7 @@ static HRESULT WINAPI simplevolume_GetMute(ISimpleAudioVolume *iface, BOOL *mute
     return S_OK;
 }
 
-const ISimpleAudioVolumeVtbl SimpleAudioVolume_Vtbl =
+static const ISimpleAudioVolumeVtbl SimpleAudioVolume_Vtbl =
 {
     simplevolume_QueryInterface,
     simplevolume_AddRef,
@@ -553,17 +552,12 @@ const ISimpleAudioVolumeVtbl SimpleAudioVolume_Vtbl =
     simplevolume_GetMute
 };
 
-void session_init_vols(struct audio_session *session, UINT channels)
+static void session_init_vols(struct audio_session *session, UINT channels)
 {
     if (session->channel_count < channels) {
         UINT i;
 
-        if (session->channel_vols)
-            session->channel_vols = HeapReAlloc(GetProcessHeap(), 0, session->channel_vols,
-                                                sizeof(float) * channels);
-        else
-            session->channel_vols = HeapAlloc(GetProcessHeap(), 0, sizeof(float) * channels);
-
+        session->channel_vols = realloc(session->channel_vols, sizeof(float) * channels);
         if (!session->channel_vols)
             return;
 
@@ -574,10 +568,9 @@ void session_init_vols(struct audio_session *session, UINT channels)
     }
 }
 
-struct audio_session *session_create(const GUID *guid, IMMDevice *device, UINT channels)
+static struct audio_session *session_create(const GUID *guid, IMMDevice *device, UINT channels)
 {
-    struct audio_session *ret = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
-                                          sizeof(struct audio_session));
+    struct audio_session *ret = calloc(1, sizeof(struct audio_session));
     if (!ret)
         return NULL;
 
@@ -600,7 +593,7 @@ struct audio_session_wrapper *session_wrapper_create(struct audio_client *client
 {
     struct audio_session_wrapper *ret;
 
-    ret = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(struct audio_session_wrapper));
+    ret = calloc(1, sizeof(struct audio_session_wrapper));
     if (!ret)
         return NULL;
 
@@ -617,4 +610,57 @@ struct audio_session_wrapper *session_wrapper_create(struct audio_client *client
     }
 
     return ret;
+}
+
+/* If channels == 0, then this will return or create a session with
+ * matching dataflow and GUID. Otherwise, channels must also match. */
+HRESULT get_audio_session(const GUID *guid, IMMDevice *device, UINT channels,
+                          struct audio_session **out)
+{
+    struct audio_session *session;
+
+    TRACE("(%s, %p, %u, %p)\n", debugstr_guid(guid), device, channels, out);
+
+    if (!guid || IsEqualGUID(guid, &GUID_NULL)) {
+        *out = session_create(&GUID_NULL, device, channels);
+        if (!*out)
+            return E_OUTOFMEMORY;
+
+        return S_OK;
+    }
+
+    *out = NULL;
+    LIST_FOR_EACH_ENTRY(session, &sessions, struct audio_session, entry) {
+        if (session->device == device && IsEqualGUID(guid, &session->guid)) {
+            session_init_vols(session, channels);
+            *out = session;
+            break;
+        }
+    }
+
+    if (!*out) {
+        *out = session_create(guid, device, channels);
+        if (!*out)
+            return E_OUTOFMEMORY;
+    }
+
+    return S_OK;
+}
+
+HRESULT get_audio_session_wrapper(const GUID *guid, IMMDevice *device,
+                                  struct audio_session_wrapper **out)
+{
+    struct audio_session *session;
+
+    const HRESULT hr = get_audio_session(guid, device, 0, &session);
+    if (FAILED(hr))
+        return hr;
+
+    *out = session_wrapper_create(NULL);
+    if (!*out)
+        return E_OUTOFMEMORY;
+
+    (*out)->session = session;
+
+    return S_OK;
 }

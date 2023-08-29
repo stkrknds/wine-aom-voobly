@@ -68,7 +68,7 @@ __lc_time_data cloc_time_data =
 #if _MSVCR_VER < 110
     MAKELCID(LANG_ENGLISH, SORT_DEFAULT),
 #endif
-    1, 0,
+    1, -1,
 #if _MSVCR_VER == 0 || _MSVCR_VER >= 100
     {{L"Sun", L"Mon", L"Tue", L"Wed", L"Thu", L"Fri", L"Sat",
       L"Sunday", L"Monday", L"Tuesday", L"Wednesday", L"Thursday", L"Friday", L"Saturday",
@@ -244,7 +244,6 @@ typedef struct {
   WCHAR search_language[MAX_ELEM_LEN];
   WCHAR search_country[MAX_ELEM_LEN];
   WCHAR found_lang_sname[LOCALE_NAME_MAX_LENGTH];
-  DWORD found_codepage;
   unsigned int match_flags;
   BOOL allow_sname;
 } locale_search_t;
@@ -330,8 +329,10 @@ find_best_locale_proc( WCHAR *name, DWORD locale_flags, LPARAM lParam )
   return CONTINUE_LOOKING;
 }
 
-/* Internal: Find the sname for a locale specification */
-BOOL locale_to_sname(const char *locale, unsigned short *codepage, BOOL *sname_match, WCHAR *sname, int sname_size)
+/* Internal: Find the sname for a locale specification.
+ * sname must be at least LOCALE_NAME_MAX_LENGTH characters long
+ */
+BOOL locale_to_sname(const char *locale, unsigned short *codepage, BOOL *sname_match, WCHAR *sname)
 {
     thread_data_t *data = msvcrt_get_thread_data();
     const char *cp, *region;
@@ -341,8 +342,9 @@ BOOL locale_to_sname(const char *locale, unsigned short *codepage, BOOL *sname_m
     if (!strcmp(locale, data->cached_locale)) {
         if (codepage)
             *codepage = data->cached_cp;
-        if (sname)
-            wcsncpy(sname, data->cached_sname, sname_size);
+        if (sname_match)
+            *sname_match = data->cached_sname_match;
+        wcscpy(sname, data->cached_sname);
         return TRUE;
     }
 
@@ -350,7 +352,7 @@ BOOL locale_to_sname(const char *locale, unsigned short *codepage, BOOL *sname_m
     region = strchr(locale, '_');
 
     if(!locale[0] || (cp == locale && !region)) {
-        GetUserDefaultLocaleName(sname, sname_size);
+        GetUserDefaultLocaleName(sname, LOCALE_NAME_MAX_LENGTH);
     } else {
         char search_language_buf[MAX_ELEM_LEN] = { 0 }, search_country_buf[MAX_ELEM_LEN] = { 0 };
         locale_search_t search;
@@ -388,7 +390,7 @@ BOOL locale_to_sname(const char *locale, unsigned short *codepage, BOOL *sname_m
         if (search.allow_sname && IsValidLocaleName(search.search_language))
         {
             search.match_flags = FOUND_SNAME;
-            wcsncpy(sname, search.search_language, sname_size);
+            wcscpy(sname, search.search_language);
         }
         else
         {
@@ -404,7 +406,7 @@ BOOL locale_to_sname(const char *locale, unsigned short *codepage, BOOL *sname_m
             if (search.search_country[0] && !(search.match_flags & FOUND_COUNTRY))
                 return FALSE;
 
-            wcsncpy(sname, search.found_lang_sname, sname_size);
+            wcscpy(sname, search.found_lang_sname);
         }
 
         is_sname = !remapped && (search.match_flags & FOUND_SNAME) != 0;
@@ -441,6 +443,7 @@ BOOL locale_to_sname(const char *locale, unsigned short *codepage, BOOL *sname_m
     if (strlen(locale) < sizeof(data->cached_locale)) {
         strcpy(data->cached_locale, locale);
         data->cached_cp = locale_cp;
+        data->cached_sname_match = is_sname;
         wcscpy(data->cached_sname, sname);
     }
 
@@ -1226,7 +1229,7 @@ static __lc_time_data* create_time_data(WCHAR *sname)
     int i, ret, size;
     LCID lcid = LocaleNameToLCID(sname, LCID_CONVERSION_FLAGS);
 
-    size = sizeof(__lc_time_data);
+    size = 0;
     for(i=0; i<ARRAY_SIZE(time_data); i++) {
         ret = GetLocaleInfoA(lcid, time_data[i], NULL, 0);
         if(!ret)
@@ -1241,10 +1244,10 @@ static __lc_time_data* create_time_data(WCHAR *sname)
 #endif
     }
 #if _MSVCR_VER >= 110
-    size += wcslen(sname)*sizeof(wchar_t);
+    size += (wcslen(sname) + 1) * sizeof(wchar_t);
 #endif
 
-    cur = malloc(size);
+    cur = malloc(FIELD_OFFSET(__lc_time_data, data[size]));
     if(!cur)
         return NULL;
 
@@ -1256,13 +1259,13 @@ static __lc_time_data* create_time_data(WCHAR *sname)
 #if _MSVCR_VER == 0 || _MSVCR_VER >= 100
     for(i=0; i<ARRAY_SIZE(time_data); i++) {
         cur->wstr.wstr[i] = (wchar_t*)&cur->data[ret];
-        ret += GetLocaleInfoEx(sname, time_data[i],
-                (wchar_t*)&cur->data[ret], size-ret)*sizeof(wchar_t);
+        ret += GetLocaleInfoEx(sname, time_data[i], (wchar_t*)&cur->data[ret],
+                (size - ret) / sizeof(wchar_t)) * sizeof(wchar_t);
     }
 #endif
 #if _MSVCR_VER >= 110
     cur->locname = (wchar_t*)&cur->data[ret];
-    wcsncpy((wchar_t *) &cur->data[ret], sname, size-ret);
+    wcscpy((wchar_t*)&cur->data[ret], sname);
 #else
     cur->lcid = lcid;
 #endif
@@ -1332,23 +1335,17 @@ static pthreadlocinfo create_locinfo(int category,
                 if(p) {
                     memcpy(buf, locale, p-locale);
                     buf[p-locale] = '\0';
-                    locale_found = locale_to_sname(buf, &cp[i], &sname_match, wbuf, LOCALE_NAME_MAX_LENGTH);
-                    locale_sname[i] = wcsdup(wbuf);
-                    if(sname_match) {
-                        locale_name[i] = locale;
-                        locale_len[i] = p-locale;
-                    }
+                    locale_found = locale_to_sname(buf, &cp[i], &sname_match, wbuf);
                 } else {
-                    locale_found = locale_to_sname(buf, &cp[i], &sname_match, wbuf, LOCALE_NAME_MAX_LENGTH);
-                    locale_sname[i] = wcsdup(wbuf);
-                    if(sname_match) {
-                        locale_name[i] = locale;
-                        locale_len[i] = strlen(locale);
-                    }
+                    locale_found = locale_to_sname(locale, &cp[i], &sname_match, wbuf);
                 }
 
-                if(!locale_found || !locale_sname[i])
+                if(!locale_found || !(locale_sname[i] = wcsdup(wbuf)))
                     goto fail;
+                if(sname_match) {
+                    locale_name[i] = locale;
+                    locale_len[i] = p ? p-locale : strlen(locale);
+                }
             }
 
             if(!p || *(p+1)!='L' || *(p+2)!='C' || *(p+3)!='_')
@@ -1357,7 +1354,7 @@ static pthreadlocinfo create_locinfo(int category,
             locale = p+1;
         }
     } else {
-        BOOL locale_found = locale_to_sname(locale, &cp[0], &sname_match, wbuf, LOCALE_NAME_MAX_LENGTH);
+        BOOL locale_found = locale_to_sname(locale, &cp[0], &sname_match, wbuf);
 
         if(!locale_found)
             return NULL;
@@ -1963,6 +1960,9 @@ static pthreadlocinfo create_locinfo(int category,
         locinfo->lc_time_curr = &cloc_time_data;
         InterlockedIncrement(&locinfo->lc_time_curr->refcount);
     }
+
+    for (i = 0; i < LC_MAX; i++)
+        free(locale_sname[i]);
 
     return locinfo;
 

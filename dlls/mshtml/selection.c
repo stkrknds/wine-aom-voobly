@@ -36,8 +36,6 @@ typedef struct {
     IHTMLSelectionObject IHTMLSelectionObject_iface;
     IHTMLSelectionObject2 IHTMLSelectionObject2_iface;
 
-    LONG ref;
-
     nsISelection *nsselection;
     HTMLDocumentNode *doc;
 
@@ -79,7 +77,7 @@ static HRESULT WINAPI HTMLSelectionObject_QueryInterface(IHTMLSelectionObject *i
 static ULONG WINAPI HTMLSelectionObject_AddRef(IHTMLSelectionObject *iface)
 {
     HTMLSelectionObject *This = impl_from_IHTMLSelectionObject(iface);
-    LONG ref = InterlockedIncrement(&This->ref);
+    LONG ref = dispex_ref_incr(&This->dispex);
 
     TRACE("(%p) ref=%ld\n", This, ref);
 
@@ -89,18 +87,9 @@ static ULONG WINAPI HTMLSelectionObject_AddRef(IHTMLSelectionObject *iface)
 static ULONG WINAPI HTMLSelectionObject_Release(IHTMLSelectionObject *iface)
 {
     HTMLSelectionObject *This = impl_from_IHTMLSelectionObject(iface);
-    LONG ref = InterlockedDecrement(&This->ref);
+    LONG ref = dispex_ref_decr(&This->dispex);
 
     TRACE("(%p) ref=%ld\n", This, ref);
-
-    if(!ref) {
-        if(This->nsselection)
-            nsISelection_Release(This->nsselection);
-        if(This->doc)
-            list_remove(&This->entry);
-        release_dispex(&This->dispex);
-        free(This);
-    }
 
     return ref;
 }
@@ -329,14 +318,48 @@ static const IHTMLSelectionObject2Vtbl HTMLSelectionObject2Vtbl = {
     HTMLSelectionObject2_get_typeDetail
 };
 
+static inline HTMLSelectionObject *impl_from_DispatchEx(DispatchEx *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLSelectionObject, dispex);
+}
+
+static void HTMLSelectionObject_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
+{
+    HTMLSelectionObject *This = impl_from_DispatchEx(dispex);
+    if(This->nsselection)
+        note_cc_edge((nsISupports*)This->nsselection, "nsselection", cb);
+}
+
+static void HTMLSelectionObject_unlink(DispatchEx *dispex)
+{
+    HTMLSelectionObject *This = impl_from_DispatchEx(dispex);
+    unlink_ref(&This->nsselection);
+    if(This->doc) {
+        This->doc = NULL;
+        list_remove(&This->entry);
+    }
+}
+
+static void HTMLSelectionObject_destructor(DispatchEx *dispex)
+{
+    HTMLSelectionObject *This = impl_from_DispatchEx(dispex);
+    free(This);
+}
+
+static const dispex_static_data_vtbl_t HTMLSelectionObject_dispex_vtbl = {
+    .destructor       = HTMLSelectionObject_destructor,
+    .traverse         = HTMLSelectionObject_traverse,
+    .unlink           = HTMLSelectionObject_unlink
+};
+
 static const tid_t HTMLSelectionObject_iface_tids[] = {
     IHTMLSelectionObject_tid,
     IHTMLSelectionObject2_tid,
     0
 };
 static dispex_static_data_t HTMLSelectionObject_dispex = {
-    L"MSSelection",
-    NULL,
+    "MSSelection",
+    &HTMLSelectionObject_dispex_vtbl,
     IHTMLSelectionObject_tid, /* FIXME: We have a test for that, but it doesn't expose IHTMLSelectionObject2 iface. */
     HTMLSelectionObject_iface_tids
 };
@@ -354,7 +377,6 @@ HRESULT HTMLSelectionObject_Create(HTMLDocumentNode *doc, nsISelection *nsselect
 
     selection->IHTMLSelectionObject_iface.lpVtbl = &HTMLSelectionObjectVtbl;
     selection->IHTMLSelectionObject2_iface.lpVtbl = &HTMLSelectionObject2Vtbl;
-    selection->ref = 1;
     selection->nsselection = nsselection; /* We shouldn't call AddRef here */
 
     selection->doc = doc;

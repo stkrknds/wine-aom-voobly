@@ -26,6 +26,9 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(mmdevapi);
 
+extern HRESULT get_audio_session_wrapper(const GUID *guid, IMMDevice *device,
+                                         struct audio_session_wrapper **out);
+
 static CRITICAL_SECTION g_sessions_lock;
 static CRITICAL_SECTION_DEBUG g_sessions_lock_debug =
 {
@@ -43,12 +46,6 @@ void sessions_lock(void)
 void sessions_unlock(void)
 {
     LeaveCriticalSection(&g_sessions_lock);
-}
-
-HRESULT get_audio_session(const GUID *sessionguid, IMMDevice *device, UINT channels,
-                          struct audio_session **out)
-{
-    return E_NOTIMPL;
 }
 
 static inline struct session_mgr *impl_from_IAudioSessionManager2(IAudioSessionManager2 *iface)
@@ -93,7 +90,7 @@ static ULONG WINAPI ASM_Release(IAudioSessionManager2 *iface)
     TRACE("(%p) new ref %lu\n", This, ref);
 
     if (!ref)
-        HeapFree(GetProcessHeap(), 0, This);
+        free(This);
 
     return ref;
 }
@@ -108,7 +105,7 @@ static HRESULT WINAPI ASM_GetAudioSessionControl(IAudioSessionManager2 *iface,
 
     TRACE("(%p)->(%s, %lx, %p)\n", This, debugstr_guid(guid), flags, out);
 
-    hr = drvs.pGetAudioSessionWrapper(guid, This->device, &wrapper);
+    hr = get_audio_session_wrapper(guid, This->device, &wrapper);
     if (FAILED(hr))
         return hr;
 
@@ -127,7 +124,7 @@ static HRESULT WINAPI ASM_GetSimpleAudioVolume(IAudioSessionManager2 *iface,
 
     TRACE("(%p)->(%s, %lx, %p)\n", This, debugstr_guid(guid), flags, out);
 
-    hr = drvs.pGetAudioSessionWrapper(guid, This->device, &wrapper);
+    hr = get_audio_session_wrapper(guid, This->device, &wrapper);
     if (FAILED(hr))
         return hr;
 
@@ -195,7 +192,7 @@ HRESULT AudioSessionManager_Create(IMMDevice *device, IAudioSessionManager2 **pp
 {
     struct session_mgr *This;
 
-    This = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*This));
+    This = calloc(1, sizeof(*This));
     if (!This)
         return E_OUTOFMEMORY;
 

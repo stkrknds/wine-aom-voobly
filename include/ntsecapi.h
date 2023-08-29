@@ -16,8 +16,8 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#ifndef __WINE_NTSECAPI_H
-#define __WINE_NTSECAPI_H
+#ifndef _NTSECAPI_
+#define _NTSECAPI_
 
 #ifndef GUID_DEFINED
 # include <guiddef.h>
@@ -121,11 +121,19 @@ typedef NTSTATUS *PNTSTATUS;
 
 typedef enum _SECURITY_LOGON_TYPE
 {
+    UndefinedLogonType = 0,
     Interactive = 2,
     Network,
     Batch,
     Service,
-    Proxy
+    Proxy,
+    Unlock,
+    NetworkCleartext,
+    NewCredentials,
+    RemoteInteractive,
+    CachedInteractive,
+    CachedRemoteInteractive,
+    CachedUnlock
 } SECURITY_LOGON_TYPE, *PSECURITY_LOGON_TYPE;
 
 typedef enum _POLICY_AUDIT_EVENT_TYPE
@@ -180,7 +188,21 @@ typedef struct _SecHandle
 
 typedef UNICODE_STRING LSA_UNICODE_STRING, *PLSA_UNICODE_STRING;
 typedef STRING LSA_STRING, *PLSA_STRING;
+
+#ifdef _NTDEF_
 typedef OBJECT_ATTRIBUTES LSA_OBJECT_ATTRIBUTES, *PLSA_OBJECT_ATTRIBUTES;
+#else
+typedef struct _LSA_OBJECT_ATTRIBUTES
+{
+    ULONG Length;
+    HANDLE RootDirectory;
+    PLSA_UNICODE_STRING ObjectName;
+    ULONG Attributes;
+    PVOID SecurityDescriptor;
+    PVOID SecurityQualityOfService;
+} LSA_OBJECT_ATTRIBUTES, *PLSA_OBJECT_ATTRIBUTES;
+#endif
+
 
 typedef PVOID LSA_HANDLE, *PLSA_HANDLE;
 typedef ULONG LSA_ENUMERATION_HANDLE, *PLSA_ENUMERATION_HANDLE;
@@ -249,6 +271,12 @@ typedef struct _POLICY_MODIFICATION_INFO
     LARGE_INTEGER DatabaseCreationTime;
 } POLICY_MODIFICATION_INFO, *PPOLICY_MODIFICATION_INFO;
 
+typedef struct _LSA_LAST_INTER_LOGON_INFO {
+    LARGE_INTEGER LastSuccessfulLogon;
+    LARGE_INTEGER LastFailedLogon;
+    ULONG FailedAttemptCountSinceLastSuccessfulLogon;
+} LSA_LAST_INTER_LOGON_INFO, *PLSA_LAST_INTER_LOGON_INFO;
+
 typedef struct _SECURITY_LOGON_SESSION_DATA {
     ULONG Size;
     LUID LogonId;
@@ -262,6 +290,17 @@ typedef struct _SECURITY_LOGON_SESSION_DATA {
     LSA_UNICODE_STRING LogonServer;
     LSA_UNICODE_STRING DnsDomainName;
     LSA_UNICODE_STRING Upn;
+    ULONG UserFlags;
+    LSA_LAST_INTER_LOGON_INFO LastLogonInfo;
+    LSA_UNICODE_STRING LogonScript;
+    LSA_UNICODE_STRING ProfilePath;
+    LSA_UNICODE_STRING HomeDirectory;
+    LSA_UNICODE_STRING HomeDirectoryDrive;
+    LARGE_INTEGER LogoffTime;
+    LARGE_INTEGER KickOffTime;
+    LARGE_INTEGER PasswordLastSet;
+    LARGE_INTEGER PasswordCanChange;
+    LARGE_INTEGER PasswordMustChange;
 } SECURITY_LOGON_SESSION_DATA, *PSECURITY_LOGON_SESSION_DATA;
 
 typedef struct
@@ -356,6 +395,27 @@ typedef struct _AUDIT_POLICY_INFORMATION
     GUID    AuditCategoryGuid;
 } AUDIT_POLICY_INFORMATION, *PAUDIT_POLICY_INFORMATION;
 
+enum NEGOTIATE_MESSAGES
+{
+    NegEnumPackagePrefixes,
+    NegGetCallerName,
+    NegTransferCredentials,
+    NegMsgReserved1,
+    NegCallPackageMax
+};
+
+typedef struct _NEGOTIATE_CALLER_NAME_REQUEST
+{
+    ULONG MessageType;
+    LUID LogonId;
+} NEGOTIATE_CALLER_NAME_REQUEST, *PNEGOTIATE_CALLER_NAME_REQUEST;
+
+typedef struct _NEGOTIATE_CALLER_NAME_RESPONSE
+{
+    ULONG MessageType;
+    PWSTR CallerName;
+} NEGOTIATE_CALLER_NAME_RESPONSE, *PNEGOTIATE_CALLER_NAME_RESPONSE;
+
 #define MICROSOFT_KERBEROS_NAME_A "Kerberos"
 #if defined(_MSC_VER) || defined(__MINGW32__)
 #define MICROSOFT_KERBEROS_NAME_W L"Kerberos"
@@ -427,6 +487,54 @@ typedef struct _KERB_TICKET_CACHE_INFO
     ULONG TicketFlags;
 } KERB_TICKET_CACHE_INFO, *PKERB_TICKET_CACHE_INFO;
 
+typedef struct _KERB_TICKET_CACHE_INFO_EX
+{
+    UNICODE_STRING ClientName;
+    UNICODE_STRING ClientRealm;
+
+    UNICODE_STRING ServerName;
+    UNICODE_STRING ServerRealm;
+    LARGE_INTEGER StartTime;
+    LARGE_INTEGER EndTime;
+    LARGE_INTEGER RenewTime;
+    LONG EncryptionType;
+    ULONG TicketFlags;
+} KERB_TICKET_CACHE_INFO_EX, *PKERB_TICKET_CACHE_INFO_EX;
+
+typedef struct _KERB_TICKET_CACHE_INFO_EX2
+{
+    UNICODE_STRING ClientName;
+    UNICODE_STRING ClientRealm;
+    UNICODE_STRING ServerName;
+    UNICODE_STRING ServerRealm;
+    LARGE_INTEGER StartTime;
+    LARGE_INTEGER EndTime;
+    LARGE_INTEGER RenewTime;
+    LONG EncryptionType;
+    ULONG TicketFlags;
+
+    ULONG SessionKeyType;
+    ULONG BranchId;
+} KERB_TICKET_CACHE_INFO_EX2, *PKERB_TICKET_CACHE_INFO_EX2;
+
+typedef struct _KERB_TICKET_CACHE_INFO_EX3
+{
+    UNICODE_STRING ClientName;
+    UNICODE_STRING ClientRealm;
+    UNICODE_STRING ServerName;
+    UNICODE_STRING ServerRealm;
+    LARGE_INTEGER StartTime;
+    LARGE_INTEGER EndTime;
+    LARGE_INTEGER RenewTime;
+    LONG EncryptionType;
+    ULONG TicketFlags;
+    ULONG SessionKeyType;
+    ULONG BranchId;
+
+    ULONG CacheFlags;
+    UNICODE_STRING KdcCalled;
+} KERB_TICKET_CACHE_INFO_EX3, *PKERB_TICKET_CACHE_INFO_EX3;
+
 typedef struct _KERB_CRYPTO_KEY
 {
     LONG KeyType;
@@ -473,6 +581,27 @@ typedef struct _KERB_QUERY_TKT_CACHE_RESPONSE
     ULONG CountOfTickets;
     KERB_TICKET_CACHE_INFO Tickets[ANYSIZE_ARRAY];
 } KERB_QUERY_TKT_CACHE_RESPONSE, *PKERB_QUERY_TKT_CACHE_RESPONSE;
+
+typedef struct _KERB_QUERY_TKT_CACHE_EX_RESPONSE
+{
+    KERB_PROTOCOL_MESSAGE_TYPE MessageType;
+    ULONG CountOfTickets;
+    KERB_TICKET_CACHE_INFO_EX Tickets[ANYSIZE_ARRAY];
+} KERB_QUERY_TKT_CACHE_EX_RESPONSE, *PKERB_QUERY_TKT_CACHE_EX_RESPONSE;
+
+typedef struct _KERB_QUERY_TKT_CACHE_EX2_RESPONSE
+{
+    KERB_PROTOCOL_MESSAGE_TYPE MessageType;
+    ULONG CountOfTickets;
+    KERB_TICKET_CACHE_INFO_EX2 Tickets[ANYSIZE_ARRAY];
+} KERB_QUERY_TKT_CACHE_EX2_RESPONSE, *PKERB_QUERY_TKT_CACHE_EX2_RESPONSE;
+
+typedef struct _KERB_QUERY_TKT_CACHE_EX3_RESPONSE
+{
+    KERB_PROTOCOL_MESSAGE_TYPE MessageType;
+    ULONG CountOfTickets;
+    KERB_TICKET_CACHE_INFO_EX3 Tickets[ANYSIZE_ARRAY];
+} KERB_QUERY_TKT_CACHE_EX3_RESPONSE, *PKERB_QUERY_TKT_CACHE_EX3_RESPONSE;
 
 typedef struct _KERB_RETRIEVE_TKT_REQUEST
 {
@@ -546,6 +675,8 @@ typedef struct _KERB_PURGE_TKT_CACHE_REQUEST
 #define RtlEncryptMemory                SystemFunction040
 #define RtlDecryptMemory                SystemFunction041
 
+#define LSA_SUCCESS(Error) ((LONG)(Error) >= 0)
+
 WINADVAPI BOOLEAN  WINAPI AuditQuerySystemPolicy(const GUID*,ULONG,AUDIT_POLICY_INFORMATION**);
 WINADVAPI BOOLEAN  WINAPI RtlGenRandom(PVOID,ULONG);
 WINADVAPI NTSTATUS WINAPI RtlEncryptMemory(PVOID,ULONG,ULONG);
@@ -595,4 +726,4 @@ NTSTATUS WINAPI LsaRegisterLogonProcess(PLSA_STRING,PHANDLE,PLSA_OPERATIONAL_MOD
 } /* extern "C" */
 #endif /* defined(__cplusplus) */
 
-#endif /* !defined(__WINE_NTSECAPI_H) */
+#endif /* !defined(_NTSECAPI_) */

@@ -39,7 +39,6 @@ enum { MAX_QUOTA = 5000000 };
 typedef struct {
     DispatchEx dispex;
     IHTMLStorage IHTMLStorage_iface;
-    LONG ref;
     unsigned num_props;
     BSTR *props;
     HTMLInnerWindow *window;
@@ -282,6 +281,8 @@ static HRESULT send_storage_event_impl(struct send_storage_event_ctx *ctx, HTMLI
         origin = storage->session_storage->origin;
         origin_len = ctx->skip_window ? wcslen(origin) : storage->session_storage->origin_len;
         bstr = NULL;
+    }else if(!window->base.outer_window->uri) {
+        return S_OK;
     }else {
         hres = IUri_GetHost(window->base.outer_window->uri, &bstr);
         if(hres != S_OK) {
@@ -383,7 +384,7 @@ static HRESULT WINAPI HTMLStorage_QueryInterface(IHTMLStorage *iface, REFIID rii
 static ULONG WINAPI HTMLStorage_AddRef(IHTMLStorage *iface)
 {
     HTMLStorage *This = impl_from_IHTMLStorage(iface);
-    LONG ref = InterlockedIncrement(&This->ref);
+    LONG ref = dispex_ref_incr(&This->dispex);
 
     TRACE("(%p) ref=%ld\n", This, ref);
 
@@ -393,18 +394,9 @@ static ULONG WINAPI HTMLStorage_AddRef(IHTMLStorage *iface)
 static ULONG WINAPI HTMLStorage_Release(IHTMLStorage *iface)
 {
     HTMLStorage *This = impl_from_IHTMLStorage(iface);
-    LONG ref = InterlockedDecrement(&This->ref);
+    LONG ref = dispex_ref_decr(&This->dispex);
 
     TRACE("(%p) ref=%ld\n", This, ref);
-
-    if(!ref) {
-        release_session_map_entry(This->session_storage);
-        release_dispex(&This->dispex);
-        free(This->filename);
-        CloseHandle(This->mutex);
-        release_props(This);
-        free(This);
-    }
 
     return ref;
 }
@@ -1063,6 +1055,16 @@ static inline HTMLStorage *impl_from_DispatchEx(DispatchEx *iface)
     return CONTAINING_RECORD(iface, HTMLStorage, dispex);
 }
 
+static void HTMLStorage_destructor(DispatchEx *dispex)
+{
+    HTMLStorage *This = impl_from_DispatchEx(dispex);
+    release_session_map_entry(This->session_storage);
+    free(This->filename);
+    CloseHandle(This->mutex);
+    release_props(This);
+    free(This);
+}
+
 static HRESULT check_item(HTMLStorage *This, const WCHAR *key)
 {
     struct session_entry *session_entry;
@@ -1308,13 +1310,12 @@ static HRESULT HTMLStorage_next_dispid(DispatchEx *dispex, DISPID id, DISPID *pi
 }
 
 static const dispex_static_data_vtbl_t HTMLStorage_dispex_vtbl = {
-    NULL,
-    HTMLStorage_get_dispid,
-    HTMLStorage_get_name,
-    HTMLStorage_invoke,
-    HTMLStorage_delete,
-    HTMLStorage_next_dispid,
-    NULL
+    .destructor       = HTMLStorage_destructor,
+    .get_dispid       = HTMLStorage_get_dispid,
+    .get_name         = HTMLStorage_get_name,
+    .invoke           = HTMLStorage_invoke,
+    .delete           = HTMLStorage_delete,
+    .next_dispid      = HTMLStorage_next_dispid,
 };
 
 static const tid_t HTMLStorage_iface_tids[] = {
@@ -1322,7 +1323,7 @@ static const tid_t HTMLStorage_iface_tids[] = {
     0
 };
 static dispex_static_data_t HTMLStorage_dispex = {
-    L"Storage",
+    "Storage",
     &HTMLStorage_dispex_vtbl,
     IHTMLStorage_tid,
     HTMLStorage_iface_tids
@@ -1475,7 +1476,6 @@ HRESULT create_html_storage(HTMLInnerWindow *window, BOOL local, IHTMLStorage **
     }
 
     storage->IHTMLStorage_iface.lpVtbl = &HTMLStorageVtbl;
-    storage->ref = 1;
     storage->window = window;
 
     init_dispatch(&storage->dispex, (IUnknown*)&storage->IHTMLStorage_iface, &HTMLStorage_dispex,

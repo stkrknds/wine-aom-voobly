@@ -65,7 +65,7 @@ static HRESULT WINAPI HTMLDOMAttribute_QueryInterface(IHTMLDOMAttribute *iface,
 static ULONG WINAPI HTMLDOMAttribute_AddRef(IHTMLDOMAttribute *iface)
 {
     HTMLDOMAttribute *This = impl_from_IHTMLDOMAttribute(iface);
-    LONG ref = InterlockedIncrement(&This->ref);
+    LONG ref = dispex_ref_incr(&This->dispex);
 
     TRACE("(%p) ref=%ld\n", This, ref);
 
@@ -75,17 +75,9 @@ static ULONG WINAPI HTMLDOMAttribute_AddRef(IHTMLDOMAttribute *iface)
 static ULONG WINAPI HTMLDOMAttribute_Release(IHTMLDOMAttribute *iface)
 {
     HTMLDOMAttribute *This = impl_from_IHTMLDOMAttribute(iface);
-    LONG ref = InterlockedDecrement(&This->ref);
+    LONG ref = dispex_ref_decr(&This->dispex);
 
     TRACE("(%p) ref=%ld\n", This, ref);
-
-    if(!ref) {
-        assert(!This->elem);
-        release_dispex(&This->dispex);
-        VariantClear(&This->value);
-        free(This->name);
-        free(This);
-    }
 
     return ref;
 }
@@ -480,14 +472,46 @@ static const IHTMLDOMAttribute2Vtbl HTMLDOMAttribute2Vtbl = {
     HTMLDOMAttribute2_cloneNode
 };
 
+static inline HTMLDOMAttribute *impl_from_DispatchEx(DispatchEx *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLDOMAttribute, dispex);
+}
+
+static void HTMLDOMAttribute_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
+{
+    HTMLDOMAttribute *This = impl_from_DispatchEx(dispex);
+    traverse_variant(&This->value, "value", cb);
+}
+
+static void HTMLDOMAttribute_unlink(DispatchEx *dispex)
+{
+    HTMLDOMAttribute *This = impl_from_DispatchEx(dispex);
+    unlink_variant(&This->value);
+}
+
+static void HTMLDOMAttribute_destructor(DispatchEx *dispex)
+{
+    HTMLDOMAttribute *This = impl_from_DispatchEx(dispex);
+    assert(!This->elem);
+    VariantClear(&This->value);
+    free(This->name);
+    free(This);
+}
+
+static const dispex_static_data_vtbl_t HTMLDOMAttribute_dispex_vtbl = {
+    .destructor       = HTMLDOMAttribute_destructor,
+    .traverse         = HTMLDOMAttribute_traverse,
+    .unlink           = HTMLDOMAttribute_unlink
+};
+
 static const tid_t HTMLDOMAttribute_iface_tids[] = {
     IHTMLDOMAttribute_tid,
     IHTMLDOMAttribute2_tid,
     0
 };
 static dispex_static_data_t HTMLDOMAttribute_dispex = {
-    L"Attr",
-    NULL,
+    "Attr",
+    &HTMLDOMAttribute_dispex_vtbl,
     DispHTMLDOMAttribute_tid,
     HTMLDOMAttribute_iface_tids
 };
@@ -509,7 +533,6 @@ HRESULT HTMLDOMAttribute_Create(const WCHAR *name, HTMLElement *elem, DISPID dis
 
     ret->IHTMLDOMAttribute_iface.lpVtbl = &HTMLDOMAttributeVtbl;
     ret->IHTMLDOMAttribute2_iface.lpVtbl = &HTMLDOMAttribute2Vtbl;
-    ret->ref = 1;
     ret->dispid = dispid;
     ret->elem = elem;
 

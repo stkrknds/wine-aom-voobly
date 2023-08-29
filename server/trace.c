@@ -960,10 +960,11 @@ static void dump_varargs_startup_info( const char *prefix, data_size_t size )
 
     fprintf( stderr,
              "%s{debug_flags=%x,console_flags=%x,console=%04x,hstdin=%04x,hstdout=%04x,hstderr=%04x,"
-             "x=%u,y=%u,xsize=%u,ysize=%u,xchars=%u,ychars=%u,attribute=%02x,flags=%x,show=%u",
+             "x=%u,y=%u,xsize=%u,ysize=%u,xchars=%u,ychars=%u,attribute=%02x,flags=%x,show=%u,"
+             "process_group_id=%u",
              prefix, info.debug_flags, info.console_flags, info.console,
              info.hstdin, info.hstdout, info.hstderr, info.x, info.y, info.xsize, info.ysize,
-             info.xchars, info.ychars, info.attribute, info.flags, info.show );
+             info.xchars, info.ychars, info.attribute, info.flags, info.show, info.process_group_id );
     pos = dump_inline_unicode_string( ",curdir=L\"", pos, info.curdir_len, size );
     pos = dump_inline_unicode_string( "\",dllpath=L\"", pos, info.dllpath_len, size );
     pos = dump_inline_unicode_string( "\",imagepath=L\"", pos, info.imagepath_len, size );
@@ -2087,6 +2088,18 @@ static void dump_send_socket_reply( const struct send_socket_reply *req )
     fprintf( stderr, " wait=%04x", req->wait );
     fprintf( stderr, ", options=%08x", req->options );
     fprintf( stderr, ", nonblocking=%d", req->nonblocking );
+}
+
+static void dump_socket_get_events_request( const struct socket_get_events_request *req )
+{
+    fprintf( stderr, " handle=%04x", req->handle );
+    fprintf( stderr, ", event=%04x", req->event );
+}
+
+static void dump_socket_get_events_reply( const struct socket_get_events_reply *req )
+{
+    fprintf( stderr, " flags=%08x", req->flags );
+    dump_varargs_uints( ", status=", cur_size );
 }
 
 static void dump_socket_send_icmp_id_request( const struct socket_send_icmp_id_request *req )
@@ -4623,6 +4636,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_unlock_file_request,
     (dump_func)dump_recv_socket_request,
     (dump_func)dump_send_socket_request,
+    (dump_func)dump_socket_get_events_request,
     (dump_func)dump_socket_send_icmp_id_request,
     (dump_func)dump_socket_get_icmp_id_request,
     (dump_func)dump_get_next_console_request_request,
@@ -4907,6 +4921,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     NULL,
     (dump_func)dump_recv_socket_reply,
     (dump_func)dump_send_socket_reply,
+    (dump_func)dump_socket_get_events_reply,
     NULL,
     (dump_func)dump_socket_get_icmp_id_reply,
     (dump_func)dump_get_next_console_request_reply,
@@ -5191,6 +5206,7 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "unlock_file",
     "recv_socket",
     "send_socket",
+    "socket_get_events",
     "socket_send_icmp_id",
     "socket_get_icmp_id",
     "get_next_console_request",

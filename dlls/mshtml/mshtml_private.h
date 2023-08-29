@@ -294,7 +294,8 @@ typedef struct EventTarget EventTarget;
     XIID(IWinePageTransitionEvent) \
     XIID(IWineXMLHttpRequestPrivate) \
     XIID(IWineMSHTMLConsole) \
-    XIID(IWineMSHTMLMediaQueryList)
+    XIID(IWineMSHTMLMediaQueryList) \
+    XIID(IWineMSHTMLMutationObserver)
 
 typedef enum {
 #define XIID(iface) iface ## _tid,
@@ -336,20 +337,48 @@ typedef struct dispex_dynamic_data_t dispex_dynamic_data_t;
 #define MSHTML_CUSTOM_DISPID_CNT (MSHTML_DISPID_CUSTOM_MAX-MSHTML_DISPID_CUSTOM_MIN)
 
 typedef struct DispatchEx DispatchEx;
+typedef struct nsCycleCollectionTraversalCallback nsCycleCollectionTraversalCallback;
 
 typedef struct {
+    UINT_PTR x;
+} nsCycleCollectingAutoRefCnt;
+
+/*
+   dispex is our base IDispatchEx implementation for all mshtml objects, and the vtbl allows
+   customizing the behavior depending on the object. Objects have basically 3 types of props:
+
+   - builtin props: These props are implicitly generated from the TypeInfo (disp_tid and iface_tids in dispex_static_data_t).
+   - custom props:  These props are specific to an object, they are created using vtbl below (e.g. indexed props in HTMLRectCollection).
+   - dynamic props: These props are generally allocated by external code (e.g. 'document.wine = 42' creates 'wine' dynamic prop on document)
+*/
+typedef struct {
+    /* Used to implement Cycle Collection callbacks; note that the destructor is not optional!
+       Unlike delete_cycle_collectable, unlink is called before the destructor (if available). */
+    void (*destructor)(DispatchEx*);
+    void (*traverse)(DispatchEx*,nsCycleCollectionTraversalCallback*);
+    void (*unlink)(DispatchEx*);
+
+    /* Called when the object wants to handle DISPID_VALUE invocations */
     HRESULT (*value)(DispatchEx*,LCID,WORD,DISPPARAMS*,VARIANT*,EXCEPINFO*,IServiceProvider*);
+
+    /* Used when the object has custom props, and this returns DISPIDs for them */
     HRESULT (*get_dispid)(DispatchEx*,BSTR,DWORD,DISPID*);
+
+    /* These are called when the object implements GetMemberName, InvokeEx, DeleteMemberByDispID and GetNextDispID for custom props */
     HRESULT (*get_name)(DispatchEx*,DISPID,BSTR*);
     HRESULT (*invoke)(DispatchEx*,DISPID,LCID,WORD,DISPPARAMS*,VARIANT*,EXCEPINFO*,IServiceProvider*);
     HRESULT (*delete)(DispatchEx*,DISPID);
     HRESULT (*next_dispid)(DispatchEx*,DISPID,DISPID*);
+
+    /* Used by objects that want to delay their compat mode initialization until actually needed */
     compat_mode_t (*get_compat_mode)(DispatchEx*);
+
+    /* Used by objects that want to populate some dynamic props on initialization */
     HRESULT (*populate_props)(DispatchEx*);
 } dispex_static_data_vtbl_t;
 
 typedef struct {
-    const WCHAR *name;
+    const char *name;
     const dispex_static_data_vtbl_t *vtbl;
     const tid_t disp_tid;
     const tid_t* const iface_tids;
@@ -371,22 +400,17 @@ struct DispatchEx {
     IDispatchEx IDispatchEx_iface;
 
     IUnknown *outer;
+    nsCycleCollectingAutoRefCnt ccref;
 
     dispex_data_t *info;
     dispex_dynamic_data_t *dynamic_data;
 };
 
 typedef struct {
-    UINT_PTR x;
-} nsCycleCollectingAutoRefCnt;
-
-typedef struct {
     void *vtbl;
     int ref_flags;
     void *callbacks;
 } ExternalCycleCollectionParticipant;
-
-typedef struct nsCycleCollectionTraversalCallback nsCycleCollectionTraversalCallback;
 
 typedef struct {
     nsresult (NSAPI *traverse)(void*,void*,nsCycleCollectionTraversalCallback*);
@@ -403,16 +427,28 @@ extern void (__cdecl *ccp_init)(ExternalCycleCollectionParticipant*,const CCObjC
 extern void (__cdecl *describe_cc_node)(nsCycleCollectingAutoRefCnt*,const char*,nsCycleCollectionTraversalCallback*);
 extern void (__cdecl *note_cc_edge)(nsISupports*,const char*,nsCycleCollectionTraversalCallback*);
 
+extern ExternalCycleCollectionParticipant dispex_ccp;
+
+static inline LONG dispex_ref_incr(DispatchEx *dispex)
+{
+    return ccref_incr(&dispex->ccref, (nsISupports*)&dispex->IDispatchEx_iface);
+}
+
+static inline LONG dispex_ref_decr(DispatchEx *dispex)
+{
+    return ccref_decr(&dispex->ccref, (nsISupports*)&dispex->IDispatchEx_iface, &dispex_ccp);
+}
+
 void init_dispatch(DispatchEx*,IUnknown*,dispex_static_data_t*,compat_mode_t);
 void release_dispex(DispatchEx*);
 BOOL dispex_query_interface(DispatchEx*,REFIID,void**);
+BOOL dispex_query_interface_no_cc(DispatchEx*,REFIID,void**);
+void dispex_props_unlink(DispatchEx*);
 HRESULT change_type(VARIANT*,VARIANT*,VARTYPE,IServiceProvider*);
 HRESULT dispex_get_dprop_ref(DispatchEx*,const WCHAR*,BOOL,VARIANT**);
 HRESULT get_dispids(tid_t,DWORD*,DISPID**);
 HRESULT remove_attribute(DispatchEx*,DISPID,VARIANT_BOOL*);
 HRESULT dispex_get_dynid(DispatchEx*,const WCHAR*,BOOL,DISPID*);
-void dispex_traverse(DispatchEx*,nsCycleCollectionTraversalCallback*);
-void dispex_unlink(DispatchEx*);
 void release_typelib(void);
 HRESULT get_class_typeinfo(const CLSID*,ITypeInfo**);
 const void *dispex_get_vtbl(DispatchEx*);
@@ -465,8 +501,6 @@ typedef struct {
     DispatchEx dispex;
     IHTMLOptionElementFactory IHTMLOptionElementFactory_iface;
 
-    LONG ref;
-
     HTMLInnerWindow *window;
 } HTMLOptionElementFactory;
 
@@ -474,16 +508,12 @@ typedef struct {
     DispatchEx dispex;
     IHTMLImageElementFactory IHTMLImageElementFactory_iface;
 
-    LONG ref;
-
     HTMLInnerWindow *window;
 } HTMLImageElementFactory;
 
 typedef struct {
     DispatchEx dispex;
     IHTMLXMLHttpRequestFactory IHTMLXMLHttpRequestFactory_iface;
-
-    LONG ref;
 
     HTMLInnerWindow *window;
 } HTMLXMLHttpRequestFactory;
@@ -496,8 +526,6 @@ struct HTMLLocation {
 typedef struct {
     DispatchEx dispex;
     IOmHistory IOmHistory_iface;
-
-    LONG ref;
 
     HTMLInnerWindow *window;
 } OmHistory;
@@ -546,8 +574,6 @@ struct HTMLWindow {
     IProvideMultipleClassInfo IProvideMultipleClassInfo_iface;
     IWineHTMLWindowPrivate IWineHTMLWindowPrivate_iface;
     IWineHTMLWindowCompatPrivate IWineHTMLWindowCompatPrivate_iface;
-
-    IWineMSHTMLConsole *console;
 
     LONG ref;
 
@@ -603,6 +629,7 @@ struct HTMLInnerWindow {
     IOmNavigator *navigator;
     IHTMLStorage *session_storage;
     IHTMLStorage *local_storage;
+    IWineMSHTMLConsole *console;
 
     BOOL performance_initialized;
     VARIANT performance;
@@ -619,6 +646,7 @@ struct HTMLInnerWindow {
     LONG task_magic;
 
     IMoniker *mon;
+    IDispatch *mutation_observer_ctor;
     nsChannelBSC *bscallback;
     struct list bindings;
 };
@@ -829,8 +857,6 @@ struct HTMLDOMNode {
     IHTMLDOMNode3 IHTMLDOMNode3_iface;
     const NodeImplVtbl *vtbl;
 
-    nsCycleCollectingAutoRefCnt ccref;
-
     nsIDOMNode *nsnode;
     HTMLDocumentNode *doc;
 };
@@ -935,9 +961,6 @@ struct HTMLDocumentNode {
     IInternetHostSecurityManager IInternetHostSecurityManager_iface;
 
     nsIDocumentObserver          nsIDocumentObserver_iface;
-
-    LONG ref;
-
     ConnectionPointContainer cp_container;
     HTMLOuterWindow *outer_window;
     HTMLInnerWindow *window;
@@ -1052,7 +1075,7 @@ BOOL is_gecko_path(const char*);
 void set_viewer_zoom(GeckoBrowser*,float);
 float get_viewer_zoom(GeckoBrowser*);
 
-void init_node_cc(void);
+void init_dispex_cc(void);
 
 HRESULT nsuri_to_url(LPCWSTR,BOOL,BSTR*);
 
@@ -1137,8 +1160,6 @@ struct HTMLAttributeCollection {
     IHTMLAttributeCollection2 IHTMLAttributeCollection2_iface;
     IHTMLAttributeCollection3 IHTMLAttributeCollection3_iface;
 
-    LONG ref;
-
     HTMLElement *elem;
     struct list attrs;
 };
@@ -1147,8 +1168,6 @@ typedef struct {
     DispatchEx dispex;
     IHTMLDOMAttribute IHTMLDOMAttribute_iface;
     IHTMLDOMAttribute2 IHTMLDOMAttribute2_iface;
-
-    LONG ref;
 
     /* value is valid only for detached attributes (when elem == NULL). */
     VARIANT value;
@@ -1200,10 +1219,13 @@ void HTMLElement_Init(HTMLElement*,HTMLDocumentNode*,nsIDOMElement*,dispex_stati
 
 void EventTarget_Init(EventTarget*,IUnknown*,dispex_static_data_t*,compat_mode_t);
 HRESULT EventTarget_QI(EventTarget*,REFIID,void**);
+HRESULT EventTarget_QI_no_cc(EventTarget*,REFIID,void**);
 void EventTarget_init_dispex_info(dispex_data_t*,compat_mode_t);
 
 HRESULT HTMLDOMNode_QI(HTMLDOMNode*,REFIID,void**);
-void HTMLDOMNode_destructor(HTMLDOMNode*);
+void HTMLDOMNode_destructor(DispatchEx*);
+void HTMLDOMNode_traverse(DispatchEx*,nsCycleCollectionTraversalCallback*);
+void HTMLDOMNode_unlink(DispatchEx*);
 void HTMLDOMNode_init_dispex_info(dispex_data_t*,compat_mode_t);
 
 HRESULT HTMLElement_QI(HTMLDOMNode*,REFIID,void**);
@@ -1464,6 +1486,28 @@ static inline BOOL is_power_of_2(unsigned x)
     return !(x & (x - 1));
 }
 
+static inline void unlink_ref(void *p)
+{
+    IUnknown **ref = p;
+    if(*ref) {
+        IUnknown *unk = *ref;
+        *ref = NULL;
+        IUnknown_Release(unk);
+    }
+}
+
+static inline void unlink_variant(VARIANT *v)
+{
+    if(V_VT(v) == VT_DISPATCH || V_VT(v) == VT_UNKNOWN)
+        unlink_ref(&V_UNKNOWN(v));
+}
+
+static inline void traverse_variant(VARIANT *v, const char *name, nsCycleCollectionTraversalCallback *cb)
+{
+    if(V_VT(v) == VT_DISPATCH || V_VT(v) == VT_UNKNOWN)
+        note_cc_edge((nsISupports*)V_UNKNOWN(v), name, cb);
+}
+
 #ifdef __i386__
 extern void *call_thiscall_func;
 #endif
@@ -1479,3 +1523,5 @@ IInternetSecurityManager *get_security_manager(void);
 extern HINSTANCE hInst;
 void create_console(compat_mode_t compat_mode, IWineMSHTMLConsole **ret);
 HRESULT create_media_query_list(HTMLWindow *window, BSTR media_query, IDispatch **ret);
+
+HRESULT create_mutation_observer_ctor(compat_mode_t compat_mode, IDispatch **ret);

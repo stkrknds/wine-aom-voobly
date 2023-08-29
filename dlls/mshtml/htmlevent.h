@@ -76,9 +76,7 @@ typedef struct DOMEvent {
     DispatchEx dispex;
     IDOMEvent IDOMEvent_iface;
 
-    LONG ref;
     void *(*query_interface)(struct DOMEvent*,REFIID);
-    void (*destroy)(struct DOMEvent*);
 
     nsIDOMEvent *nsevent;
 
@@ -138,6 +136,7 @@ typedef struct {
     IHTMLEventObj *(*set_current_event)(DispatchEx*,IHTMLEventObj*);
 } event_target_vtbl_t;
 
+extern const event_target_vtbl_t HTMLElement_event_target_vtbl;
 IHTMLEventObj *default_set_current_event(HTMLInnerWindow*,IHTMLEventObj*);
 
 static inline EventTarget *get_node_event_prop_target(HTMLDOMNode *node, eventid_t eid)

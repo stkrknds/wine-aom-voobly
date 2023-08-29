@@ -339,8 +339,6 @@ typedef struct
 {
     DispatchEx dispex;
     IHTMLFiltersCollection IHTMLFiltersCollection_iface;
-
-    LONG ref;
 } HTMLFiltersCollection;
 
 static inline HTMLFiltersCollection *impl_from_IHTMLFiltersCollection(IHTMLFiltersCollection *iface)
@@ -531,8 +529,6 @@ typedef struct {
     IHTMLRect IHTMLRect_iface;
     IHTMLRect2 IHTMLRect2_iface;
 
-    LONG ref;
-
     nsIDOMClientRect *nsrect;
 } HTMLRect;
 
@@ -568,7 +564,7 @@ static HRESULT WINAPI HTMLRect_QueryInterface(IHTMLRect *iface, REFIID riid, voi
 static ULONG WINAPI HTMLRect_AddRef(IHTMLRect *iface)
 {
     HTMLRect *This = impl_from_IHTMLRect(iface);
-    LONG ref = InterlockedIncrement(&This->ref);
+    LONG ref = dispex_ref_incr(&This->dispex);
 
     TRACE("(%p) ref=%ld\n", This, ref);
 
@@ -578,16 +574,9 @@ static ULONG WINAPI HTMLRect_AddRef(IHTMLRect *iface)
 static ULONG WINAPI HTMLRect_Release(IHTMLRect *iface)
 {
     HTMLRect *This = impl_from_IHTMLRect(iface);
-    LONG ref = InterlockedDecrement(&This->ref);
+    LONG ref = dispex_ref_decr(&This->dispex);
 
     TRACE("(%p) ref=%ld\n", This, ref);
-
-    if(!ref) {
-        if(This->nsrect)
-            nsIDOMClientRect_Release(This->nsrect);
-        release_dispex(&This->dispex);
-        free(This);
-    }
 
     return ref;
 }
@@ -841,19 +830,49 @@ static const IHTMLRect2Vtbl HTMLRect2Vtbl = {
     HTMLRect2_get_height,
 };
 
+static inline HTMLRect *HTMLRect_from_DispatchEx(DispatchEx *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLRect, dispex);
+}
+
+static void HTMLRect_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
+{
+    HTMLRect *This = HTMLRect_from_DispatchEx(dispex);
+    if(This->nsrect)
+        note_cc_edge((nsISupports*)This->nsrect, "nsrect", cb);
+}
+
+static void HTMLRect_unlink(DispatchEx *dispex)
+{
+    HTMLRect *This = HTMLRect_from_DispatchEx(dispex);
+    unlink_ref(&This->nsrect);
+}
+
+static void HTMLRect_destructor(DispatchEx *dispex)
+{
+    HTMLRect *This = HTMLRect_from_DispatchEx(dispex);
+    free(This);
+}
+
 void HTMLRect_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
 {
     if (mode >= COMPAT_MODE_IE9)
         dispex_info_add_interface(info, IHTMLRect2_tid, NULL);
 }
 
+static const dispex_static_data_vtbl_t HTMLRect_dispex_vtbl = {
+    .destructor       = HTMLRect_destructor,
+    .traverse         = HTMLRect_traverse,
+    .unlink           = HTMLRect_unlink
+};
+
 static const tid_t HTMLRect_iface_tids[] = {
     IHTMLRect_tid,
     0
 };
 static dispex_static_data_t HTMLRect_dispex = {
-    L"ClientRect",
-    NULL,
+    "ClientRect",
+    &HTMLRect_dispex_vtbl,
     IHTMLRect_tid,
     HTMLRect_iface_tids,
     HTMLRect_init_dispex_info
@@ -869,7 +888,6 @@ static HRESULT create_html_rect(nsIDOMClientRect *nsrect, compat_mode_t compat_m
 
     rect->IHTMLRect_iface.lpVtbl = &HTMLRectVtbl;
     rect->IHTMLRect2_iface.lpVtbl = &HTMLRect2Vtbl;
-    rect->ref = 1;
 
     init_dispatch(&rect->dispex, (IUnknown*)&rect->IHTMLRect_iface, &HTMLRect_dispex, compat_mode);
 
@@ -883,8 +901,6 @@ static HRESULT create_html_rect(nsIDOMClientRect *nsrect, compat_mode_t compat_m
 typedef struct {
     DispatchEx dispex;
     IHTMLRectCollection IHTMLRectCollection_iface;
-
-    LONG ref;
 
     nsIDOMClientRectList *rect_list;
 } HTMLRectCollection;
@@ -1052,7 +1068,7 @@ static HRESULT WINAPI HTMLRectCollection_QueryInterface(IHTMLRectCollection *ifa
 static ULONG WINAPI HTMLRectCollection_AddRef(IHTMLRectCollection *iface)
 {
     HTMLRectCollection *This = impl_from_IHTMLRectCollection(iface);
-    LONG ref = InterlockedIncrement(&This->ref);
+    LONG ref = dispex_ref_incr(&This->dispex);
 
     TRACE("(%p) ref=%ld\n", This, ref);
 
@@ -1062,16 +1078,9 @@ static ULONG WINAPI HTMLRectCollection_AddRef(IHTMLRectCollection *iface)
 static ULONG WINAPI HTMLRectCollection_Release(IHTMLRectCollection *iface)
 {
     HTMLRectCollection *This = impl_from_IHTMLRectCollection(iface);
-    LONG ref = InterlockedDecrement(&This->ref);
+    LONG ref = dispex_ref_decr(&This->dispex);
 
     TRACE("(%p) ref=%ld\n", This, ref);
-
-    if(!ref) {
-        if(This->rect_list)
-            nsIDOMClientRectList_Release(This->rect_list);
-        release_dispex(&This->dispex);
-        free(This);
-    }
 
     return ref;
 }
@@ -1194,6 +1203,25 @@ static inline HTMLRectCollection *HTMLRectCollection_from_DispatchEx(DispatchEx 
     return CONTAINING_RECORD(iface, HTMLRectCollection, dispex);
 }
 
+static void HTMLRectCollection_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
+{
+    HTMLRectCollection *This = HTMLRectCollection_from_DispatchEx(dispex);
+    if(This->rect_list)
+        note_cc_edge((nsISupports*)This->rect_list, "rect_list", cb);
+}
+
+static void HTMLRectCollection_unlink(DispatchEx *dispex)
+{
+    HTMLRectCollection *This = HTMLRectCollection_from_DispatchEx(dispex);
+    unlink_ref(&This->rect_list);
+}
+
+static void HTMLRectCollection_destructor(DispatchEx *dispex)
+{
+    HTMLRectCollection *This = HTMLRectCollection_from_DispatchEx(dispex);
+    free(This);
+}
+
 static HRESULT HTMLRectCollection_get_dispid(DispatchEx *dispex, BSTR name, DWORD flags, DISPID *dispid)
 {
     HTMLRectCollection *This = HTMLRectCollection_from_DispatchEx(dispex);
@@ -1269,18 +1297,19 @@ static HRESULT HTMLRectCollection_invoke(DispatchEx *dispex, DISPID id, LCID lci
 }
 
 static const dispex_static_data_vtbl_t HTMLRectCollection_dispex_vtbl = {
-    NULL,
-    HTMLRectCollection_get_dispid,
-    HTMLRectCollection_get_name,
-    HTMLRectCollection_invoke,
-    NULL
+    .destructor       = HTMLRectCollection_destructor,
+    .traverse         = HTMLRectCollection_traverse,
+    .unlink           = HTMLRectCollection_unlink,
+    .get_dispid       = HTMLRectCollection_get_dispid,
+    .get_name         = HTMLRectCollection_get_name,
+    .invoke           = HTMLRectCollection_invoke,
 };
 static const tid_t HTMLRectCollection_iface_tids[] = {
     IHTMLRectCollection_tid,
     0
 };
 static dispex_static_data_t HTMLRectCollection_dispex = {
-    L"ClientRectList",
+    "ClientRectList",
     &HTMLRectCollection_dispex_vtbl,
     IHTMLRectCollection_tid,
     HTMLRectCollection_iface_tids
@@ -3299,7 +3328,6 @@ static HRESULT WINAPI HTMLElement2_getClientRects(IHTMLElement2 *iface, IHTMLRec
     }
 
     rects->IHTMLRectCollection_iface.lpVtbl = &HTMLRectCollectionVtbl;
-    rects->ref = 1;
     rects->rect_list = rect_list;
     init_dispatch(&rects->dispex, (IUnknown*)&rects->IHTMLRectCollection_iface,
                   &HTMLRectCollection_dispex, dispex_compat_mode(&This->node.event_target.dispex));
@@ -6848,8 +6876,6 @@ void HTMLElement_destructor(HTMLDOMNode *iface)
     }
 
     free(This->filter);
-
-    HTMLDOMNode_destructor(&This->node);
 }
 
 HRESULT HTMLElement_clone(HTMLDOMNode *iface, nsIDOMNode *nsnode, HTMLDOMNode **ret)
@@ -6919,13 +6945,13 @@ const cpc_entry_t HTMLElement_cpc[] = {
 };
 
 static const NodeImplVtbl HTMLElementImplVtbl = {
-    &CLSID_HTMLUnknownElement,
-    HTMLElement_QI,
-    HTMLElement_destructor,
-    HTMLElement_cpc,
-    HTMLElement_clone,
-    HTMLElement_handle_event,
-    HTMLElement_get_attr_col
+    .clsid                 = &CLSID_HTMLUnknownElement,
+    .qi                    = HTMLElement_QI,
+    .destructor            = HTMLElement_destructor,
+    .cpc_entries           = HTMLElement_cpc,
+    .clone                 = HTMLElement_clone,
+    .handle_event          = HTMLElement_handle_event,
+    .get_attr_col          = HTMLElement_get_attr_col
 };
 
 static inline HTMLElement *impl_from_DispatchEx(DispatchEx *iface)
@@ -7326,31 +7352,28 @@ static const tid_t HTMLElement_iface_tids[] = {
     0
 };
 
-static event_target_vtbl_t HTMLElement_event_target_vtbl = {
+const event_target_vtbl_t HTMLElement_event_target_vtbl = {
     {
-        NULL,
-        HTMLElement_get_dispid,
-        HTMLElement_get_name,
-        HTMLElement_invoke,
-        NULL,
-        NULL,
-        NULL,
-        HTMLElement_populate_props
+        .destructor          = HTMLDOMNode_destructor,
+        .traverse            = HTMLDOMNode_traverse,
+        .unlink              = HTMLDOMNode_unlink,
+        .get_dispid          = HTMLElement_get_dispid,
+        .get_name            = HTMLElement_get_name,
+        .invoke              = HTMLElement_invoke,
+        .populate_props      = HTMLElement_populate_props
     },
-    HTMLElement_get_gecko_target,
-    HTMLElement_bind_event,
-    HTMLElement_get_parent_event_target,
-    HTMLElement_handle_event_default,
-    HTMLElement_get_cp_container,
-    HTMLElement_set_current_event
+    .get_gecko_target        = HTMLElement_get_gecko_target,
+    .bind_event              = HTMLElement_bind_event,
+    .get_parent_event_target = HTMLElement_get_parent_event_target,
+    .handle_event_default    = HTMLElement_handle_event_default,
+    .get_cp_container        = HTMLElement_get_cp_container,
+    .set_current_event       = HTMLElement_set_current_event
 };
 
 struct token_list {
     DispatchEx dispex;
     IWineDOMTokenList IWineDOMTokenList_iface;
     IHTMLElement *element;
-
-    LONG ref;
 };
 
 static inline struct token_list *impl_from_IWineDOMTokenList(IWineDOMTokenList *iface)
@@ -7383,7 +7406,7 @@ static HRESULT WINAPI token_list_QueryInterface(IWineDOMTokenList *iface, REFIID
 static ULONG WINAPI token_list_AddRef(IWineDOMTokenList *iface)
 {
     struct token_list *token_list = impl_from_IWineDOMTokenList(iface);
-    LONG ref = InterlockedIncrement(&token_list->ref);
+    LONG ref = dispex_ref_incr(&token_list->dispex);
 
     TRACE("(%p) ref=%ld\n", token_list, ref);
 
@@ -7393,15 +7416,9 @@ static ULONG WINAPI token_list_AddRef(IWineDOMTokenList *iface)
 static ULONG WINAPI token_list_Release(IWineDOMTokenList *iface)
 {
     struct token_list *token_list = impl_from_IWineDOMTokenList(iface);
-    LONG ref = InterlockedDecrement(&token_list->ref);
+    LONG ref = dispex_ref_decr(&token_list->dispex);
 
     TRACE("(%p) ref=%ld\n", token_list, ref);
-
-    if(!ref) {
-        IHTMLElement_Release(token_list->element);
-        release_dispex(&token_list->dispex);
-        free(token_list);
-    }
 
     return ref;
 }
@@ -7720,6 +7737,25 @@ static inline struct token_list *token_list_from_DispatchEx(DispatchEx *iface)
     return CONTAINING_RECORD(iface, struct token_list, dispex);
 }
 
+static void token_list_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
+{
+    struct token_list *token_list = token_list_from_DispatchEx(dispex);
+    if(token_list->element)
+        note_cc_edge((nsISupports*)token_list->element, "element", cb);
+}
+
+static void token_list_unlink(DispatchEx *dispex)
+{
+    struct token_list *token_list = token_list_from_DispatchEx(dispex);
+    unlink_ref(&token_list->element);
+}
+
+static void token_list_destructor(DispatchEx *dispex)
+{
+    struct token_list *token_list = token_list_from_DispatchEx(dispex);
+    free(token_list);
+}
+
 static HRESULT token_list_value(DispatchEx *dispex, LCID lcid, WORD flags, DISPPARAMS *params,
         VARIANT *res, EXCEPINFO *ei, IServiceProvider *caller)
 {
@@ -7795,10 +7831,13 @@ static HRESULT token_list_invoke(DispatchEx *dispex, DISPID id, LCID lcid, WORD 
 }
 
 static const dispex_static_data_vtbl_t token_list_dispex_vtbl = {
-    token_list_value,
-    token_list_get_dispid,
-    token_list_get_name,
-    token_list_invoke
+    .destructor       = token_list_destructor,
+    .traverse         = token_list_traverse,
+    .unlink           = token_list_unlink,
+    .value            = token_list_value,
+    .get_dispid       = token_list_get_dispid,
+    .get_name         = token_list_get_name,
+    .invoke           = token_list_invoke
 };
 
 static const tid_t token_list_iface_tids[] = {
@@ -7806,7 +7845,7 @@ static const tid_t token_list_iface_tids[] = {
     0
 };
 static dispex_static_data_t token_list_dispex = {
-    L"DOMTokenList",
+    "DOMTokenList",
     &token_list_dispex_vtbl,
     IWineDOMTokenList_tid,
     token_list_iface_tids
@@ -7824,7 +7863,6 @@ static HRESULT create_token_list(compat_mode_t compat_mode, IHTMLElement *elemen
     }
 
     obj->IWineDOMTokenList_iface.lpVtbl = &WineDOMTokenListVtbl;
-    obj->ref = 1;
     init_dispatch(&obj->dispex, (IUnknown*)&obj->IWineDOMTokenList_iface, &token_list_dispex, compat_mode);
     IHTMLElement_AddRef(element);
     obj->element = element;
@@ -7917,7 +7955,7 @@ static const IWineHTMLElementPrivateVtbl WineHTMLElementPrivateVtbl = {
 };
 
 static dispex_static_data_t HTMLElement_dispex = {
-    L"HTMLElement",
+    "HTMLElement",
     &HTMLElement_event_target_vtbl.dispex_vtbl,
     DispHTMLUnknownElement_tid,
     HTMLElement_iface_tids,
@@ -7925,7 +7963,7 @@ static dispex_static_data_t HTMLElement_dispex = {
 };
 
 static dispex_static_data_t HTMLUnknownElement_dispex = {
-    L"HTMLUnknownElement",
+    "HTMLUnknownElement",
     &HTMLElement_event_target_vtbl.dispex_vtbl,
     DispHTMLUnknownElement_tid,
     HTMLElement_iface_tids,
@@ -7945,9 +7983,6 @@ void HTMLElement_Init(HTMLElement *This, HTMLDocumentNode *doc, nsIDOMElement *n
     This->IElementTraversal_iface.lpVtbl = &ElementTraversalVtbl;
     This->IProvideMultipleClassInfo_iface.lpVtbl = &ProvideMultipleClassInfoVtbl;
     This->IWineHTMLElementPrivate_iface.lpVtbl = &WineHTMLElementPrivateVtbl;
-
-    if(dispex_data && !dispex_data->vtbl)
-        dispex_data->vtbl = &HTMLElement_event_target_vtbl.dispex_vtbl;
 
     if(nselem) {
         nsIDOMHTMLElement *html_element;
@@ -8082,7 +8117,7 @@ static HRESULT WINAPI HTMLFiltersCollection_QueryInterface(IHTMLFiltersCollectio
 static ULONG WINAPI HTMLFiltersCollection_AddRef(IHTMLFiltersCollection *iface)
 {
     HTMLFiltersCollection *This = impl_from_IHTMLFiltersCollection(iface);
-    LONG ref = InterlockedIncrement(&This->ref);
+    LONG ref = dispex_ref_incr(&This->dispex);
 
     TRACE("(%p) ref=%ld\n", This, ref);
 
@@ -8092,14 +8127,9 @@ static ULONG WINAPI HTMLFiltersCollection_AddRef(IHTMLFiltersCollection *iface)
 static ULONG WINAPI HTMLFiltersCollection_Release(IHTMLFiltersCollection *iface)
 {
     HTMLFiltersCollection *This = impl_from_IHTMLFiltersCollection(iface);
-    LONG ref = InterlockedDecrement(&This->ref);
+    LONG ref = dispex_ref_decr(&This->dispex);
 
     TRACE("(%p) ref=%ld\n", This, ref);
-
-    if(!ref)
-    {
-        free(This);
-    }
 
     return ref;
 }
@@ -8175,6 +8205,17 @@ static const IHTMLFiltersCollectionVtbl HTMLFiltersCollectionVtbl = {
     HTMLFiltersCollection_item
 };
 
+static inline HTMLFiltersCollection *HTMLFiltersCollection_from_DispatchEx(DispatchEx *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLFiltersCollection, dispex);
+}
+
+static void HTMLFiltersCollection_destructor(DispatchEx *dispex)
+{
+    HTMLFiltersCollection *This = HTMLFiltersCollection_from_DispatchEx(dispex);
+    free(This);
+}
+
 static HRESULT HTMLFiltersCollection_get_dispid(DispatchEx *dispex, BSTR name, DWORD flags, DISPID *dispid)
 {
     WCHAR *ptr;
@@ -8214,11 +8255,10 @@ static HRESULT HTMLFiltersCollection_invoke(DispatchEx *dispex, DISPID id, LCID 
 }
 
 static const dispex_static_data_vtbl_t HTMLFiltersCollection_dispex_vtbl = {
-    NULL,
-    HTMLFiltersCollection_get_dispid,
-    HTMLFiltersCollection_get_name,
-    HTMLFiltersCollection_invoke,
-    NULL
+    .destructor       = HTMLFiltersCollection_destructor,
+    .get_dispid       = HTMLFiltersCollection_get_dispid,
+    .get_name         = HTMLFiltersCollection_get_name,
+    .invoke           = HTMLFiltersCollection_invoke,
 };
 
 static const tid_t HTMLFiltersCollection_iface_tids[] = {
@@ -8226,7 +8266,7 @@ static const tid_t HTMLFiltersCollection_iface_tids[] = {
     0
 };
 static dispex_static_data_t HTMLFiltersCollection_dispex = {
-    L"FiltersCollection",
+    "FiltersCollection",
     &HTMLFiltersCollection_dispex_vtbl,
     IHTMLFiltersCollection_tid,
     HTMLFiltersCollection_iface_tids
@@ -8240,7 +8280,6 @@ static HRESULT create_filters_collection(compat_mode_t compat_mode, IHTMLFilters
         return E_OUTOFMEMORY;
 
     collection->IHTMLFiltersCollection_iface.lpVtbl = &HTMLFiltersCollectionVtbl;
-    collection->ref = 1;
 
     init_dispatch(&collection->dispex, (IUnknown*)&collection->IHTMLFiltersCollection_iface,
                   &HTMLFiltersCollection_dispex, min(compat_mode, COMPAT_MODE_IE8));
@@ -8531,7 +8570,7 @@ static HRESULT WINAPI HTMLAttributeCollection_QueryInterface(IHTMLAttributeColle
 static ULONG WINAPI HTMLAttributeCollection_AddRef(IHTMLAttributeCollection *iface)
 {
     HTMLAttributeCollection *This = impl_from_IHTMLAttributeCollection(iface);
-    LONG ref = InterlockedIncrement(&This->ref);
+    LONG ref = dispex_ref_incr(&This->dispex);
 
     TRACE("(%p) ref=%ld\n", This, ref);
 
@@ -8541,21 +8580,9 @@ static ULONG WINAPI HTMLAttributeCollection_AddRef(IHTMLAttributeCollection *ifa
 static ULONG WINAPI HTMLAttributeCollection_Release(IHTMLAttributeCollection *iface)
 {
     HTMLAttributeCollection *This = impl_from_IHTMLAttributeCollection(iface);
-    LONG ref = InterlockedDecrement(&This->ref);
+    LONG ref = dispex_ref_decr(&This->dispex);
 
     TRACE("(%p) ref=%ld\n", This, ref);
-
-    if(!ref) {
-        while(!list_empty(&This->attrs)) {
-            HTMLDOMAttribute *attr = LIST_ENTRY(list_head(&This->attrs), HTMLDOMAttribute, entry);
-
-            list_remove(&attr->entry);
-            attr->elem = NULL;
-            IHTMLDOMAttribute_Release(&attr->IHTMLDOMAttribute_iface);
-        }
-
-        free(This);
-    }
 
     return ref;
 }
@@ -8904,6 +8931,33 @@ static inline HTMLAttributeCollection *HTMLAttributeCollection_from_DispatchEx(D
     return CONTAINING_RECORD(iface, HTMLAttributeCollection, dispex);
 }
 
+static void HTMLAttributeCollection_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
+{
+    HTMLAttributeCollection *This = HTMLAttributeCollection_from_DispatchEx(dispex);
+    HTMLDOMAttribute *attr;
+
+    LIST_FOR_EACH_ENTRY(attr, &This->attrs, HTMLDOMAttribute, entry)
+        note_cc_edge((nsISupports*)&attr->IHTMLDOMAttribute_iface, "attr", cb);
+}
+
+static void HTMLAttributeCollection_unlink(DispatchEx *dispex)
+{
+    HTMLAttributeCollection *This = HTMLAttributeCollection_from_DispatchEx(dispex);
+    while(!list_empty(&This->attrs)) {
+        HTMLDOMAttribute *attr = LIST_ENTRY(list_head(&This->attrs), HTMLDOMAttribute, entry);
+
+        list_remove(&attr->entry);
+        attr->elem = NULL;
+        IHTMLDOMAttribute_Release(&attr->IHTMLDOMAttribute_iface);
+    }
+}
+
+static void HTMLAttributeCollection_destructor(DispatchEx *dispex)
+{
+    HTMLAttributeCollection *This = HTMLAttributeCollection_from_DispatchEx(dispex);
+    free(This);
+}
+
 static HRESULT HTMLAttributeCollection_get_dispid(DispatchEx *dispex, BSTR name, DWORD flags, DISPID *dispid)
 {
     HTMLAttributeCollection *This = HTMLAttributeCollection_from_DispatchEx(dispex);
@@ -8970,11 +9024,12 @@ static HRESULT HTMLAttributeCollection_invoke(DispatchEx *dispex, DISPID id, LCI
 }
 
 static const dispex_static_data_vtbl_t HTMLAttributeCollection_dispex_vtbl = {
-    NULL,
-    HTMLAttributeCollection_get_dispid,
-    HTMLAttributeCollection_get_name,
-    HTMLAttributeCollection_invoke,
-    NULL
+    .destructor       = HTMLAttributeCollection_destructor,
+    .traverse         = HTMLAttributeCollection_traverse,
+    .unlink           = HTMLAttributeCollection_unlink,
+    .get_dispid       = HTMLAttributeCollection_get_dispid,
+    .get_name         = HTMLAttributeCollection_get_name,
+    .invoke           = HTMLAttributeCollection_invoke,
 };
 
 static const tid_t HTMLAttributeCollection_iface_tids[] = {
@@ -8985,7 +9040,7 @@ static const tid_t HTMLAttributeCollection_iface_tids[] = {
 };
 
 static dispex_static_data_t HTMLAttributeCollection_dispex = {
-    L"NamedNodeMap",
+    "NamedNodeMap",
     &HTMLAttributeCollection_dispex_vtbl,
     DispHTMLAttributeCollection_tid,
     HTMLAttributeCollection_iface_tids
@@ -9008,7 +9063,6 @@ HRESULT HTMLElement_get_attr_col(HTMLDOMNode *iface, HTMLAttributeCollection **a
     This->attrs->IHTMLAttributeCollection_iface.lpVtbl = &HTMLAttributeCollectionVtbl;
     This->attrs->IHTMLAttributeCollection2_iface.lpVtbl = &HTMLAttributeCollection2Vtbl;
     This->attrs->IHTMLAttributeCollection3_iface.lpVtbl = &HTMLAttributeCollection3Vtbl;
-    This->attrs->ref = 2;
 
     This->attrs->elem = This;
     list_init(&This->attrs->attrs);
@@ -9016,5 +9070,6 @@ HRESULT HTMLElement_get_attr_col(HTMLDOMNode *iface, HTMLAttributeCollection **a
                   &HTMLAttributeCollection_dispex, dispex_compat_mode(&iface->event_target.dispex));
 
     *ac = This->attrs;
+    IHTMLAttributeCollection_AddRef(&This->attrs->IHTMLAttributeCollection_iface);
     return S_OK;
 }

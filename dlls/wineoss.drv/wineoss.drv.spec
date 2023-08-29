@@ -5,6 +5,5 @@
 @ stdcall -private modMessage(long long long long long) OSS_modMessage
 
 # MMDevAPI driver functions
-@ stdcall -private GetEndpointIDs(long ptr ptr ptr ptr) AUDDRV_GetEndpointIDs
-@ stdcall -private GetAudioEndpoint(ptr ptr ptr) AUDDRV_GetAudioEndpoint
-@ stdcall -private GetAudioSessionWrapper(ptr ptr ptr) AUDDRV_GetAudioSessionWrapper
+@ stdcall -private get_device_guid(long ptr ptr) get_device_guid
+@ stdcall -private get_device_name_from_guid(ptr ptr ptr) get_device_name_from_guid

@@ -71,7 +71,9 @@
 #  include <linux/types.h>
 # endif
 # include <linux/ipx.h>
-# define HAS_IPX
+# ifdef SOL_IPX
+#  define HAS_IPX
+# endif
 #endif
 
 #ifdef HAVE_LINUX_IRDA_H
@@ -1291,7 +1293,10 @@ static void sock_dispatch_events( struct sock *sock, enum connection_state prevs
 
     case SOCK_CONNECTING:
         if (event & POLLOUT)
+        {
             post_socket_event( sock, AFD_POLL_BIT_CONNECT );
+            post_socket_event( sock, AFD_POLL_BIT_WRITE );
+        }
         if (event & (POLLERR | POLLHUP))
             post_socket_event( sock, AFD_POLL_BIT_CONNECT_ERR );
         break;
@@ -1467,6 +1472,8 @@ static int sock_get_poll_events( struct fd *fd )
     LIST_FOR_EACH_ENTRY( req, &poll_list, struct poll_req, entry )
     {
         unsigned int i;
+
+        if (req->iosb->status != STATUS_PENDING) continue;
 
         for (i = 0; i < req->count; ++i)
         {
@@ -1655,8 +1662,7 @@ static int sock_close_handle( struct object *obj, struct process *process, obj_h
             if (signaled) complete_async_poll( poll_req, STATUS_SUCCESS );
         }
     }
-
-    return 1;
+    return async_close_obj_handle( obj, process, handle );
 }
 
 static void sock_destroy( struct object *obj )
@@ -2762,28 +2768,6 @@ static void sock_ioctl( struct fd *fd, ioctl_code_t code, struct async *async )
             sock->nonblocking = 0;
         }
         return;
-
-    case IOCTL_AFD_GET_EVENTS:
-    {
-        struct afd_get_events_params params = {0};
-        unsigned int i;
-
-        if (get_reply_max_size() < sizeof(params))
-        {
-            set_error( STATUS_INVALID_PARAMETER );
-            return;
-        }
-
-        params.flags = sock->pending_events & sock->mask;
-        for (i = 0; i < ARRAY_SIZE( params.status ); ++i)
-            params.status[i] = sock_get_ntstatus( sock->errors[i] );
-
-        sock->pending_events &= ~sock->mask;
-        sock_reselect( sock );
-
-        set_reply_data( &params, sizeof(params) );
-        return;
-    }
 
     case IOCTL_AFD_EVENT_SELECT:
     {
@@ -3935,6 +3919,48 @@ DECL_HANDLER(send_socket)
         reply->nonblocking = sock->nonblocking;
         release_object( async );
     }
+    release_object( sock );
+}
+
+DECL_HANDLER(socket_get_events)
+{
+    struct sock *sock = (struct sock *)get_handle_obj( current->process, req->handle, 0, &sock_ops );
+    unsigned int status[13];
+    struct event *event = NULL;
+    unsigned int i;
+
+    if (get_reply_max_size() < sizeof(status))
+    {
+        set_error( STATUS_INVALID_PARAMETER );
+        return;
+    }
+
+    if (!sock) return;
+
+    if (req->event)
+    {
+        if (!(event = get_event_obj( current->process, req->event, EVENT_MODIFY_STATE )))
+        {
+            release_object( sock );
+            return;
+        }
+    }
+
+    reply->flags = sock->pending_events & sock->mask;
+    for (i = 0; i < ARRAY_SIZE( status ); ++i)
+        status[i] = sock_get_ntstatus( sock->errors[i] );
+
+    sock->pending_events &= ~sock->mask;
+    sock_reselect( sock );
+
+    if (event)
+    {
+        reset_event( event );
+        release_object( event );
+    }
+
+    set_reply_data( status, sizeof(status) );
+
     release_object( sock );
 }
 

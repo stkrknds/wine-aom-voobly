@@ -224,6 +224,7 @@ typedef struct
     unsigned int attribute;
     unsigned int flags;
     unsigned int show;
+    process_id_t process_group_id;
     data_size_t  curdir_len;
     data_size_t  dllpath_len;
     data_size_t  imagepath_len;
@@ -1511,6 +1512,16 @@ enum server_fd_type
     obj_handle_t wait;          /* handle to wait on for blocking send */
     unsigned int options;       /* device open options */
     int          nonblocking;   /* is socket non-blocking? */
+@END
+
+
+/* Get socket event flags */
+@REQ(socket_get_events)
+    obj_handle_t handle;        /* socket handle */
+    obj_handle_t event;         /* event to reset */
+@REPLY
+    unsigned int flags;         /* event mask */
+    VARARG(status,uints);       /* array of status codes */
 @END
 
 

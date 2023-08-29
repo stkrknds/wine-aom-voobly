@@ -4758,7 +4758,7 @@ static HRESULT WINAPI HTMLCSSStyleDeclaration_QueryInterface(IHTMLCSSStyleDeclar
 static ULONG WINAPI HTMLCSSStyleDeclaration_AddRef(IHTMLCSSStyleDeclaration *iface)
 {
     CSSStyle *This = impl_from_IHTMLCSSStyleDeclaration(iface);
-    LONG ref = InterlockedIncrement(&This->ref);
+    LONG ref = dispex_ref_incr(&This->dispex);
 
     TRACE("(%p) ref=%ld\n", This, ref);
 
@@ -4768,16 +4768,9 @@ static ULONG WINAPI HTMLCSSStyleDeclaration_AddRef(IHTMLCSSStyleDeclaration *ifa
 static ULONG WINAPI HTMLCSSStyleDeclaration_Release(IHTMLCSSStyleDeclaration *iface)
 {
     CSSStyle *This = impl_from_IHTMLCSSStyleDeclaration(iface);
-    LONG ref = InterlockedDecrement(&This->ref);
+    LONG ref = dispex_ref_decr(&This->dispex);
 
     TRACE("(%p) ref=%ld\n", This, ref);
-
-    if(!ref) {
-        if(This->nsstyle)
-            nsIDOMCSSStyleDeclaration_Release(This->nsstyle);
-        release_dispex(&This->dispex);
-        free(This);
-    }
 
     return ref;
 }
@@ -9969,6 +9962,25 @@ static inline CSSStyle *impl_from_DispatchEx(DispatchEx *dispex)
     return CONTAINING_RECORD(dispex, CSSStyle, dispex);
 }
 
+static void CSSStyle_traverse(DispatchEx *dispex, nsCycleCollectionTraversalCallback *cb)
+{
+    CSSStyle *This = impl_from_DispatchEx(dispex);
+    if(This->nsstyle)
+        note_cc_edge((nsISupports*)This->nsstyle, "nsstyle", cb);
+}
+
+static void CSSStyle_unlink(DispatchEx *dispex)
+{
+    CSSStyle *This = impl_from_DispatchEx(dispex);
+    unlink_ref(&This->nsstyle);
+}
+
+static void CSSStyle_destructor(DispatchEx *dispex)
+{
+    CSSStyle *This = impl_from_DispatchEx(dispex);
+    free(This);
+}
+
 static HRESULT CSSStyle_get_dispid(DispatchEx *dispex, BSTR name, DWORD flags, DISPID *dispid)
 {
     CSSStyle *This = impl_from_DispatchEx(dispex);
@@ -9997,10 +10009,10 @@ void CSSStyle_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
 }
 
 const dispex_static_data_vtbl_t CSSStyle_dispex_vtbl = {
-    NULL,
-    CSSStyle_get_dispid,
-    NULL,
-    NULL
+    .destructor        = CSSStyle_destructor,
+    .traverse          = CSSStyle_traverse,
+    .unlink            = CSSStyle_unlink,
+    .get_dispid        = CSSStyle_get_dispid,
 };
 
 static const tid_t HTMLStyle_iface_tids[] = {
@@ -10013,7 +10025,7 @@ static const tid_t HTMLStyle_iface_tids[] = {
     0
 };
 static dispex_static_data_t HTMLStyle_dispex = {
-    L"MSStyleCSSProperties",
+    "MSStyleCSSProperties",
     &CSSStyle_dispex_vtbl,
     DispHTMLStyle_tid,
     HTMLStyle_iface_tids,
@@ -10063,7 +10075,6 @@ void init_css_style(CSSStyle *style, nsIDOMCSSStyleDeclaration *nsstyle, style_q
 {
     style->IHTMLCSSStyleDeclaration_iface.lpVtbl = &HTMLCSSStyleDeclarationVtbl;
     style->IHTMLCSSStyleDeclaration2_iface.lpVtbl = &HTMLCSSStyleDeclaration2Vtbl;
-    style->ref = 1;
     style->qi = qi;
     style->nsstyle = nsstyle;
     nsIDOMCSSStyleDeclaration_AddRef(nsstyle);
@@ -10109,7 +10120,7 @@ static const tid_t HTMLW3CComputedStyle_iface_tids[] = {
     0
 };
 static dispex_static_data_t HTMLW3CComputedStyle_dispex = {
-    L"CSSStyleDeclaration",
+    "CSSStyleDeclaration",
     &CSSStyle_dispex_vtbl,
     DispHTMLW3CComputedStyle_tid,
     HTMLW3CComputedStyle_iface_tids,

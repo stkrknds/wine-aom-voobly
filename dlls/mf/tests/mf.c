@@ -33,6 +33,7 @@
 #include "mmdeviceapi.h"
 #include "uuids.h"
 #include "wmcodecdsp.h"
+#include "nserror.h"
 
 #include "mf_test.h"
 
@@ -2939,7 +2940,7 @@ static HRESULT WINAPI test_grabber_callback_OnProcessSample(IMFSampleGrabberSink
 
     SetEvent(grabber->ready_event);
     res = WaitForSingleObject(grabber->done_event, 1000);
-    ok(!res, "WaitForSingleObject returned %#lx", res);
+    ok(!res, "WaitForSingleObject returned %#lx\n", res);
 
     return S_OK;
 }
@@ -4951,7 +4952,7 @@ static void test_sample_grabber_orientation(GUID subtype)
     if (!(source = create_media_source(L"test.mp4", L"video/mp4")))
     {
         win_skip("MP4 media source is not supported, skipping tests.\n");
-        return;
+        goto done;
     }
 
     callback = create_test_callback(TRUE);
@@ -5064,10 +5065,11 @@ static void test_sample_grabber_orientation(GUID subtype)
     IMFMediaSession_Release(session);
     IMFMediaSource_Release(source);
 
+    IMFSampleGrabberSinkCallback_Release(&grabber_callback->IMFSampleGrabberSinkCallback_iface);
+
+done:
     hr = MFShutdown();
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-
-    IMFSampleGrabberSinkCallback_Release(&grabber_callback->IMFSampleGrabberSinkCallback_iface);
 }
 
 static void test_quality_manager(void)
@@ -6431,6 +6433,132 @@ static void test_MFGetSupportedSchemes(void)
     PropVariantClear(&value);
 }
 
+static void test_scheme_resolvers(void)
+{
+    static const DWORD expect_caps = MFBYTESTREAM_IS_READABLE | MFBYTESTREAM_IS_SEEKABLE;
+    static const WCHAR *urls[] =
+    {
+        L"http://test.winehq.org/tests/test.mp3",
+        L"https://test.winehq.org/tests/test.mp3",
+        L"httpd://test.winehq.org/tests/test.mp3",
+        L"httpsd://test.winehq.org/tests/test.mp3",
+        L"mms://test.winehq.org/tests/test.mp3",
+    };
+    static const WCHAR *expect_domain[] =
+    {
+        L"http://test.winehq.org",
+        L"https://test.winehq.org",
+        L"http://test.winehq.org",
+        L"https://test.winehq.org",
+        L"http://test.winehq.org",
+    };
+
+    IMFSourceResolver *resolver;
+    IMFByteStream *byte_stream;
+    IMFAttributes *attributes;
+    PROPVARIANT propvar;
+    MF_OBJECT_TYPE type;
+    IUnknown *object;
+    UINT64 length;
+    DWORD i, caps;
+    HRESULT hr;
+
+    hr = MFStartup(MF_VERSION, MFSTARTUP_FULL);
+    ok(hr == S_OK, "got hr %#lx\n", hr);
+
+    hr = MFCreateSourceResolver(&resolver);
+    ok(hr == S_OK, "got hr %#lx\n", hr);
+
+    for (i = 0; i < ARRAY_SIZE(urls); i++)
+    {
+        hr = IMFSourceResolver_CreateObjectFromURL(resolver, urls[i], MF_RESOLUTION_BYTESTREAM, NULL, &type, &object);
+        todo_wine_if(i >= 2)
+        ok(hr == S_OK, "got hr %#lx\n", hr);
+        if (hr != S_OK)
+            continue;
+
+        hr = IUnknown_QueryInterface(object, &IID_IMFAttributes, (void **)&attributes);
+        ok(hr == S_OK, "got hr %#lx\n", hr);
+        hr = IMFAttributes_GetItem(attributes, &MF_BYTESTREAM_ORIGIN_NAME, NULL);
+        ok(hr == MF_E_ATTRIBUTENOTFOUND, "got hr %#lx\n", hr);
+
+        PropVariantInit(&propvar);
+        hr = IMFAttributes_GetItem(attributes, &MF_BYTESTREAM_EFFECTIVE_URL, &propvar);
+        ok(hr == S_OK || broken(hr == MF_E_ATTRIBUTENOTFOUND) /* Win7 */, "got hr %#lx\n", hr);
+        ok(!wcsncmp(expect_domain[i], propvar.pwszVal, wcslen(expect_domain[i]))
+                || broken(hr == MF_E_ATTRIBUTENOTFOUND) /* Win7 */,
+                "got url %s\n", debugstr_w(propvar.pwszVal));
+        hr = PropVariantClear(&propvar);
+        ok(hr == S_OK, "got hr %#lx\n", hr);
+
+        hr = IMFAttributes_GetItem(attributes, &MF_BYTESTREAM_CONTENT_TYPE, NULL);
+        ok(hr == S_OK, "got hr %#lx\n", hr);
+        hr = IMFAttributes_GetItem(attributes, &MF_BYTESTREAM_LAST_MODIFIED_TIME, NULL);
+        todo_wine
+        ok(hr == S_OK, "got hr %#lx\n", hr);
+        IMFAttributes_Release(attributes);
+
+        hr = IUnknown_QueryInterface(object, &IID_IMFByteStream, (void **)&byte_stream);
+        ok(hr == S_OK, "got hr %#lx\n", hr);
+        hr = IMFByteStream_GetCapabilities(byte_stream, &caps);
+        ok(hr == S_OK, "got hr %#lx\n", hr);
+        todo_wine
+        ok(caps == (expect_caps | MFBYTESTREAM_IS_PARTIALLY_DOWNLOADED)
+                || caps == (expect_caps | MFBYTESTREAM_DOES_NOT_USE_NETWORK),
+                "got caps %#lx\n", caps);
+        hr = IMFByteStream_GetLength(byte_stream, &length);
+        ok(hr == S_OK, "got hr %#lx\n", hr);
+        ok(length == 0x110d, "got length %#I64x\n", length);
+        IMFByteStream_Release(byte_stream);
+
+        IUnknown_Release(object);
+    }
+
+    hr = IMFSourceResolver_CreateObjectFromURL(resolver, L"httpt://test.winehq.org/tests/test.mp3", MF_RESOLUTION_BYTESTREAM, NULL, &type, &object);
+    todo_wine
+    ok(hr == MF_E_UNSUPPORTED_BYTESTREAM_TYPE, "got hr %#lx\n", hr);
+    hr = IMFSourceResolver_CreateObjectFromURL(resolver, L"httpu://test.winehq.org/tests/test.mp3", MF_RESOLUTION_BYTESTREAM, NULL, &type, &object);
+    todo_wine
+    ok(hr == MF_E_UNSUPPORTED_BYTESTREAM_TYPE, "got hr %#lx\n", hr);
+
+    hr = IMFSourceResolver_CreateObjectFromURL(resolver, L"http://test.winehq.bla/tests/test.mp3", MF_RESOLUTION_BYTESTREAM, NULL, &type, &object);
+    todo_wine
+    ok(hr == NS_E_SERVER_NOT_FOUND, "got hr %#lx\n", hr);
+    hr = IMFSourceResolver_CreateObjectFromURL(resolver, L"https://test.winehq.bla/tests/test.mp3", MF_RESOLUTION_BYTESTREAM, NULL, &type, &object);
+    todo_wine
+    ok(hr == WININET_E_NAME_NOT_RESOLVED, "got hr %#lx\n", hr);
+    hr = IMFSourceResolver_CreateObjectFromURL(resolver, L"httpd://test.winehq.bla/tests/test.mp3", MF_RESOLUTION_BYTESTREAM, NULL, &type, &object);
+    todo_wine
+    ok(hr == WININET_E_NAME_NOT_RESOLVED, "got hr %#lx\n", hr);
+    hr = IMFSourceResolver_CreateObjectFromURL(resolver, L"httpsd://test.winehq.bla/tests/test.mp3", MF_RESOLUTION_BYTESTREAM, NULL, &type, &object);
+    todo_wine
+    ok(hr == WININET_E_NAME_NOT_RESOLVED, "got hr %#lx\n", hr);
+    hr = IMFSourceResolver_CreateObjectFromURL(resolver, L"mms://test.winehq.bla/tests/test.mp3", MF_RESOLUTION_BYTESTREAM, NULL, &type, &object);
+    todo_wine
+    ok(hr == WININET_E_NAME_NOT_RESOLVED, "got hr %#lx\n", hr);
+
+    hr = IMFSourceResolver_CreateObjectFromURL(resolver, L"http://test.winehq.org/tests/invalid.mp3", MF_RESOLUTION_BYTESTREAM, NULL, &type, &object);
+    todo_wine
+    ok(hr == NS_E_FILE_NOT_FOUND, "got hr %#lx\n", hr);
+    hr = IMFSourceResolver_CreateObjectFromURL(resolver, L"https://test.winehq.org/tests/invalid.mp3", MF_RESOLUTION_BYTESTREAM, NULL, &type, &object);
+    todo_wine
+    ok(hr == NS_E_FILE_NOT_FOUND, "got hr %#lx\n", hr);
+    hr = IMFSourceResolver_CreateObjectFromURL(resolver, L"httpd://test.winehq.org/tests/invalid.mp3", MF_RESOLUTION_BYTESTREAM, NULL, &type, &object);
+    todo_wine
+    ok(hr == NS_E_FILE_NOT_FOUND, "got hr %#lx\n", hr);
+    hr = IMFSourceResolver_CreateObjectFromURL(resolver, L"httpsd://test.winehq.org/tests/invalid.mp3", MF_RESOLUTION_BYTESTREAM, NULL, &type, &object);
+    todo_wine
+    ok(hr == NS_E_FILE_NOT_FOUND, "got hr %#lx\n", hr);
+    hr = IMFSourceResolver_CreateObjectFromURL(resolver, L"mms://test.winehq.org/tests/invalid.mp3", MF_RESOLUTION_BYTESTREAM, NULL, &type, &object);
+    todo_wine
+    ok(hr == MF_E_UNSUPPORTED_BYTESTREAM_TYPE, "got hr %#lx\n", hr);
+
+    IMFSourceResolver_Release(resolver);
+
+    hr = MFShutdown();
+    ok(hr == S_OK, "got hr %#lx\n", hr);
+}
+
 static void test_MFGetTopoNodeCurrentType(void)
 {
     static const struct attribute_desc media_type_desc[] =
@@ -7050,6 +7178,22 @@ static void test_mpeg4_media_sink(void)
     IMFMediaType_Release(audio_type);
 }
 
+static void test_MFCreateSequencerSegmentOffset(void)
+{
+    PROPVARIANT propvar;
+    HRESULT hr;
+
+    hr = MFCreateSequencerSegmentOffset(0, 0, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    propvar.vt = VT_EMPTY;
+    hr = MFCreateSequencerSegmentOffset(0, 0, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(propvar.vt == VT_UNKNOWN, "Unexpected type %d.\n", propvar.vt);
+    ok(!!propvar.punkVal, "Unexpected pointer.\n");
+    PropVariantClear(&propvar);
+}
+
 START_TEST(mf)
 {
     init_functions();
@@ -7081,7 +7225,9 @@ START_TEST(mf)
     test_MFCreateSimpleTypeHandler();
     test_MFGetSupportedMimeTypes();
     test_MFGetSupportedSchemes();
+    test_scheme_resolvers();
     test_MFGetTopoNodeCurrentType();
     test_MFRequireProtectedEnvironment();
     test_mpeg4_media_sink();
+    test_MFCreateSequencerSegmentOffset();
 }

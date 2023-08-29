@@ -208,6 +208,7 @@ typedef struct
     unsigned int attribute;
     unsigned int flags;
     unsigned int show;
+    process_id_t process_group_id;
     data_size_t  curdir_len;
     data_size_t  dllpath_len;
     data_size_t  imagepath_len;
@@ -1837,6 +1838,23 @@ struct send_socket_reply
     unsigned int options;
     int          nonblocking;
     char __pad_20[4];
+};
+
+
+
+struct socket_get_events_request
+{
+    struct request_header __header;
+    obj_handle_t handle;
+    obj_handle_t event;
+    char __pad_20[4];
+};
+struct socket_get_events_reply
+{
+    struct reply_header __header;
+    unsigned int flags;
+    /* VARARG(status,uints); */
+    char __pad_12[4];
 };
 
 
@@ -5633,6 +5651,7 @@ enum request
     REQ_unlock_file,
     REQ_recv_socket,
     REQ_send_socket,
+    REQ_socket_get_events,
     REQ_socket_send_icmp_id,
     REQ_socket_get_icmp_id,
     REQ_get_next_console_request,
@@ -5921,6 +5940,7 @@ union generic_request
     struct unlock_file_request unlock_file_request;
     struct recv_socket_request recv_socket_request;
     struct send_socket_request send_socket_request;
+    struct socket_get_events_request socket_get_events_request;
     struct socket_send_icmp_id_request socket_send_icmp_id_request;
     struct socket_get_icmp_id_request socket_get_icmp_id_request;
     struct get_next_console_request_request get_next_console_request_request;
@@ -6207,6 +6227,7 @@ union generic_reply
     struct unlock_file_reply unlock_file_reply;
     struct recv_socket_reply recv_socket_reply;
     struct send_socket_reply send_socket_reply;
+    struct socket_get_events_reply socket_get_events_reply;
     struct socket_send_icmp_id_reply socket_send_icmp_id_reply;
     struct socket_get_icmp_id_reply socket_get_icmp_id_reply;
     struct get_next_console_request_reply get_next_console_request_reply;
@@ -6436,7 +6457,7 @@ union generic_reply
 
 /* ### protocol_version begin ### */
 
-#define SERVER_PROTOCOL_VERSION 779
+#define SERVER_PROTOCOL_VERSION 781
 
 /* ### protocol_version end ### */
 
