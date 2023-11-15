@@ -1,5 +1,5 @@
 pkgname=wine-aom-voobly
-pkgver=8.5
+pkgver=8.20
 pkgrel=1
 
 source=(https://dl.winehq.org/wine/source/8.x/wine-$pkgver.tar.xz
@@ -13,11 +13,11 @@ source=(https://dl.winehq.org/wine/source/8.x/wine-$pkgver.tar.xz
         https://raw.githubusercontent.com/stkrknds/wine-aom-voobly/main/aom.patch
        )
 
-sha512sums=('f6aaab8a32eb7bce7f48d21d99417c9e6e8fe41b3d36320762775ef954db7ddd4fcff01d56475f35038d814557834a41a9e3ae85e5cae8a1b820c5044b42a327'
-            '194327242e7a6cb3c2d5f9006d8c93ac521c988ed45456da5c9d565ebda8f041fae82bb5b7197ae47f813a4435591cb8ad3c49699b03fbb688c11b79d893eff5'
-            'b4b37a421cdb8833414ea87d824d3ba984f2c41fce0701839657169c3a10954e58cf871c1bfe8df9e38577fe9fa1938ac5ea1ea3bf78dc55fd14a7321bbe83be'
-            '7d31583f535d971d55a6e94b41f2a081b8177b44f9b0349884687988d14d823510ccf1ba6c480111d3a98850de8fcf670ba1993e0c394460eae6229fa7da9c63'
-            'f1a96c60e9882f97d5ea6b707b18b6124c1d4080521692577e39eb0aee0dc0ade3f12b3c310ac5b374ceae4826ebf259a4eb58b8f2fa1a66ab944d90ce70b91f')
+sha512sums=('86dffc3c9e01506ff2ff75663f48bb3b18a6afaf6381fc3c43c476481cb5c0570129550d2047059f528855e454a629c63e8beb85d5c591d1fdb7a066fbca2623'
+            '6564ab392e0142ae4a606bb653df0506b7986c7681d78f63b987151d819a03b10ece5cf71cde406735a96b9c1f1fc7ccaef1ba99613a2cded948699a0cb7d5d3'
+            'a279eb8854787ff49cffdcf27d77f9cdddd9954d70021ed35e4eec4962e6def12ae73678df414f980cd7a069db81d21e8dcbcf554d94f040722d164c97df3346'
+            '0dd50b7ae8dfab3fd363bc923f6dd3557e4ea07cf65b3d284a3e4a39ff15c55bb6518d0c8892feab11d088a5b1308925c48b72cf9b37ac5b5ff00d42995120c5'
+            '5a1a464fa43617c1fca96175f3449c212598dddeaef6c00019cebf239ad81910a95128d1dd6ac6494f66c1d9dd04720982e065e20c6122094706c230304d200c')
 
 pkgdesc="Wine for Age of Mythology & Voobly"
 arch=(x86_64)
@@ -56,7 +56,6 @@ makedepends=(autoconf bison perl flex mingw-w64-gcc
   vulkan-headers
   samba
   opencl-headers
-  patch
 )
 optdepends=(
   giflib                lib32-giflib
@@ -136,8 +135,7 @@ build() {
     --with-x \
     --with-gstreamer \
     --disable-tests \
-    --enable-win64 \
-    --with-xattr
+    --enable-win64
 
   make -j$(nproc)
 
@@ -151,7 +149,6 @@ build() {
     --libdir=$_prefix/lib32 \
     --with-x \
     --with-gstreamer \
-    --with-xattr \
     --disable-tests \
     --with-wine64="$srcdir/$pkgname-64-build"
 
